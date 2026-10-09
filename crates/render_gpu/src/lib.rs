@@ -1,5 +1,6 @@
 pub mod diag;
 pub mod drawsurf;
+mod headless_pacing;
 mod plugin;
 
 pub use drawsurf::{

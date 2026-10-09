@@ -1,22 +1,21 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use bevy::prelude::*;
 use session::LocalAccount;
-use sim::{AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES};
+use sim::{AccountId, AccountSnapshot};
 
-const MAGIC: &[u8; 8] = b"IW4LACC3";
+const MAGIC: &[u8; 8] = b"IW4LACC4";
+const RATED_MAGIC: &[u8; 8] = b"IW4LACC3";
 const KEYED_MAGIC: &[u8; 8] = b"IW4LACC2";
 const LEGACY_MAGIC: &[u8; 8] = b"IW4LACC1";
 const LEGACY_EMPTY_BYTES: usize = 25;
-const LEGACY_SNAPSHOT_BYTES: usize = LEGACY_EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
 const EMPTY_BYTES: usize = 57;
-const KEYED_SNAPSHOT_BYTES: usize = EMPTY_BYTES + 16 + PLAYER_DATA_BUFFER_BYTES;
-const SNAPSHOT_BYTES: usize = KEYED_SNAPSHOT_BYTES + sim::SKILL_RATING_BYTES;
+const SNAPSHOT_HEADER_BYTES: usize = 16;
 const SAVE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Resource, Default)]
@@ -31,6 +30,7 @@ pub(crate) fn load(
     mut commands: Commands,
     identity: Res<ui::LaunchIdentity>,
     role: Res<frame::RuntimeRole>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
     mut persistence: ResMut<AccountPersistence>,
 ) {
     if !matches!(
@@ -39,11 +39,12 @@ pub(crate) fn load(
     ) {
         return;
     }
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
     let path = std::env::var_os("IW4L_ACCOUNT_PATH")
         .map(PathBuf::from)
         .or_else(|| {
             crate::user_settings::settings_path(&identity.artifacts)
-                .map(|path| path.with_file_name("account.dat"))
+                .map(|path| path.with_file_name(account_file_name(profile)))
         });
     let Some(path) = path else {
         warn!("no HOME or XDG_CONFIG_HOME; no durable local account available");
@@ -57,6 +58,16 @@ pub(crate) fn load(
             commands.insert_resource(account);
         }
         Err(error) => warn!("could not load local account {}: {error}", path.display()),
+    }
+}
+
+/// A saved record is stamped with one game's player-data schema and another
+/// game's schema refuses to import it, so each runtime profile keeps its own
+/// file. IW4 keeps the original name its existing records live under.
+fn account_file_name(profile: asset_transport::RuntimeProfile) -> String {
+    match profile {
+        asset_transport::RuntimeProfile::Iw4 => "account.dat".to_owned(),
+        other => format!("account_{}.dat", other.game().as_str()),
     }
 }
 
@@ -159,15 +170,22 @@ fn encode(account: &LocalAccount) -> io::Result<Vec<u8>> {
     if account.key.account() != account.id {
         return Err(invalid("account identity does not match signing key"));
     }
-    let mut bytes = Vec::with_capacity(SNAPSHOT_BYTES);
+    let mut bytes = Vec::with_capacity(
+        EMPTY_BYTES
+            + account.snapshot.as_ref().map_or(0, |snapshot| {
+                SNAPSHOT_HEADER_BYTES + 4 + snapshot.bytes.len() + sim::SKILL_RATING_BYTES
+            }),
+    );
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&account.id.0);
     bytes.extend_from_slice(&account.key.export_seed());
     bytes.push(u8::from(account.snapshot.is_some()));
     if let Some(snapshot) = &account.snapshot {
-        if snapshot.account != account.id || snapshot.bytes.len() != PLAYER_DATA_BUFFER_BYTES {
+        if snapshot.account != account.id || snapshot.bytes.len() < 8 {
             return Err(invalid("account buffer identity or size mismatch"));
         }
+        let length =
+            u32::try_from(snapshot.bytes.len()).map_err(|_| invalid("account buffer size"))?;
         if snapshot.bytes[..4] != snapshot.version.to_le_bytes()
             || snapshot.bytes[4..8] != snapshot.checksum.to_le_bytes()
         {
@@ -176,6 +194,7 @@ fn encode(account: &LocalAccount) -> io::Result<Vec<u8>> {
         bytes.extend_from_slice(&snapshot.revision.to_le_bytes());
         bytes.extend_from_slice(&snapshot.version.to_le_bytes());
         bytes.extend_from_slice(&snapshot.checksum.to_le_bytes());
+        bytes.extend_from_slice(&length.to_le_bytes());
         bytes.extend_from_slice(&snapshot.bytes);
         bytes.extend_from_slice(&snapshot.skills.encode());
     }
@@ -185,17 +204,17 @@ fn encode(account: &LocalAccount) -> io::Result<Vec<u8>> {
 fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
     let legacy = bytes.starts_with(LEGACY_MAGIC);
     let keyed = bytes.starts_with(KEYED_MAGIC);
-    let (empty, snapshot_length, tag) = if legacy {
-        (LEGACY_EMPTY_BYTES, LEGACY_SNAPSHOT_BYTES, 24)
-    } else if keyed {
-        (EMPTY_BYTES, KEYED_SNAPSHOT_BYTES, 56)
+    let rated = bytes.starts_with(RATED_MAGIC);
+    if !(legacy || keyed || rated || bytes.starts_with(MAGIC)) {
+        return Err(invalid("invalid account file version"));
+    }
+    let (empty, tag) = if legacy {
+        (LEGACY_EMPTY_BYTES, 24)
     } else {
-        (EMPTY_BYTES, SNAPSHOT_BYTES, 56)
+        (EMPTY_BYTES, 56)
     };
-    if !matches!(bytes.len(), n if n == empty || n == snapshot_length)
-        || (!legacy && !keyed && !bytes.starts_with(MAGIC))
-    {
-        return Err(invalid("invalid account file version or length"));
+    if bytes.len() < empty {
+        return Err(invalid("invalid account file length"));
     }
     let previous_id = AccountId(bytes[8..24].try_into().unwrap());
     if previous_id.0 == [0; 16] {
@@ -213,12 +232,34 @@ fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
     }
     let snapshot = match bytes[tag] {
         0 if bytes.len() == empty => None,
-        1 if bytes.len() == snapshot_length => {
+        1 => {
             let header = tag + 1;
+            let fixed = header + SNAPSHOT_HEADER_BYTES;
+            let skills_length = if legacy || keyed {
+                0
+            } else {
+                sim::SKILL_RATING_BYTES
+            };
+            // Earlier files carry no buffer length: it is what lies between
+            // the header and the trailer.
+            let (data_start, data_length) = if legacy || keyed || rated {
+                (fixed, bytes.len().checked_sub(fixed + skills_length))
+            } else {
+                (
+                    fixed + 4,
+                    bytes
+                        .get(fixed..fixed + 4)
+                        .map(|length| u32::from_le_bytes(length.try_into().unwrap()) as usize),
+                )
+            };
+            let data_end = data_length
+                .filter(|length| *length >= 8)
+                .map(|length| data_start + length)
+                .filter(|end| bytes.len() == end + skills_length)
+                .ok_or_else(|| invalid("invalid account file length"))?;
             let version = i32::from_le_bytes(bytes[header + 8..header + 12].try_into().unwrap());
             let checksum = u32::from_le_bytes(bytes[header + 12..header + 16].try_into().unwrap());
-            let data_end = header + 16 + PLAYER_DATA_BUFFER_BYTES;
-            let data = &bytes[header + 16..data_end];
+            let data = &bytes[data_start..data_end];
             let skills = if legacy || keyed {
                 sim::SkillRatings::default()
             } else {
@@ -239,15 +280,11 @@ fn decode(bytes: &[u8]) -> io::Result<(LocalAccount, bool)> {
         }
         _ => return Err(invalid("invalid account payload tag")),
     };
-    Ok((LocalAccount { id, key, snapshot }, legacy || keyed))
+    Ok((LocalAccount { id, key, snapshot }, legacy || keyed || rated))
 }
 
 fn read(path: &Path) -> io::Result<(LocalAccount, bool)> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take((SNAPSHOT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    decode(&bytes)
+    decode(&fs::read(path)?)
 }
 
 fn random_id() -> io::Result<[u8; 16]> {

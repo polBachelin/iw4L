@@ -1,24 +1,64 @@
-use structured_data_iw4::{DataType, Definition, Error, Key, Lookup, Value};
+use std::{collections::BTreeMap, sync::Arc};
 
-use crate::{PLAYER_DATA_BUFFER_BYTES, PersistentDataError};
+use structured_data_iw4::{DataType, Definition, DefinitionSet, Error, Key, Lookup, Value};
+
+use crate::PersistentDataError;
 
 #[derive(Clone, Debug)]
 pub struct PlayerDataDefaults {
-    pub class_names: [Vec<u8>; 10],
+    /// One raw name per element of the schema's `customClasses` array.
+    pub class_names: Vec<Vec<u8>>,
     pub config: String,
+}
+
+/// Why a new account's `customClasses` names cannot be laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CustomClassesError {
+    /// The zones carry no player-data schema, so there are no accounts.
+    MissingSchema,
+    /// The player-data schema is loaded but has no definition with an
+    /// indexed `customClasses` array to name.
+    Unlaid(PersistentDataError),
+}
+
+impl std::fmt::Display for CustomClassesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let schema = crate::persistent_data::PLAYER_SCHEMA;
+        match self {
+            Self::MissingSchema => write!(f, "no `{schema}` schema in the zones"),
+            Self::Unlaid(error) => write!(
+                f,
+                "`{schema}` cannot lay out an indexed `customClasses` array ({error:?})"
+            ),
+        }
+    }
+}
+
+/// The element count of the `customClasses` array in the schema a new
+/// account is initialized from.
+pub fn custom_class_count(
+    schemas: &BTreeMap<String, Arc<DefinitionSet>>,
+) -> Result<usize, CustomClassesError> {
+    let definition =
+        crate::persistent_data::initial_definition(schemas).map_err(|error| match error {
+            PersistentDataError::MissingSchema => CustomClassesError::MissingSchema,
+            error => CustomClassesError::Unlaid(error),
+        })?;
+    crate::persistent_data::array_count(definition, &[Key::Name("customClasses")])
+        .map_err(CustomClassesError::Unlaid)
 }
 
 pub(crate) fn initialize(
     definition: &Definition,
     defaults: &PlayerDataDefaults,
 ) -> Result<Vec<u8>, PersistentDataError> {
-    if !(8..=PLAYER_DATA_BUFFER_BYTES).contains(&definition.size) {
+    if definition.size < 8 {
         return Err(PersistentDataError::InvalidBuffer);
     }
-    let mut bytes = vec![0; PLAYER_DATA_BUFFER_BYTES];
+    let mut bytes = vec![0; definition.size];
     bytes[..4].copy_from_slice(&definition.version.to_le_bytes());
     bytes[4..8].copy_from_slice(&definition.checksum.to_le_bytes());
-    let mut dirty = vec![0; PLAYER_DATA_BUFFER_BYTES.div_ceil(8)];
+    let mut dirty = crate::persistent_data::dirty_mask(definition);
     for (index, name) in defaults.class_names.iter().enumerate() {
         let keys = [
             Key::Name("customClasses"),
@@ -33,14 +73,19 @@ pub(crate) fn initialize(
         )?;
     }
     for command in commands(&defaults.config)? {
-        if !command
+        let Some(root) = command
             .first()
-            .is_some_and(|name| name.eq_ignore_ascii_case("setPlayerData"))
-            || command.len() < 3
-        {
+            .and_then(|verb| command_root(definition, verb))
+            .filter(|_| command.len() >= 3)
+        else {
             return Err(PersistentDataError::InvalidDefaults);
-        }
-        let lookup = lookup(definition, &command[1..command.len() - 1])?;
+        };
+        let path: Vec<String> = root
+            .map(str::to_owned)
+            .into_iter()
+            .chain(command[1..command.len() - 1].iter().cloned())
+            .collect();
+        let lookup = lookup(definition, &path)?;
         let text = command.last().unwrap().split('\0').next().unwrap();
         let value = match lookup.ty {
             DataType::String(_) | DataType::Enum(_) => Value::String(text),
@@ -62,6 +107,29 @@ pub(crate) fn initialize(
         definition.write(&mut bytes, &mut dirty, lookup, value)?;
     }
     Ok(bytes)
+}
+
+/// The schema path a defaults verb writes under: `setPlayerData` addresses
+/// the root, and `set<Field>` (MW3's `setCustomClasses`,
+/// `setPrivateMatchCustomClasses`) addresses the root field it names.
+fn command_root<'a>(definition: &'a Definition, verb: &str) -> Option<Option<&'a str>> {
+    if verb.eq_ignore_ascii_case("setPlayerData") {
+        return Some(None);
+    }
+    let field = verb
+        .get(..3)?
+        .eq_ignore_ascii_case("set")
+        .then(|| &verb[3..])?;
+    let DataType::Struct(root) = definition.root else {
+        return None;
+    };
+    definition
+        .structs
+        .get(root)?
+        .properties
+        .iter()
+        .find(|property| property.name.eq_ignore_ascii_case(field))
+        .map(|property| Some(property.name.as_str()))
 }
 
 fn lookup(definition: &Definition, tokens: &[String]) -> Result<Lookup, Error> {

@@ -26,7 +26,7 @@ pub struct FrontendAudio {
     pub iwd: Arc<NamespaceSoundIwd>,
 }
 
-const FRONTEND_SOUND_ZONE: &str = "iw4:code_post_gfx_mp";
+const FRONTEND_SOUND_ZONE: &str = "code_post_gfx_mp";
 
 #[derive(Resource)]
 struct FrontendAudioPrepare(Task<FrontendAudioWalked>);
@@ -69,6 +69,8 @@ fn start_frontend_audio_prepare(
     frontend: Option<Res<FrontendAudio>>,
     running: Option<Res<FrontendAudioPrepare>>,
     identity: Option<Res<LaunchIdentity>>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
+    mode: Option<Res<assets::MatchModeZones>>,
     silent: Option<Res<crate::AudioSilent>>,
     loading: (
         Option<Res<assets::MatchLoadBusy>>,
@@ -98,10 +100,13 @@ fn start_frontend_audio_prepare(
         return;
     }
     let games = GamesRoot(identity.games_root.clone());
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let mode = mode.map_or_else(asset_transport::ModeZones::default, |mode| mode.0.clone());
+    let zone = format!("{}:{FRONTEND_SOUND_ZONE}", profile.game().prefix());
     let pool = AsyncComputeTaskPool::get_or_init(TaskPool::default);
     let task = pool.spawn(async move {
         let mut lines = Vec::new();
-        let bank = match load_mp_sound_bank(&games, FRONTEND_SOUND_ZONE) {
+        let bank = match load_mp_sound_bank(profile, &games, &zone, &mode) {
             Ok(loaded) => {
                 lines.extend(loaded.gap_lines());
                 Some(Arc::new(loaded.catalog))
@@ -189,6 +194,7 @@ fn play_ui_sound_messages(
     bank: Option<Res<SoundBank>>,
     epoch: Res<crate::backend::MatchEpoch>,
     namespace: Option<Res<crate::ambient::SoundBankNamespace>>,
+    host: assets::HostNamespace,
 ) {
     let Some(bank) = bank else {
         for event in events.read().filter(|_| !crate::AudioSilent::active()) {
@@ -200,14 +206,14 @@ fn play_ui_sound_messages(
         }
         return;
     };
+    let host = host.get();
     for event in events.read() {
         if event.alias.is_empty() {
             continue;
         }
         let (ns, alias) = crate::aliases::match_ui_alias(
-            namespace
-                .as_deref()
-                .map_or(asset_core::AssetNamespace::Iw4, |ns| ns.namespace),
+            host,
+            namespace.as_deref().map_or(host, |ns| ns.namespace),
             &event.alias,
         );
         let outcome = play_alias_oneshot(
@@ -233,6 +239,7 @@ fn play_ui_music_messages(
     mut stop_events: MessageReader<UiStopMusic>,
     mut desired: ResMut<MenuSources>,
     bank: Option<Res<SoundBank>>,
+    host: assets::HostNamespace,
     runtime: Res<crate::AudioRuntime>,
 ) {
     if stop_events.read().count() > 0 {
@@ -260,7 +267,7 @@ fn play_ui_music_messages(
     };
     let Some(cue) = runtime.source_cue(crate::sources::SourceCueRequest {
         bank: bank.0.clone(),
-        namespace: asset_core::AssetNamespace::Iw4,
+        namespace: host.get(),
         alias,
         emitter: None,
         scope: crate::backend::AudioScope::Menu,

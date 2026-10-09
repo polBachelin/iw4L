@@ -187,7 +187,9 @@ pub(crate) fn drive_menus_with_pad(
         Res<crate::ConsoleState>,
         Res<frame::UiBindingCapture>,
     ),
-    time: Res<Time>,
+    // Menu timing, on the wall clock: the pause menu runs while the game's
+    // clock is stopped.
+    time: Res<Time<Real>>,
     mut requests: MessageWriter<UiMenuRequest>,
     mut repeat: Local<Option<(UiMenuKey, f32)>>,
 ) {

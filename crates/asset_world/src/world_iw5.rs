@@ -246,6 +246,7 @@ pub fn build_iw5_world_draw(
     let light_region_hulls = extract_iw5_light_regions(s, geometry)?;
     let reflection_probes = extract_iw5_reflection_probes(s, geometry, &materials)?;
     let dpvs = extract_iw5_dpvs(s, geometry)?;
+    let sun_effects = iw5_sun_effects(s, geometry.sun_effects, &materials);
 
     let outdoor_image_name = geometry.outdoor_image.and_then(|slot| {
         materials.image_index(iw4_ptr(slot)).and_then(|index| {
@@ -295,7 +296,7 @@ pub fn build_iw5_world_draw(
             outdoor_image_name,
             outdoor_image: None,
             outdoor_lookup: geometry.outdoor_lookup,
-            sun_effects: None,
+            sun_effects,
             t6_exposure: None,
             t5_sun_parse_exposure: None,
             sky_dynamic_intensity: None,
@@ -306,6 +307,38 @@ pub fn build_iw5_world_draw(
         },
         materials,
     ))
+}
+
+fn iw5_sun_effects(
+    s: &ZoneStream<'_>,
+    sun: Option<fastfile_iw5::GfxSunEffectsGeometry>,
+    materials: &MaterialCatalog,
+) -> Option<crate::world_draw::SunEffectsCapture> {
+    let sun = sun?;
+    let material = |slot, header: Option<fastfile_iw5::Ptr>, name: &[u8; 32], len| {
+        crate::world_draw::resolve_sun_material(
+            materials,
+            iw4_ptr(slot),
+            header.map(iw4_ptr),
+            crate::world_draw::sun_name(name, len),
+        )
+    };
+    crate::world_draw::sun_effects_from_record(
+        &sun.raw,
+        |off32, off64| s.layout(off32, off64),
+        material(
+            sun.sprite,
+            sun.sprite_header,
+            &sun.sprite_name,
+            sun.sprite_name_len,
+        ),
+        material(
+            sun.flare,
+            sun.flare_header,
+            &sun.flare_name,
+            sun.flare_name_len,
+        ),
+    )
 }
 
 fn aabb_children_offset(

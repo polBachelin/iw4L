@@ -3,6 +3,12 @@
 pub const RAW_FILE: usize = 16;
 
 pub const FONT: usize = 24;
+pub const FONT_PIXEL_HEIGHT_OFF: usize = 4;
+pub const FONT_GLYPH_COUNT_OFF: usize = 8;
+pub const FONT_MATERIAL_OFF: usize = 12;
+pub const FONT_GLOW_MATERIAL_OFF: usize = 16;
+pub const FONT_GLYPHS_OFF: usize = 20;
+const _: () = assert!(FONT == FONT_GLYPHS_OFF + 4);
 pub const GLYPH: usize = 24;
 pub const STRING_TABLE: usize = 16;
 pub const STRING_TABLE_CELL: usize = 8;
@@ -123,6 +129,7 @@ pub const WEAPON_COMPLETE_FIRE_TIME_OFF: usize = 0x5c;
 
 pub const WEAPON_DEF_WEAP_TYPE_OFF: usize = 0x2c;
 pub const WEAPON_DEF_WEAP_CLASS_OFF: usize = 0x30;
+pub const WEAPON_DEF_INVENTORY_TYPE_OFF: usize = 0x38;
 pub const WEAPON_DEF_FIRE_TYPE_OFF: usize = 0x3c;
 
 pub const WEAPON_DEF_WORLD_MODEL_OFF: usize = 0x1e0;
@@ -256,6 +263,10 @@ pub const WEAPON_DEF_PROJ_IMPACT_EXPLODE_OFF: usize = 0x78a;
 pub const WEAPON_DEF_STICK_TO_PLAYERS_OFF: usize = 0x78b;
 
 pub const WEAPON_DEF_STICKINESS_OFF: usize = 0x530;
+/// `float[SURF_TYPE_COUNT]` per surface type: how much of a bouncing
+/// projectile's speed along and against the surface it keeps.
+pub const WEAPON_DEF_PARALLEL_BOUNCE_OFF: usize = 0x548;
+pub const WEAPON_DEF_PERPENDICULAR_BOUNCE_OFF: usize = 0x54c;
 pub const WEAPON_DEF_HAS_DETONATOR_OFF: usize = 0x78e;
 pub const WEAPON_DEF_TIMED_DETONATION_OFF: usize = 0x790;
 pub const WEAPON_DEF_ROTATE_OFF: usize = 0x791;
@@ -336,6 +347,17 @@ pub const VEHICLE_DEF: usize = 1020;
 pub const VEHICLE_PHYS_DEF: usize = 180;
 pub const VEHICLE_SURFACE_SND_COUNT: usize = 31;
 pub const TRACER_DEF: usize = 112;
+pub const TRACER_DEF_MATERIAL_OFF: usize = 4;
+pub const TRACER_DEF_DRAW_INTERVAL_OFF: usize = 8;
+pub const TRACER_DEF_SPEED_OFF: usize = 0xc;
+pub const TRACER_DEF_BEAM_LENGTH_OFF: usize = 0x10;
+pub const TRACER_DEF_BEAM_WIDTH_OFF: usize = 0x14;
+pub const TRACER_DEF_SCREW_RADIUS_OFF: usize = 0x18;
+pub const TRACER_DEF_SCREW_DIST_OFF: usize = 0x1c;
+pub const TRACER_DEF_COLORS_OFF: usize = 0x20;
+pub const TRACER_COLOR_COUNT: usize = 5;
+const _: () = assert!(TRACER_DEF == TRACER_DEF_COLORS_OFF + TRACER_COLOR_COUNT * 16);
+pub const WEAPON_DEF_TRACER_OFF: usize = 1732;
 pub const ADS_OVERLAY: usize = 36;
 
 pub const ADS_OVERLAY_SHADER_OFF: usize = 0;
@@ -399,10 +421,79 @@ pub const WEAPON_COMPLETE_RELOAD_OVERRIDES_OFF: usize = 60;
 pub const RELOAD_STATE_TIMER_ADD_TIME_OFF: usize = 4;
 
 pub const MENU_LIST: usize = 12;
+pub const MENU_LIST_COUNT_OFF: usize = 4;
+pub const MENU_LIST_MENUS_OFF: usize = 8;
 pub const MENU_DEF: usize = 176;
+pub const MENU_DEF_WINDOW_OFF: usize = 4;
+pub const MENU_DEF_ITEM_COUNT_OFF: usize = 168;
+pub const MENU_DEF_ITEMS_OFF: usize = 172;
+const _: () = assert!(MENU_DEF == MENU_DEF_ITEMS_OFF + 4);
+const _: () = assert!(MENU_DEF_ITEM_COUNT_OFF == MENU_DEF_WINDOW_OFF + WINDOW_DEF);
+// MW3 moved the menu's own scalars, handlers and expressions out of
+// `menuDef_t` into `menuData_t`, which `menuDef_t` points at from offset 0.
 pub const MENU_DATA: usize = 212;
+pub const MENU_DATA_FULLSCREEN_OFF: usize = 0;
+/// onOpen, onCloseRequest, onClose, onESC, onFocusDueToClose.
+pub const MENU_DATA_HANDLER_SETS_OFF: usize = 24;
+pub const MENU_DATA_ON_KEY_OFF: usize = 44;
+pub const MENU_DATA_VISIBLE_EXP_OFF: usize = 48;
+pub const MENU_DATA_ALLOWED_BINDING_OFF: usize = 52;
+pub const MENU_DATA_SOUND_NAME_OFF: usize = 56;
+pub const MENU_DATA_FOCUS_COLOR_OFF: usize = 60;
+/// rectX, rectY, rectW, rectH, then openSound, closeSound, soundLoop.
+pub const MENU_DATA_EXPS_OFF: usize = 76;
+pub const MENU_DATA_RECT_EXP_COUNT: usize = 4;
+pub const MENU_DATA_EXP_COUNT: usize = 7;
+pub const MENU_DATA_EXPRESSION_DATA_OFF: usize = 204;
+const _: () = assert!(MENU_DATA_ON_KEY_OFF == MENU_DATA_HANDLER_SETS_OFF + 5 * 4);
+const _: () = assert!(MENU_DATA_EXPS_OFF == MENU_DATA_FOCUS_COLOR_OFF + 16);
 pub const WINDOW_DEF: usize = 164;
+// `windowDef_t` is MW2's, field for field.
+pub const WINDOW_DEF_NAME_OFF: usize = 0;
+pub const WINDOW_DEF_RECT_OFF: usize = 4;
+pub const WINDOW_DEF_GROUP_OFF: usize = 44;
+pub const WINDOW_DEF_STYLE_OFF: usize = 48;
+pub const WINDOW_DEF_OWNER_DRAW_OFF: usize = 56;
+pub const WINDOW_DEF_STATIC_FLAGS_OFF: usize = 68;
+pub const WINDOW_DEF_FORE_COLOR_OFF: usize = 80;
+pub const WINDOW_DEF_BACK_COLOR_OFF: usize = 96;
+pub const WINDOW_DEF_BACKGROUND_OFF: usize = 160;
+const _: () = assert!(WINDOW_DEF == WINDOW_DEF_BACKGROUND_OFF + 4);
+pub const RECT_DEF_HORZ_ALIGN_OFF: usize = 16;
+pub const RECT_DEF_VERT_ALIGN_OFF: usize = 17;
 pub const ITEM_DEF: usize = 384;
+pub const ITEM_DEF_TYPE_OFF: usize = 184;
+pub const ITEM_DEF_FONT_ENUM_OFF: usize = 196;
+pub const ITEM_DEF_TEXT_ALIGN_MODE_OFF: usize = 200;
+pub const ITEM_DEF_TEXT_ALIGN_X_OFF: usize = 204;
+pub const ITEM_DEF_TEXT_ALIGN_Y_OFF: usize = 208;
+pub const ITEM_DEF_TEXT_SCALE_OFF: usize = 212;
+pub const ITEM_DEF_TEXT_STYLE_OFF: usize = 216;
+pub const ITEM_DEF_GAME_MSG_WINDOW_INDEX_OFF: usize = 220;
+pub const ITEM_DEF_TEXT_OFF: usize = 228;
+/// mouseEnterText, mouseExitText, mouseEnter, mouseExit, action, accept,
+/// onFocus, hasFocus (new in MW3), leaveFocus.
+pub const ITEM_DEF_HANDLER_SETS_OFF: usize = 240;
+pub const ITEM_DEF_HANDLER_SET_COUNT: usize = 9;
+pub const ITEM_DEF_DVAR_OFF: usize = 276;
+pub const ITEM_DEF_DVAR_TEST_OFF: usize = 280;
+pub const ITEM_DEF_ON_KEY_OFF: usize = 284;
+pub const ITEM_DEF_ENABLE_DVAR_OFF: usize = 288;
+pub const ITEM_DEF_LOCAL_VAR_OFF: usize = 292;
+pub const ITEM_DEF_DVAR_FLAGS_OFF: usize = 296;
+pub const ITEM_DEF_FOCUS_SOUND_OFF: usize = 300;
+pub const ITEM_DEF_TYPE_DATA_OFF: usize = 312;
+pub const ITEM_DEF_FLOAT_EXPRESSION_COUNT_OFF: usize = 316;
+pub const ITEM_DEF_FLOAT_EXPRESSIONS_OFF: usize = 320;
+pub const ITEM_DEF_VISIBLE_EXP_OFF: usize = 324;
+pub const ITEM_DEF_DISABLED_EXP_OFF: usize = 328;
+pub const ITEM_DEF_TEXT_EXP_OFF: usize = 332;
+pub const ITEM_DEF_MATERIAL_EXP_OFF: usize = 336;
+pub const ITEM_DEF_GLOW_COLOR_OFF: usize = 340;
+pub const ITEM_DEF_TEXT_ALIGN_Y_EXP_OFF: usize = 380;
+const _: () =
+    assert!(ITEM_DEF_DVAR_OFF == ITEM_DEF_HANDLER_SETS_OFF + ITEM_DEF_HANDLER_SET_COUNT * 4);
+const _: () = assert!(ITEM_DEF == ITEM_DEF_TEXT_ALIGN_Y_EXP_OFF + 4);
 pub const ITEM_DEF_DATA: usize = 4;
 pub const EXPRESSION_SUPPORTING_DATA: usize = 24;
 pub const UI_FUNCTION_LIST: usize = 8;
@@ -427,6 +518,28 @@ pub const ITEM_FLOAT_EXPRESSION: usize = 8;
 pub const EDIT_FIELD_DEF: usize = 32;
 pub const NEWS_TICKER_DEF: usize = 12;
 pub const TEXT_SCROLL_DEF: usize = 4;
+// `Statement_s` grew MW3's persistent-state block after `supportingData`;
+// the three leading fields, the entry and the operand keep MW2's layout.
+pub const STATEMENT_NUM_ENTRIES_OFF: usize = 0;
+pub const STATEMENT_ENTRIES_OFF: usize = 4;
+pub const STATEMENT_SUPPORTING_DATA_OFF: usize = 8;
+pub const EXPRESSION_ENTRY_TYPE_OFF: usize = 0;
+/// The operator, or the operand's data type.
+pub const EXPRESSION_ENTRY_DATA_OFF: usize = 4;
+pub const EXPRESSION_ENTRY_OPERAND_VALUE_OFF: usize = 8;
+pub const EXPRESSION_SUPPORTING_DATA_STATIC_DVARS_OFF: usize = 8;
+pub const STATIC_DVAR_NAME_OFF: usize = 4;
+pub const MENU_EVENT_HANDLER_TYPE_OFF: usize = 4;
+pub const CONDITIONAL_SCRIPT_EXPRESSION_OFF: usize = 4;
+pub const SET_LOCAL_VAR_DATA_EXPRESSION_OFF: usize = 4;
+pub const LIST_BOX_DEF_ON_DOUBLE_CLICK_OFF: usize = 416;
+pub const MULTI_DEF_LIST_OFF: usize = 0;
+pub const MULTI_DEF_STRING_OFF: usize = 128;
+pub const MULTI_DEF_FLOAT_OFF: usize = 256;
+pub const MULTI_DEF_COUNT_OFF: usize = 384;
+pub const MULTI_DEF_STR_DEF_OFF: usize = 388;
+pub const MULTI_DEF_CHOICES: usize = 32;
+const _: () = assert!(MULTI_DEF == MULTI_DEF_STR_DEF_OFF + 4);
 
 pub const MAP_ENTS: usize = 96;
 
@@ -559,6 +672,8 @@ pub const FX_SPOT_LIGHT_DEF: usize = 0x18;
 
 pub const FX_IMPACT_TABLE: usize = 8;
 pub const FX_IMPACT_ENTRY: usize = 140;
+pub const FX_IMPACT_TABLE_ROWS: usize = 15;
+pub const FX_IMPACT_FLESH_COUNT: usize = 4;
 pub const SURFACE_FX_TABLE: usize = 8;
 pub const SURFACE_FX_ENTRY: usize = 124;
 pub const SURF_TYPE_NUM: usize = 31;
@@ -635,6 +750,8 @@ pub const GFX_HERO_ONLY_LIGHT: usize = 0x44;
 pub const GFX_DPVS_STATIC: usize = 0x6c;
 pub const GFX_DPVS_DYNAMIC: usize = 0x30;
 pub const MATERIAL_MEMORY: usize = 8;
+/// `sunflare_t`, laid out as in IW4.
+pub const SUNFLARE: usize = 0x60;
 
 pub const FX_WORLD: usize = 0x74;
 pub const FX_GLASS_SYSTEM: usize = 0x70;

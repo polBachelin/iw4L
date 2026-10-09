@@ -1,6 +1,15 @@
 use asset_core::{AssetEdge, IndexSpace};
 use fastfile_iw4::Ptr;
 
+/// The link maps key MW3 slots by the same block/offset pair as MW2's;
+/// `MaterialCatalog::iw5_loaded` already binds them that way.
+pub(crate) fn iw5_link_ptr(p: fastfile_iw5::Ptr) -> Ptr {
+    Ptr {
+        block: p.block,
+        offset: p.offset,
+    }
+}
+
 pub(crate) trait AssetEdgeFromPtrs<S: IndexSpace> {
     fn unresolved_for(slot: Option<Ptr>, alias: Option<Ptr>) -> AssetEdge<S>;
     fn from_capture(slot: Option<Ptr>, alias: Option<Ptr>) -> AssetEdge<S>;

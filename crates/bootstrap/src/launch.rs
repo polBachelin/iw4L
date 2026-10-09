@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use asset_audio::load_mp_sound_bank;
 use asset_game::{load_mp_localized_strings, load_ui_menu_catalog};
-use asset_transport::{LoadProgress, find_runtime_common_mp, find_zone_file, list_mp_map_packs};
+use asset_transport::{LoadProgress, ModeZones, RuntimeProfile, find_zone_file, list_mp_map_packs};
 use assets::{
-    LoadingPreviewSource, LoadingScreen, MatchLoadRequest, NamespaceSoundIwd, NamespaceTrees,
+    LoadingPreviewSource, LoadingScreen, MatchLoadRequest, MatchModeZones, MatchRuntimeProfile,
+    NamespaceSoundIwd, NamespaceTrees,
 };
 use audio::{SoundBank, SoundIwd};
 use bevy::prelude::*;
@@ -31,6 +32,57 @@ enum Role {
     Dedicated,
     Client,
     Replay,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Frontend {
+    Multiplayer,
+    Survival,
+}
+
+/// Whether the process presents: a window, swapchain and redraw-paced loop, or
+/// none of them. A dedicated server is always headless; a listen host may be
+/// too, and still plays its local client against the authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Presentation {
+    Window,
+    Headless,
+}
+
+impl Frontend {
+    const fn runtime(self) -> RuntimeProfile {
+        match self {
+            Self::Multiplayer => RuntimeProfile::Iw4,
+            Self::Survival => RuntimeProfile::Iw5,
+        }
+    }
+
+    /// The game mode the frontend fixes for its matches. The multiplayer
+    /// frontend leaves it to the lobby, or to `IW4L_GAMETYPE`.
+    const fn mode_selection(self) -> Option<sim::HostGameModeSelection> {
+        match self {
+            Self::Multiplayer => None,
+            Self::Survival => Some(sim::HostGameModeSelection::SURVIVAL),
+        }
+    }
+
+    fn survival_teams(self) -> Option<sim::SurvivalTeams> {
+        match self {
+            Self::Multiplayer => None,
+            Self::Survival => Some(sim::SurvivalTeams(
+                assets::survival_team_rules()
+                    .unwrap_or_else(|error| fatal(&format!("survival: {error}"))),
+            )),
+        }
+    }
+
+    fn mode_zones(self) -> ModeZones {
+        match self {
+            Self::Multiplayer => ModeZones::default(),
+            Self::Survival => assets::survival_mode_zones()
+                .unwrap_or_else(|error| fatal(&format!("survival: {error}"))),
+        }
+    }
 }
 
 struct LaunchConfig {
@@ -83,8 +135,10 @@ fn install_class_catalog(
     commands.insert_resource(ui::frontend::maps::MapPresentation::from_tables(
         &common.tables,
     ));
+    let classes = std::sync::Arc::new(session::class_catalog(&common.weapons, RuntimeProfile::Iw4));
+    diag::info!(Launch, "class catalog: {}", classes.summary());
     let mut class_catalog =
-        ClassLoadoutCatalog::from_weapon_registry(std::sync::Arc::new(common.weapons))
+        ClassLoadoutCatalog::from_weapon_registry(std::sync::Arc::new(common.weapons), classes)
             .with_weapon_tables(&common.tables);
     if let Some(table) = shell.perk_table.as_ref() {
         class_catalog = class_catalog.with_perk_table(table);
@@ -165,9 +219,44 @@ pub fn launch(
             Role::Listen,
             None,
             cheats,
+            Frontend::Multiplayer,
+            Presentation::Window,
         ),
-        LaunchMode::Serve(zone) => {
-            run_map(games, artifacts, zone, None, Role::Dedicated, None, cheats)
+        LaunchMode::Serve(zone) => run_map(
+            games,
+            artifacts,
+            zone,
+            None,
+            Role::Dedicated,
+            None,
+            cheats,
+            Frontend::Multiplayer,
+            Presentation::Headless,
+        ),
+        LaunchMode::Survival { zone, headless } => {
+            if headless && acceptance.is_some() {
+                fatal("render acceptance needs a window; it is not available with --headless");
+            }
+            let zone = zone
+                .or_else(|| assets::survival_setting("map").map(str::to_owned))
+                .unwrap_or_else(|| {
+                    fatal("survival: no map given and none in the survival settings")
+                });
+            run_map(
+                games,
+                artifacts,
+                zone,
+                acceptance,
+                Role::Listen,
+                None,
+                cheats,
+                Frontend::Survival,
+                if headless {
+                    Presentation::Headless
+                } else {
+                    Presentation::Window
+                },
+            )
         }
         LaunchMode::ExportGltf(zone) => {
             if acceptance.is_some() {
@@ -194,11 +283,15 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
             game.prefix()
         ));
     }
-    let common_mp = find_runtime_common_mp(&games, &found.path).map(|zone| zone.path);
+    let common_mp = RuntimeProfile::Iw4
+        .find_common_mp(&games, &found.path)
+        .map(|zone| zone.path);
 
     let prepared = match bevy::tasks::futures_lite::future::block_on(assets::load_prepared_match(
+        RuntimeProfile::Iw4,
         Ok(found.path),
         common_mp,
+        Vec::new(),
         asset_transport::LoadProgress::default(),
     )) {
         assets::MatchLoadOutcome::Ready(prepared) => prepared,
@@ -283,7 +376,7 @@ fn run_menu(
     steam: &asset_transport::SteamProbe,
 ) {
     start_perf(None, "menu");
-    let ui_games = asset_game::ui_games_root(&games).unwrap_or_else(|error| {
+    let ui_games = asset_game::ui_games_root(RuntimeProfile::Iw4, &games).unwrap_or_else(|error| {
         for line in asset_transport::games_content_report(&games) {
             diag::warn!(Launch, "{line}");
         }
@@ -291,7 +384,8 @@ fn run_menu(
         fatal(&mw2_not_found(&games, steam))
     });
     let shell_common = assets::load_pool().spawn(assets::load_shell_common(games.clone()));
-    let (mut menus, menu_report) = load_ui_menu_catalog(&ui_games);
+    let (mut menus, menu_report) =
+        load_ui_menu_catalog(RuntimeProfile::Iw4, &ui_games, &ModeZones::default());
     ui::install_frontend_menus(&mut menus).unwrap_or_else(|error| fatal(&error));
     for line in &menu_report {
         diag::info!(Launch, "{line}");
@@ -364,7 +458,12 @@ fn run_menu(
         Err(error) => diag::warn!(Launch, "menu: localize: {error}"),
     }
     app.insert_resource(menus);
-    let menu_bank = match load_mp_sound_bank(&ui_games, "iw4:code_post_gfx_mp") {
+    let menu_bank = match load_mp_sound_bank(
+        RuntimeProfile::Iw4,
+        &ui_games,
+        "iw4:code_post_gfx_mp",
+        &ModeZones::default(),
+    ) {
         Ok(loaded) => {
             diag::info!(Launch, "menu: sound bank ready");
             for line in loaded.gap_lines() {
@@ -456,9 +555,12 @@ fn run_play(
         Role::Replay,
         Some(session),
         sim::HostCheats::default(),
+        Frontend::Multiplayer,
+        Presentation::Window,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_map(
     games: asset_transport::GamesRoot,
     artifacts: PathBuf,
@@ -467,6 +569,8 @@ fn run_map(
     role: Role,
     playback: Option<ReplayPlayback>,
     cheats: sim::HostCheats,
+    frontend: Frontend,
+    presentation: Presentation,
 ) {
     let found = find_zone_file(&games, &zone_arg);
     let zone_alias = found.as_ref().ok().and_then(|z| z.alias_note.clone());
@@ -482,7 +586,17 @@ fn run_map(
         .map(|z| z.path.clone())
         .map_err(|e| e.clone());
     let common_mp = match &zone_ff {
-        Ok(path) => find_runtime_common_mp(&games, path).map(|z| z.path),
+        Ok(path) => frontend
+            .runtime()
+            .find_common_mp(&games, path)
+            .map(|z| z.path),
+        Err(e) => Err(e.clone()),
+    };
+    let mode = frontend.mode_zones();
+    let mode_selection = frontend.mode_selection();
+    let survival_teams = frontend.survival_teams();
+    let mode_zones = match &zone_ff {
+        Ok(path) => frontend.runtime().find_mode_zones(&games, path, &mode),
         Err(e) => Err(e.clone()),
     };
     let probe = launch_report(zone.clone(), common_mp.clone(), zone_ff.clone(), zone_alias);
@@ -499,6 +613,9 @@ fn run_map(
         .unwrap_or_else(|error| fatal(&format!("master content: {error}")));
 
     let master_intent = if role == Role::Replay {
+        net::MasterLaunchIntent::disabled()
+    } else if frontend == Frontend::Survival {
+        diag::info!(Net, "master launch disabled: survival is played offline");
         net::MasterLaunchIntent::disabled()
     } else if have.0 & net::CONTENT_IW4 == 0 {
         diag::warn!(
@@ -524,8 +641,12 @@ fn run_map(
         artifacts,
     };
     start_perf(Some(zone.clone()), role_name(config.role));
-    let (mut menus, menu_report) = load_ui_menu_catalog(&games);
-    ui::install_frontend_menus(&mut menus).unwrap_or_else(|error| fatal(&error));
+    let (mut menus, menu_report) = load_ui_menu_catalog(frontend.runtime(), &games, &mode);
+    match frontend {
+        Frontend::Multiplayer => ui::install_frontend_menus(&mut menus),
+        Frontend::Survival => ui::install_survival_menus(&mut menus, &zone_arg),
+    }
+    .unwrap_or_else(|error| fatal(&error));
     for line in &menu_report {
         diag::info!(Launch, "{line}");
     }
@@ -542,19 +663,26 @@ fn run_map(
         app.insert_resource(ui::PresentModeOverride(present_mode));
     }
     app.insert_resource(master_intent);
-    let dedicated = config.role == Role::Dedicated;
-    if dedicated {
+    // A master join turns the launch into a client, which exists to present
+    // the remote match: it gets a window whatever the launch verb asked for.
+    let headless = presentation == Presentation::Headless && config.role != Role::Client;
+    if headless {
+        diag::info!(
+            Launch,
+            "presentation: headless role={} (no window, continuous loop)",
+            role_name(config.role)
+        );
         app.insert_resource(bevy::winit::WinitSettings::continuous())
             .insert_resource(frame::Headless);
     }
     app.add_plugins(crate::plugins::default_plugins_with_quiet_log(
         WindowPlugin {
-            exit_condition: if dedicated {
+            exit_condition: if headless {
                 bevy::window::ExitCondition::DontExit
             } else {
                 bevy::window::ExitCondition::OnAllClosed
             },
-            primary_window: (!dedicated).then(|| Window {
+            primary_window: (!headless).then(|| Window {
                 title: match config.role {
                     Role::Replay => format!("iw4l — play {}", config.zone),
                     Role::Listen | Role::Dedicated => format!("iw4l — {}", config.zone),
@@ -574,23 +702,31 @@ fn run_map(
             request_id: 0,
         });
     }
-    let ui_games_root = asset_game::ui_games_root(&games).ok().map(|root| root.0);
+    let ui_games_root = asset_game::ui_games_root(frontend.runtime(), &games)
+        .ok()
+        .map(|root| root.0);
     app.insert_resource(launch_identity(&config))
         .insert_resource(cheats)
         .insert_resource(probe)
         .insert_resource(menus)
+        .insert_resource(MatchRuntimeProfile(frontend.runtime()))
+        .insert_resource(MatchModeZones(mode))
         .insert_resource(MatchLoadRequest {
             request_id: 0,
             load_key: Default::default(),
             zone: zone.clone(),
             zone_ff,
             common_mp,
+            mode_zones,
             progress: progress.clone(),
         })
         .insert_resource(LoadingScreen::new(
             progress.clone(),
             loading_title,
-            sim::host_game_mode_kind().display_name().to_owned(),
+            mode_selection
+                .unwrap_or_else(sim::HostGameModeSelection::from_env)
+                .display_name()
+                .to_owned(),
         ))
         .insert_resource(UiAssetRoot(ui_games_root))
         .insert_resource(StartupCommands {
@@ -604,6 +740,12 @@ fn run_map(
             layers.show_only([UiLayer::Loading, UiLayer::Overlay]);
             layers
         });
+    if let Some(selection) = mode_selection {
+        app.insert_resource(selection);
+    }
+    if let Some(teams) = survival_teams {
+        app.insert_resource(teams);
+    }
     if let Some(run) = acceptance_run {
         diag::info!(
             Launch,

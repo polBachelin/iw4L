@@ -13,7 +13,13 @@ use crate::localize::decode_localized_text;
 use asset_core::AssetRef;
 use asset_iw4::size as sz;
 use asset_material::{TS_2D, TS_COLOR_MAP, decode_zone_image_rgba};
-use asset_transport::{GamesRoot, ZoneMemory, find_zone_file, game_root_for_zone, open_zone};
+use asset_transport::{
+    GamesRoot, ModeZones, RuntimeProfile, ZoneGame, ZoneMemory, find_zone_file, game_root_for_zone,
+    open_zone,
+};
+
+mod iw5;
+pub use iw5::capture_iw5_string_table;
 
 pub const ITEM_TYPE_BUTTON: i32 = 1;
 
@@ -77,6 +83,8 @@ pub struct ItemHandlers {
     pub mouse_enter: Vec<MenuEvent>,
     pub mouse_exit: Vec<MenuEvent>,
     pub focus: Vec<MenuEvent>,
+    /// MW3's `hasFocus`; MW2 items have none.
+    pub has_focus: Vec<MenuEvent>,
     pub leave_focus: Vec<MenuEvent>,
 }
 
@@ -354,6 +362,9 @@ pub struct MenuCatalog {
     pub walked: usize,
 
     pub font_headers: usize,
+
+    /// The menu the menu screen opens; the installed frontend names it.
+    pub root_menu: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -544,23 +555,54 @@ pub const HUD_CHROME_MENUS: &[&str] = &[
     "perks_info_hd",
 ];
 
-pub fn ui_games_root(games: &GamesRoot) -> Result<GamesRoot, String> {
-    let anchor = find_zone_file(games, "iw4:common_mp")?;
+fn ui_zone_key(profile: RuntimeProfile, zone: &str) -> String {
+    format!("{}:{zone}", profile.game().prefix())
+}
+
+pub fn ui_games_root(profile: RuntimeProfile, games: &GamesRoot) -> Result<GamesRoot, String> {
+    let anchor = find_zone_file(games, &ui_zone_key(profile, "common_mp"))?;
     game_root_for_zone(&anchor.path).map(GamesRoot)
 }
 
-pub fn load_ui_menu_catalog(games: &GamesRoot) -> (MenuCatalog, Vec<String>) {
+/// The runtime's UI zones, then the launch mode's zones in their load order:
+/// a menu a later zone carries replaces the one an earlier zone had.
+pub fn load_ui_menu_catalog(
+    profile: RuntimeProfile,
+    games: &GamesRoot,
+    mode: &ModeZones,
+) -> (MenuCatalog, Vec<String>) {
     let mut catalog = MenuCatalog::default();
     let mut report = Vec::new();
-    let games = match ui_games_root(games) {
+    let games = match ui_games_root(profile, games) {
         Ok(root) => root,
         Err(error) => return (catalog, vec![format!("menu catalog unavailable: {error}")]),
     };
-    report.push(format!("menu asset root (IW4): {}", games.0.display()));
-    for zone in UI_MENU_ZONES {
-        match find_zone_file(&games, &format!("iw4:{zone}")) {
+    report.push(format!(
+        "menu asset root ({}): {}",
+        profile.game().prefix().to_ascii_uppercase(),
+        games.0.display()
+    ));
+    let mode_zones = mode.names().iter().map(String::as_str);
+    for (index, zone) in UI_MENU_ZONES.iter().copied().chain(mode_zones).enumerate() {
+        let mode_zone = index >= UI_MENU_ZONES.len();
+        match find_zone_file(&games, &ui_zone_key(profile, zone)) {
             Ok(found) => match load_menu_catalog_with_iwd(&found.path, Some(&games.0)) {
                 Ok(part) => {
+                    if mode_zone {
+                        let replaced: Vec<_> = part
+                            .menus
+                            .keys()
+                            .filter(|name| catalog.menus.contains_key(*name))
+                            .cloned()
+                            .collect();
+                        if !replaced.is_empty() {
+                            report.push(format!(
+                                "menu catalog: mode zone {zone} replaces {} menus: {}",
+                                replaced.len(),
+                                replaced.join(" ")
+                            ));
+                        }
+                    }
                     report.push(format!(
                         "menu catalog: {zone} {} menus ({} lists, {} assets, {} font headers, {} fonts; main={}, main_text={}) from {}",
                         part.menus.len(),
@@ -596,23 +638,28 @@ pub fn load_menu_catalog(path: &Path) -> Result<MenuCatalog, String> {
 
 fn load_menu_catalog_with_iwd(path: &Path, games: Option<&Path>) -> Result<MenuCatalog, String> {
     let image = open_zone(path).map_err(|e| e.to_string())?;
+    let russian_fonts = path
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name.eq_ignore_ascii_case("russian"));
+    match image.game {
+        ZoneGame::Iw4 => {}
+        ZoneGame::Iw5 => return iw5::load_menu_catalog(path, &image, games, russian_fonts),
+        other => return Err(format!("no UI catalog walk for {} zones", other.prefix())),
+    }
     let header = image.header().map_err(|e| e.to_string())?;
     let mut memory = ZoneMemory::for_header(&header);
     let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
     let mut sink = MenuSink {
         catalog: MenuCatalog::default(),
-        russian_fonts: path
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|name| name.eq_ignore_ascii_case("russian")),
+        russian_fonts,
         names: HashMap::new(),
         script_sets: HashMap::new(),
         script_set_stack: Vec::new(),
         branches: Vec::new(),
         image_links: HashMap::new(),
-        images: Vec::new(),
+        ui_images: UiImageSet::default(),
         technique_links: HashMap::new(),
-        material_ts2d: HashMap::new(),
         loading_asset: None,
     };
     load_zone(&mut stream, &mut sink).map_err(|error| match sink.loading_asset {
@@ -620,6 +667,105 @@ fn load_menu_catalog_with_iwd(path: &Path, games: Option<&Path>) -> Result<MenuC
         None => format!("asset table: {error:?}"),
     })?;
     Ok(sink.finish_and_take(games))
+}
+
+fn insert_font(catalog: &mut MenuCatalog, rec: &FontCapture<'_>, russian_fonts: bool) {
+    let mut glyphs = Vec::new();
+    for chunk in rec.glyphs.chunks_exact(sz::GLYPH) {
+        let mut row = [0u8; sz::GLYPH];
+        row.copy_from_slice(chunk);
+        glyphs.push(GlyphCapture::from_row(&row));
+    }
+    // Russian zone atlases index Cyrillic by Windows-1251 bytes. Keep
+    // those entries for legacy localized strings and add Unicode aliases
+    // for UTF-8 user text. Other language atlases must not reinterpret them.
+    if russian_fonts {
+        let aliases: Vec<_> = glyphs
+            .iter()
+            .filter_map(|glyph| {
+                let letter = match glyph.letter {
+                    0xc0..=0xff => 0x0410 + glyph.letter - 0xc0,
+                    0x80 => 0x0402,
+                    0x81 => 0x0403,
+                    0x83 => 0x0453,
+                    0x8a => 0x0409,
+                    0x8c => 0x040a,
+                    0x8d => 0x040c,
+                    0x8e => 0x040b,
+                    0x8f => 0x040f,
+                    0x90 => 0x0452,
+                    0x9a => 0x0459,
+                    0x9c => 0x045a,
+                    0x9d => 0x045c,
+                    0x9e => 0x045b,
+                    0x9f => 0x045f,
+                    0xa1 => 0x040e,
+                    0xa2 => 0x045e,
+                    0xa3 => 0x0408,
+                    0xa5 => 0x0490,
+                    0xa8 => 0x0401,
+                    0xaa => 0x0404,
+                    0xaf => 0x0407,
+                    0xb2 => 0x0406,
+                    0xb3 => 0x0456,
+                    0xb4 => 0x0491,
+                    0xb8 => 0x0451,
+                    0xba => 0x0454,
+                    0xbc => 0x0458,
+                    0xbd => 0x0405,
+                    0xbe => 0x0455,
+                    0xbf => 0x0457,
+                    _ => return None,
+                };
+                if glyphs.iter().any(|existing| existing.letter == letter) {
+                    return None;
+                }
+                let mut alias = *glyph;
+                alias.letter = letter;
+                Some(alias)
+            })
+            .collect();
+        glyphs.extend(aliases);
+        if let Some(extended) = glyphs.get_mut(0x60..) {
+            extended.sort_by_key(|glyph| glyph.letter);
+        }
+    }
+    catalog.fonts.insert(
+        rec.name.to_ascii_lowercase(),
+        FontDef {
+            name: rec.name.to_owned(),
+            pixel_height: rec.pixel_height,
+            material: rec.material.to_owned(),
+            glow_material: rec.glow_material.to_owned(),
+            glyphs,
+        },
+    );
+}
+
+fn insert_rawfile(catalog: &mut MenuCatalog, name: &str, data: &[u8], zlib_compressed: bool) {
+    let n = name.replace('\\', "/");
+    let is_arena = n.eq_ignore_ascii_case("mp/basemaps.arena")
+        || n.rsplit('/')
+            .next()
+            .is_some_and(|leaf| leaf.eq_ignore_ascii_case("basemaps.arena"));
+    let lower = n.to_ascii_lowercase();
+    let is_config = lower.ends_with(".cfg");
+    let is_shock = lower.starts_with("shock/") && lower.ends_with(".shock");
+    if !is_arena && !is_config && !is_shock {
+        return;
+    }
+    let bytes = if zlib_compressed {
+        asset_transport::inflate_zlib(data).unwrap_or_else(|_| data.to_vec())
+    } else {
+        let mut bytes = data.to_vec();
+        if bytes.last() == Some(&0) {
+            bytes.pop();
+        }
+        bytes
+    };
+    if let Ok(text) = String::from_utf8(bytes) {
+        catalog.rawfiles.insert(n, text);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -640,7 +786,7 @@ struct CapturedZoneImage {
     width: u16,
     height: u16,
     format: u32,
-    payload: Vec<u8>,
+    payload: Arc<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -659,17 +805,23 @@ struct MenuSink {
     script_set_stack: Vec<Ptr>,
     branches: Vec<(Option<String>, Vec<MenuEvent>)>,
     image_links: HashMap<Ptr, ImageLink>,
-    images: Vec<CapturedZoneImage>,
+    ui_images: UiImageSet,
 
     technique_links: HashMap<Ptr, TechniqueLink>,
-
-    material_ts2d: HashMap<String, usize>,
 
     loading_asset: Option<(usize, AssetType, Ptr)>,
 }
 
 fn ptr_key(p: Ptr) -> (u8, u32) {
     (p.block, p.offset)
+}
+
+/// The technique-set facts a HUD material plan reads, in IW4 slot order.
+#[derive(Clone, Copy)]
+struct HudTechniqueSlots {
+    slots: u64,
+    scanned: u64,
+    unlit_pass_count: u8,
 }
 
 fn hud_pass_state_bits(
@@ -703,17 +855,17 @@ fn hud_pass_state_bits(
 fn hud_unlit_pass_states(
     state_bits_entry: Option<&[u8; asset_iw4::size::TECHNIQUE_SLOT_COUNT]>,
     table: &[[u32; 2]],
-    technique_set: Option<fastfile_iw4::TechniqueSetGeometry>,
+    technique: Option<HudTechniqueSlots>,
 ) -> (Option<u8>, Vec<[u32; 2]>) {
-    let count = technique_set
-        .filter(|set| set.technique_slots_scanned & (1 << asset_iw4::TECHNIQUE_UNLIT) != 0)
-        .map(|set| set.pass_count_by_slot[asset_iw4::TECHNIQUE_UNLIT]);
+    let count = technique
+        .filter(|set| set.scanned & (1 << asset_iw4::TECHNIQUE_UNLIT) != 0)
+        .map(|set| set.unlit_pass_count);
     let states = (0..usize::from(count.unwrap_or(0)))
         .map(|pass| {
             asset_iw4::color_pass_row_for_tech_type_pass(
                 state_bits_entry,
                 table,
-                technique_set.map_or(0, |set| set.technique_slots),
+                technique.map_or(0, |set| set.slots),
                 asset_iw4::TECHNIQUE_UNLIT,
                 pass,
             )
@@ -721,6 +873,81 @@ fn hud_unlit_pass_states(
         .collect::<Option<Vec<_>>>()
         .unwrap_or_default();
     (count, states)
+}
+
+/// A UI material as the HUD reads it, whichever game's walk produced it.
+/// Texture images index the walk's `UiImageSet`.
+struct HudMaterialCapture {
+    key: String,
+    texture_atlas: [u8; 2],
+    state_bits_entry: Option<[u8; asset_iw4::size::TECHNIQUE_SLOT_COUNT]>,
+    state_rows: Vec<[u32; 2]>,
+    technique: Option<HudTechniqueSlots>,
+    textures: Vec<(HudMaterialTextureBinding, Option<usize>)>,
+}
+
+fn record_hud_material(
+    catalog: &mut MenuCatalog,
+    ui_images: &mut UiImageSet,
+    material: HudMaterialCapture,
+) {
+    let HudMaterialCapture {
+        key,
+        texture_atlas,
+        state_bits_entry,
+        state_rows,
+        technique,
+        textures,
+    } = material;
+    if !state_rows.is_empty() {
+        catalog.material_state_bits.insert(
+            key.clone(),
+            hud_pass_state_bits(
+                state_bits_entry.as_ref(),
+                &state_rows,
+                technique.map(|set| set.slots),
+            ),
+        );
+    }
+    let (unlit_pass_count, unlit_pass_states) =
+        hud_unlit_pass_states(state_bits_entry.as_ref(), &state_rows, technique);
+    let mut ts2d = None;
+    let mut color = None;
+    let mut bindings = Vec::with_capacity(textures.len());
+    for (mut binding, image) in textures {
+        binding.image = image.and_then(|index| ui_images.images.get(index).map(|i| i.name.clone()));
+        if let Some(image) = image {
+            if binding.semantic == TS_2D {
+                ts2d = Some(image);
+            } else if binding.semantic == TS_COLOR_MAP {
+                color = Some(image);
+            }
+        }
+        bindings.push(binding);
+    }
+    catalog.material_2d_plans.insert(
+        key.clone(),
+        HudMaterialPlan {
+            texture_atlas,
+            technique_slots: technique.map(|set| set.slots),
+            state_bits_entry,
+            state_rows,
+            unlit_pass_states,
+            unlit_pass_count,
+            textures: bindings,
+        },
+    );
+    if let Some(image) = ts2d.or(color) {
+        if let Some(captured) = ui_images.images.get(image) {
+            catalog
+                .material_images
+                .insert(key.clone(), captured.name.clone());
+            catalog
+                .material_srgb_reads
+                .insert(key.clone(), captured.use_srgb_reads);
+        }
+        ui_images.material_ts2d.insert(key, image);
+    }
 }
 
 impl MenuSink {
@@ -832,14 +1059,14 @@ impl MenuSink {
                 .ok()?
                 .to_vec()
         };
-        let index = self.images.len();
-        self.images.push(CapturedZoneImage {
+        let index = self.ui_images.images.len();
+        self.ui_images.images.push(CapturedZoneImage {
             name: name.as_str().to_owned(),
             use_srgb_reads: geometry.use_srgb_reads,
             width: geometry.width,
             height: geometry.height,
             format: geometry.format,
-            payload,
+            payload: Arc::new(payload),
         });
         Some(index)
     }
@@ -860,27 +1087,21 @@ impl MenuSink {
             return;
         }
 
-        let bits: Vec<_> = (0..geometry.state_bits_count)
+        let state_rows: Vec<_> = (0..geometry.state_bits_count)
             .filter_map(|i| {
                 let p = geometry.state_bits?.at(i * sz::GFX_STATE_BITS);
                 Some([s.u32_at(p, 0).ok()?, s.u32_at(p, 4).ok()?])
             })
             .collect();
-        let technique_set = geometry
+        let technique = geometry
             .technique_set
-            .and_then(|field| self.material_technique_set(s, field));
-        let technique_slots = technique_set.map(|set| set.technique_slots);
-        if geometry.state_bits_count > 0 {
-            self.catalog.material_state_bits.insert(
-                key.clone(),
-                hud_pass_state_bits(geometry.state_bits_entry.as_ref(), &bits, technique_slots),
-            );
-        }
-        let (unlit_pass_count, unlit_pass_states) =
-            hud_unlit_pass_states(geometry.state_bits_entry.as_ref(), &bits, technique_set);
-        let mut ts2d = None;
-        let mut color = None;
-        let mut bindings = Vec::with_capacity(geometry.texture_count);
+            .and_then(|field| self.material_technique_set(s, field))
+            .map(|set| HudTechniqueSlots {
+                slots: set.technique_slots,
+                scanned: set.technique_slots_scanned,
+                unlit_pass_count: set.pass_count_by_slot[asset_iw4::TECHNIQUE_UNLIT],
+            });
+        let mut textures = Vec::with_capacity(geometry.texture_count);
         if let Some(table) = geometry.textures {
             for i in 0..geometry.texture_count {
                 let texture = table.at(i * geometry.texture_stride);
@@ -890,51 +1111,52 @@ impl MenuSink {
                 let image = (semantic != 11)
                     .then(|| self.resolve_image(texture.at(8)))
                     .flatten();
-                bindings.push(HudMaterialTextureBinding {
-                    name_hash: s.u32_at(texture, 0).unwrap_or(0),
-                    name_start: s.u8_at(texture, 4).unwrap_or(0),
-                    name_end: s.u8_at(texture, 5).unwrap_or(0),
-                    sampler_state: s.u8_at(texture, 6).unwrap_or(0),
-                    semantic,
-                    image: image.and_then(|index| self.images.get(index).map(|i| i.name.clone())),
-                });
-                if let Some(image) = image {
-                    if semantic == TS_2D {
-                        ts2d = Some(image);
-                    } else if semantic == TS_COLOR_MAP {
-                        color = Some(image);
-                    }
-                }
+                textures.push((
+                    HudMaterialTextureBinding {
+                        name_hash: s.u32_at(texture, 0).unwrap_or(0),
+                        name_start: s.u8_at(texture, 4).unwrap_or(0),
+                        name_end: s.u8_at(texture, 5).unwrap_or(0),
+                        sampler_state: s.u8_at(texture, 6).unwrap_or(0),
+                        semantic,
+                        image: None,
+                    },
+                    image,
+                ));
             }
         }
-        self.catalog.material_2d_plans.insert(
-            key.clone(),
-            HudMaterialPlan {
+        record_hud_material(
+            &mut self.catalog,
+            &mut self.ui_images,
+            HudMaterialCapture {
+                key,
                 texture_atlas: geometry.texture_atlas,
-                technique_slots,
                 state_bits_entry: geometry.state_bits_entry,
-                state_rows: bits,
-                unlit_pass_states,
-                unlit_pass_count,
-                textures: bindings,
+                state_rows,
+                technique,
+                textures,
             },
         );
-        if let Some(image) = ts2d.or(color) {
-            if let Some(captured) = self.images.get(image) {
-                self.catalog
-                    .material_images
-                    .insert(key.clone(), captured.name.clone());
-                self.catalog
-                    .material_srgb_reads
-                    .insert(key.clone(), captured.use_srgb_reads);
-            }
-            self.material_ts2d.insert(key, image);
-        }
     }
 
-    fn finish_ui_images(&mut self, games: Option<&Path>) {
+    fn finish_and_take(self, games: Option<&Path>) -> MenuCatalog {
+        let mut catalog = self.catalog;
+        self.ui_images.install(&mut catalog, games);
+        catalog
+    }
+}
+
+/// Images a UI walk captured, and the TS_2D (or color-map) image each
+/// material samples: the source of the catalog's decoded atlases.
+#[derive(Default)]
+struct UiImageSet {
+    images: Vec<CapturedZoneImage>,
+    material_ts2d: HashMap<String, usize>,
+}
+
+impl UiImageSet {
+    fn install(&self, catalog: &mut MenuCatalog, games: Option<&Path>) {
         let mut materials = Vec::new();
-        for font in self.catalog.fonts.values() {
+        for font in catalog.fonts.values() {
             if !font.material.is_empty() {
                 materials.push(font.material.clone());
             }
@@ -946,7 +1168,7 @@ impl MenuSink {
             .into_iter()
             .chain(HUD_CHROME_MENUS.iter().copied())
         {
-            if let Some(menu) = self.catalog.get(name) {
+            if let Some(menu) = catalog.get(name) {
                 if !menu.window_background.is_empty() {
                     materials.push(menu.window_background.clone());
                 }
@@ -981,7 +1203,7 @@ impl MenuSink {
                 })
                 .cloned(),
         );
-        if let Some(table) = self.catalog.string_table("mp/rankIconTable.csv") {
+        if let Some(table) = catalog.string_table("mp/rankIconTable.csv") {
             for row in 0..table.rows {
                 // Column zero identifies the rank; the rest are prestige variants.
                 for col in 1..table.columns {
@@ -999,9 +1221,14 @@ impl MenuSink {
             ("mp/attachmentTable.csv", 6),
             ("mp/perkTable.csv", 3),
         ] {
-            if let Some(table) = self.catalog.string_table(name) {
-                for row in 0..table.rows {
-                    let material = table.cell(row as i32, column);
+            if let Some(table) = catalog.string_table(name) {
+                for row in 0..table.rows as i32 {
+                    // MW3's perk table ends in per-slot colour rows; only its
+                    // indexed rows name icons.
+                    if crate::is_perk_table_name(name) && !crate::is_perk_table_entry(table, row) {
+                        continue;
+                    }
+                    let material = table.cell(row, column);
                     if !material.is_empty() {
                         materials.push(material.to_owned());
                     }
@@ -1011,22 +1238,17 @@ impl MenuSink {
         materials.sort_unstable();
         materials.dedup();
         for material in materials {
-            self.install_ui_image(&material, games);
+            self.install_ui_image(catalog, &material, games);
         }
     }
 
-    fn finish_and_take(mut self, games: Option<&Path>) -> MenuCatalog {
-        self.finish_ui_images(games);
-        self.catalog
-    }
-
-    fn install_ui_image(&mut self, material: &str, games: Option<&Path>) {
+    fn install_ui_image(&self, catalog: &mut MenuCatalog, material: &str, games: Option<&Path>) {
         let bare = AssetRef::bare_name(material);
         if bare.is_empty() {
             return;
         }
         let key = bare.to_ascii_lowercase();
-        if self.catalog.zone_images.contains_key(&key) {
+        if catalog.zone_images.contains_key(&key) {
             return;
         }
         let Some(&index) = self.material_ts2d.get(&key) else {
@@ -1102,9 +1324,9 @@ impl MenuSink {
             rec.image
         );
         let image_key = rec.image.to_ascii_lowercase();
-        self.catalog.zone_images.insert(key, rec.clone());
+        catalog.zone_images.insert(key, rec.clone());
         if image_key != rec.material.to_ascii_lowercase() {
-            self.catalog.zone_images.insert(image_key, rec);
+            catalog.zone_images.insert(image_key, rec);
         }
     }
 }
@@ -1565,76 +1787,7 @@ impl AssetLinkSink for MenuSink {
     }
 
     fn capture_font(&mut self, rec: &FontCapture<'_>) -> fastfile_iw4::Result<()> {
-        let mut glyphs = Vec::new();
-        for chunk in rec.glyphs.chunks_exact(sz::GLYPH) {
-            let mut row = [0u8; sz::GLYPH];
-            row.copy_from_slice(chunk);
-            glyphs.push(GlyphCapture::from_row(&row));
-        }
-        // Russian zone atlases index Cyrillic by Windows-1251 bytes. Keep
-        // those entries for legacy localized strings and add Unicode aliases
-        // for UTF-8 user text. Other language atlases must not reinterpret them.
-        if self.russian_fonts {
-            let aliases: Vec<_> = glyphs
-                .iter()
-                .filter_map(|glyph| {
-                    let letter = match glyph.letter {
-                        0xc0..=0xff => 0x0410 + glyph.letter - 0xc0,
-                        0x80 => 0x0402,
-                        0x81 => 0x0403,
-                        0x83 => 0x0453,
-                        0x8a => 0x0409,
-                        0x8c => 0x040a,
-                        0x8d => 0x040c,
-                        0x8e => 0x040b,
-                        0x8f => 0x040f,
-                        0x90 => 0x0452,
-                        0x9a => 0x0459,
-                        0x9c => 0x045a,
-                        0x9d => 0x045c,
-                        0x9e => 0x045b,
-                        0x9f => 0x045f,
-                        0xa1 => 0x040e,
-                        0xa2 => 0x045e,
-                        0xa3 => 0x0408,
-                        0xa5 => 0x0490,
-                        0xa8 => 0x0401,
-                        0xaa => 0x0404,
-                        0xaf => 0x0407,
-                        0xb2 => 0x0406,
-                        0xb3 => 0x0456,
-                        0xb4 => 0x0491,
-                        0xb8 => 0x0451,
-                        0xba => 0x0454,
-                        0xbc => 0x0458,
-                        0xbd => 0x0405,
-                        0xbe => 0x0455,
-                        0xbf => 0x0457,
-                        _ => return None,
-                    };
-                    if glyphs.iter().any(|existing| existing.letter == letter) {
-                        return None;
-                    }
-                    let mut alias = *glyph;
-                    alias.letter = letter;
-                    Some(alias)
-                })
-                .collect();
-            glyphs.extend(aliases);
-            if let Some(extended) = glyphs.get_mut(0x60..) {
-                extended.sort_by_key(|glyph| glyph.letter);
-            }
-        }
-        self.catalog.fonts.insert(
-            rec.name.to_ascii_lowercase(),
-            FontDef {
-                name: rec.name.to_owned(),
-                pixel_height: rec.pixel_height,
-                material: rec.material.to_owned(),
-                glow_material: rec.glow_material.to_owned(),
-                glyphs,
-            },
-        );
+        insert_font(&mut self.catalog, rec, self.russian_fonts);
         Ok(())
     }
 
@@ -1644,29 +1797,7 @@ impl AssetLinkSink for MenuSink {
         data: &[u8],
         zlib_compressed: bool,
     ) -> fastfile_iw4::Result<()> {
-        let n = name.replace('\\', "/");
-        let is_arena = n.eq_ignore_ascii_case("mp/basemaps.arena")
-            || n.rsplit('/')
-                .next()
-                .is_some_and(|leaf| leaf.eq_ignore_ascii_case("basemaps.arena"));
-        let lower = n.to_ascii_lowercase();
-        let is_config = lower.ends_with(".cfg");
-        let is_shock = lower.starts_with("shock/") && lower.ends_with(".shock");
-        if !is_arena && !is_config && !is_shock {
-            return Ok(());
-        }
-        let bytes = if zlib_compressed {
-            asset_transport::inflate_zlib(data).unwrap_or_else(|_| data.to_vec())
-        } else {
-            let mut bytes = data.to_vec();
-            if bytes.last() == Some(&0) {
-                bytes.pop();
-            }
-            bytes
-        };
-        if let Ok(text) = String::from_utf8(bytes) {
-            self.catalog.rawfiles.insert(n, text);
-        }
+        insert_rawfile(&mut self.catalog, name, data, zlib_compressed);
         Ok(())
     }
 

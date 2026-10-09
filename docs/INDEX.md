@@ -26,5 +26,6 @@ game. Keep them this short: nobody opens a long file twice.
 | [`SIM-STEP.md`](SIM-STEP.md) | `sim::step`: one `TickInput` → `Snapshot` funnel for authority, prediction and replay; `StepReason`; what makes a step deterministic | touching the step, prediction or replay |
 | [`SKILL.md`](SKILL.md) | local Elo ratings, account persistence and migration | changing skill updates or account synchronization |
 | [`GSC-RUNTIME.md`](GSC-RUNTIME.md) | GSC → executable IR → Bevy runtime; args, arrays and tables still share one `Runtime` | implementing gameplay or script execution |
+| [`SURVIVAL.md`](SURVIVAL.md) | the survival mode: MW3 tables read from the user's zones, the data files we author, what refuses the match | changing survival data or the gametype |
 | [`GSC-POSTFX.md`](GSC-POSTFX.md) | script vision, color correction, blur, DoF and bloom | authoring or debugging GSC post effects |
 | [`BOTS.md`](BOTS.md) | host AI: the per-tick pipeline, what a probe that never ran may not claim, the shared query budget, resumable routes, fighting from a position | bot decisions, bot movement, "why is it standing there" |

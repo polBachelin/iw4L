@@ -31,13 +31,13 @@ impl WeaponCatalog {
                 overlay: geometry.overlay_names[0].and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
                 view_models: geometry
                     .view_model_names
-                    .map(|ptr| ptr.and_then(|p| leftover_cstr_iw5(stream, p))),
+                    .map(|ptr| ptr.and_then(|p| iw5_model_name(stream, p))),
                 world_models: geometry
                     .world_model_names
-                    .map(|ptr| ptr.and_then(|p| leftover_cstr_iw5(stream, p))),
+                    .map(|ptr| ptr.and_then(|p| iw5_model_name(stream, p))),
                 reticle_models: geometry
                     .reticle_model_names
-                    .map(|ptr| ptr.and_then(|p| leftover_cstr_iw5(stream, p))),
+                    .map(|ptr| ptr.and_then(|p| iw5_model_name(stream, p))),
                 overlay_reticle: geometry.overlay_reticle,
                 thermal: geometry.thermal,
                 width: geometry.overlay_width,
@@ -110,17 +110,13 @@ impl WeaponCatalog {
         }
         let gun_xmodel = geometry
             .gun_xmodel_name
-            .and_then(|ptr| stream.cstr(ptr).ok())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned);
+            .and_then(|ptr| iw5_model_name(stream, ptr));
         let hand_xmodel = geometry
             .hand_xmodel_name
-            .and_then(|ptr| leftover_cstr_iw5(stream, ptr));
+            .and_then(|ptr| iw5_model_name(stream, ptr));
         let world_model = geometry
             .world_model_name
-            .and_then(|ptr| stream.cstr(ptr).ok())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned);
+            .and_then(|ptr| iw5_model_name(stream, ptr));
         let overlay_material = leftover_iw5_overlay_name(stream, &geometry);
         let overlay_image = None;
         let overlay_material_slot = leftover_iw5_weapdef_overlay_slot(stream, geometry.weap_def);
@@ -229,30 +225,26 @@ impl WeaponCatalog {
                     .iter()
                     .enumerate()
                     .skip(1)
-                    .filter_map(|(slot, ptr)| {
-                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
-                    })
+                    .filter_map(|(slot, ptr)| Some((slot as u8, iw5_model_name(stream, (*ptr)?)?)))
                     .collect(),
                 world: geometry
                     .world_model_names
                     .iter()
                     .enumerate()
                     .skip(1)
-                    .filter_map(|(slot, ptr)| {
-                        Some((slot as u8, leftover_cstr_iw5(stream, (*ptr)?)?))
-                    })
+                    .filter_map(|(slot, ptr)| Some((slot as u8, iw5_model_name(stream, (*ptr)?)?)))
                     .collect(),
             },
             skin_parent: None,
             projectile_model: geometry
                 .projectile_model_name
-                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
+                .and_then(|ptr| iw5_model_name(stream, ptr)),
             rocket_model: geometry
                 .rocket_model_name
-                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
+                .and_then(|ptr| iw5_model_name(stream, ptr)),
             knife_xmodel: geometry
                 .knife_xmodel_name
-                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
+                .and_then(|ptr| iw5_model_name(stream, ptr)),
             sz_xanims,
             dual_wield_weapon: None,
             sz_xanims_right: [const { None }; WEAPON_ANIM_SLOTS],
@@ -327,6 +319,24 @@ pub(super) fn f32_at_iw5(
     stream.f32_at(body, stream.layout(x86, x64)).unwrap_or(0.0)
 }
 
+/// A per-surface-type bounce array, `None` when the def carries none.
+fn bounce_array_iw5(
+    stream: &fastfile_iw5::ZoneStream<'_>,
+    body: fastfile_iw5::Ptr,
+    x86: usize,
+    x64: usize,
+) -> Option<[f32; fastfile_iw5::size::SURF_TYPE_COUNT]> {
+    let array = match stream.ptr_at(body, stream.layout(x86, x64)) {
+        Ok(fastfile_iw5::ZonePtr::Offset(q)) => stream.resolve_alias(q),
+        _ => return None,
+    };
+    let mut values = [0.0; fastfile_iw5::size::SURF_TYPE_COUNT];
+    for (i, value) in values.iter_mut().enumerate() {
+        *value = stream.f32_at(array, i * 4).ok()?;
+    }
+    Some(values)
+}
+
 pub(super) fn capture_iw5_body_facts(
     stream: &fastfile_iw5::ZoneStream<'_>,
     geometry: &fastfile_iw5::WeaponGeometry,
@@ -338,6 +348,7 @@ pub(super) fn capture_iw5_body_facts(
         clip_size: geometry.clip_size,
         weap_type: remap_iw5_weap_type(geometry.weap_type),
         weap_class: geometry.weap_class,
+        inventory_type: geometry.inventory_type,
         fire_type: geometry.fire_type,
         move_speed_scale: geometry.move_speed_scale,
         ads_move_speed_scale: geometry.ads_move_speed_scale,
@@ -600,6 +611,10 @@ pub(super) fn capture_iw5_body_facts(
     facts.hold_fire_time_ms = i32_at_iw5(stream, body, sz::WEAPON_DEF_HOLD_FIRE_TIME_OFF, 948);
     facts.fuse_time_ms = i32_at_iw5(stream, body, sz::WEAPON_DEF_FUSE_TIME_OFF, 1072);
     facts.stickiness = i32_at_iw5(stream, body, sz::WEAPON_DEF_STICKINESS_OFF, 1720);
+    facts.parallel_bounce =
+        bounce_array_iw5(stream, body, sz::WEAPON_DEF_PARALLEL_BOUNCE_OFF, 1744);
+    facts.perpendicular_bounce =
+        bounce_array_iw5(stream, body, sz::WEAPON_DEF_PERPENDICULAR_BOUNCE_OFF, 1752);
     facts.has_detonator = u8_at_iw5(stream, body, sz::WEAPON_DEF_HAS_DETONATOR_OFF, 2466) != 0;
     facts.timed_detonation =
         u8_at_iw5(stream, body, sz::WEAPON_DEF_TIMED_DETONATION_OFF, 2468) != 0;
@@ -713,6 +728,15 @@ pub(super) fn leftover_iw5_overlay_name(
         }
     }
     None
+}
+
+/// The name of an XModel a weapon or attachment points at. A model another
+/// zone holds is named with the reference mark; the model catalogs keep it
+/// under its own name, whichever zone carried it.
+fn iw5_model_name(stream: &fastfile_iw5::ZoneStream<'_>, ptr: fastfile_iw5::Ptr) -> Option<String> {
+    leftover_cstr_iw5(stream, ptr)
+        .map(|name| crate::AssetRef::bare_name(&name).to_owned())
+        .filter(|name| !name.is_empty())
 }
 
 pub(super) fn leftover_cstr_iw5(

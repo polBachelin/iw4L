@@ -212,7 +212,7 @@ fn face_color(color: [u8; 4]) -> [f32; 4] {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_hud_elems(
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, host_namespace): (Option<Res<MenuCatalog>>, assets::HostNamespace),
     strings: Option<Res<PreparedLocalizedStrings>>,
     input: Res<frame::HudInputView>,
     cg_clock: Res<FrameClock>,
@@ -227,6 +227,7 @@ pub(crate) fn update_hud_elems(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     entities: Query<(&CEntity, &CEntityRuntime)>,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() {
         hide(&mut pass);
         return;
@@ -293,7 +294,7 @@ pub(crate) fn update_hud_elems(
             };
             let (material_namespace, material) = match asset_core::AssetKey::parse(material) {
                 Ok(key) if key.kind == asset_core::AssetKind::Material => (key.namespace, key.name),
-                _ => (crate::images::HUD_CHROME_NAMESPACE, material.to_owned()),
+                _ => (chrome, material.to_owned()),
             };
             if hud_images
                 .get(material_namespace, &material, &mut images)
@@ -359,10 +360,7 @@ pub(crate) fn update_hud_elems(
             continue;
         };
         let material = asset_core::AssetRef::bare_name(&font.material).to_owned();
-        if hud_images
-            .get(crate::images::HUD_CHROME_NAMESPACE, &material, &mut images)
-            .is_none()
-        {
+        if hud_images.get(chrome, &material, &mut images).is_none() {
             gaps.raise(GapCause::FontAtlasMissing {
                 image: hud_images.zone_image_name(&material).map(str::to_owned),
                 material,
@@ -384,7 +382,7 @@ pub(crate) fn update_hud_elems(
         let placed =
             hud_elem_placement(surface.placement(), elem, cg_time, text_width, font_height);
         cmds.push(Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: (placed.x + 0.5).floor(),
             y: (placed.text_baseline_y() + 0.5).floor(),
             w: glyph.w,
@@ -430,10 +428,7 @@ pub(crate) fn update_hud_elems(
     }
     if any_fx {
         let material = hud_iw4::DECODE_CHARACTERS_MATERIAL;
-        if hud_images
-            .get(crate::images::HUD_CHROME_NAMESPACE, material, &mut images)
-            .is_none()
-        {
+        if hud_images.get(chrome, material, &mut images).is_none() {
             gaps.raise(GapCause::TextDecodeFxAtlasMissing {
                 material: material.to_owned(),
                 image: hud_images.zone_image_name(material).map(str::to_owned),

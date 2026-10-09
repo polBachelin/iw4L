@@ -13,14 +13,6 @@ impl Default for LoadoutRules {
     }
 }
 
-impl LoadoutRules {
-    pub fn for_class(perk1: &str) -> Self {
-        Self {
-            max_attachments: if perk1 == "specialty_bling" { 2 } else { 1 },
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FamilyKey {
     pub namespace: AssetNamespace,
@@ -229,6 +221,17 @@ pub struct WeaponFamilies {
     tables: HashMap<AssetNamespace, NamespaceTables>,
     described: HashMap<u32, WeaponSelection>,
     excluded: Vec<(String, String)>,
+    classes: Vec<crate::AuthoredClass>,
+    class_tables: HashMap<AssetNamespace, ClassTables>,
+}
+
+/// The perk and camo tables a game's classes name their choices from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClassTables {
+    pub perk_table: String,
+    pub perks: Vec<crate::PerkTableEntry>,
+    pub camo_table: String,
+    pub camos: Vec<(u8, String)>,
 }
 
 const IW_OFFERED_COLS: std::ops::RangeInclusive<i32> = 11..=21;
@@ -395,6 +398,31 @@ impl WeaponFamilies {
         for (namespace, table) in tables {
             if crate::is_stats_table_name(&table.name) {
                 out.read_stats(*namespace, table, content);
+            }
+        }
+        for (namespace, table) in tables {
+            if schema(*namespace) == Schema::Infinity
+                && crate::is_class_table_name(&table.name)
+                && !out
+                    .classes
+                    .iter()
+                    .any(|class| class.namespace == *namespace)
+            {
+                out.classes
+                    .extend(crate::read_authored_classes(*namespace, table));
+            }
+        }
+        for (namespace, table) in tables {
+            if schema(*namespace) != Schema::Infinity {
+                continue;
+            }
+            let entry = out.class_tables.entry(*namespace).or_default();
+            if crate::is_perk_table_name(&table.name) && entry.perk_table.is_empty() {
+                entry.perk_table.clone_from(&table.name);
+                entry.perks = crate::perk_table_entries(table);
+            } else if crate::is_camo_table_name(&table.name) && entry.camo_table.is_empty() {
+                entry.camo_table.clone_from(&table.name);
+                entry.camos = crate::camo_table_entries(table);
             }
         }
         out.describe_registry(content);
@@ -666,6 +694,19 @@ impl WeaponFamilies {
 
     pub fn excluded(&self) -> &[(String, String)] {
         &self.excluded
+    }
+
+    /// The default classes of every loaded game that ships a class table, in
+    /// table order.
+    pub fn authored_classes(&self) -> &[crate::AuthoredClass] {
+        &self.classes
+    }
+
+    /// The perk and camo tables namespace `namespace` loaded, if any.
+    pub fn class_tables(&self, namespace: AssetNamespace) -> Option<&ClassTables> {
+        self.class_tables
+            .get(&namespace)
+            .filter(|tables| !tables.perk_table.is_empty())
     }
 
     pub fn cosmetic_choices(&self, namespace: AssetNamespace) -> &[String] {

@@ -339,21 +339,26 @@ pub fn select_cg_fire_alias<'a>(
     current
 }
 
-pub(crate) fn namespace_alias(alias: &str) -> (asset_core::AssetNamespace, &str) {
+/// Splits a `ns:alias` name; an unqualified alias belongs to `host`.
+pub(crate) fn namespace_alias(
+    host: asset_core::AssetNamespace,
+    alias: &str,
+) -> (asset_core::AssetNamespace, &str) {
     alias
         .split_once(':')
         .and_then(|(ns, name)| asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name)))
-        .unwrap_or((asset_core::AssetNamespace::Iw4, alias))
+        .unwrap_or((host, alias))
 }
 
 pub(crate) fn match_ui_alias(
-    namespace: asset_core::AssetNamespace,
+    host: asset_core::AssetNamespace,
+    map: asset_core::AssetNamespace,
     alias: &str,
 ) -> (asset_core::AssetNamespace, &str) {
     use asset_core::AssetNamespace;
-    match (namespace, alias) {
+    match (map, alias) {
         (AssetNamespace::T6, "ui_pulse_text_type") => (AssetNamespace::T6, "uin_notify_data"),
         (AssetNamespace::T6, "ui_pulse_text_delete") => (AssetNamespace::T6, "uin_alert_slideout"),
-        _ => namespace_alias(alias),
+        _ => namespace_alias(host, alias),
     }
 }

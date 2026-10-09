@@ -16,7 +16,7 @@ use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellat
 use crate::font_overlay;
 use crate::gaps::{GapCause, HudPresentationGaps};
 use crate::gpu_list::{HudTessPass, TessJob};
-use crate::images::{HUD_CHROME_NAMESPACE, HudImages};
+use crate::images::HudImages;
 use crate::killcam_skip::inherit_shared_vis;
 use crate::scorebar::milliseconds;
 
@@ -190,7 +190,7 @@ fn rotated_pic(
         st: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
         color,
         material: material.to_owned(),
-        material_namespace: HUD_CHROME_NAMESPACE,
+        material_namespace: args.assets.host,
         provenance: Draw2dProvenance::OwnerDraw(args.item.owner_draw),
         layer: 1,
         clip: None,
@@ -281,7 +281,7 @@ fn owner_draw(
                     rect,
                     st,
                     &scene.selection.material,
-                    HUD_CHROME_NAMESPACE,
+                    args.assets.host,
                     args.color,
                 ));
             }
@@ -322,7 +322,9 @@ pub(crate) fn update_targetmap(
     mut gaps: ResMut<HudPresentationGaps>,
     mut pass: ResMut<HudTessPass>,
     mut exprs: ResMut<crate::expr_cache::MenuExprCache>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() || view.as_deref().is_some_and(|v| v.in_killcam()) {
         hide(&mut pass);
         return;
@@ -391,6 +393,7 @@ pub(crate) fn update_targetmap(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize: strings.as_ref().map(|s| &s.0),
+                host: chrome,
             },
             ChromeMenuAnim::IDENTITY,
             &mut exprs,

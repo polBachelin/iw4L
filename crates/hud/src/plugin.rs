@@ -122,6 +122,7 @@ impl Plugin for HudPlugin {
                             update_hud_elems,
                             update_targetmap,
                             crate::menus::update_script_menus,
+                            crate::menus::request_host_pause,
                             hud_stage_close::<7>,
                         )
                             .chain(),
@@ -258,6 +259,7 @@ fn sync_map_zone_tree(mut hud_images: ResMut<HudImages>, report: Option<Res<Laun
 
 fn sync_zone_atlases(
     catalog: Option<Res<asset_game::MenuCatalog>>,
+    host: assets::HostNamespace,
     mut hud_images: ResMut<HudImages>,
 ) {
     if hud_images.zone_installed() {
@@ -266,16 +268,22 @@ fn sync_zone_atlases(
     let Some(catalog) = catalog else {
         return;
     };
-    hud_images.install_zone_catalog(&catalog);
+    hud_images.install_zone_catalog(&catalog, host.get());
 }
 
 fn warm_hud_images(
     catalog: Option<Res<asset_game::MenuCatalog>>,
     compass: Option<Res<assets::SessionCompass>>,
+    host: assets::HostNamespace,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    hud_images.warm_present_stems(&mut images, catalog.as_deref(), compass.as_deref());
+    hud_images.warm_present_stems(
+        &mut images,
+        catalog.as_deref(),
+        compass.as_deref(),
+        host.get(),
+    );
 }
 
 #[derive(Component)]

@@ -67,6 +67,8 @@ pub(crate) fn encode_action(out: &mut WireWriter, action: &ClientAction) {
             out.put_u8(loadout.deathstreak);
             out.put_u8(loadout.camos[0]);
             out.put_u8(loadout.camos[1]);
+            out.put_u8(loadout.weapon_buffs[0]);
+            out.put_u8(loadout.weapon_buffs[1]);
         }
         ClientAction::GiveWeapon {
             request_id,
@@ -220,6 +222,7 @@ pub(crate) fn decode_action(input: &mut WireReader<'_>) -> Result<ClientAction, 
                 perks: [input.get_u32()?, input.get_u32()?, input.get_u32()?],
                 deathstreak: input.get_u8()?,
                 camos: [input.get_u8()?, input.get_u8()?],
+                weapon_buffs: [input.get_u8()?, input.get_u8()?],
             },
         }),
         2 => Ok(ClientAction::JoinMatch {
@@ -1133,6 +1136,7 @@ fn encode_client_meta(out: &mut WireWriter, meta: &ClientSnapshotMeta) {
         put_text(out, name);
         put_text(out, value);
     }
+    encode_player_data(out, &meta.player_data);
     encode_shock(out, meta.shellshock.as_ref());
     encode_vision(out, meta.view_effects.naked_vision.as_ref());
     encode_vision(out, meta.view_effects.thermal_vision.as_ref());
@@ -1375,6 +1379,7 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
     for _ in 0..input.get_u16()? {
         client_dvars.push((get_text(input)?, get_text(input)?));
     }
+    let player_data = decode_player_data(input)?;
     let shellshock = decode_shock(input)?;
     let view_effects = sim::ViewEffects {
         naked_vision: decode_vision(input)?,
@@ -1473,11 +1478,57 @@ fn decode_client_meta(input: &mut WireReader<'_>) -> Result<ClientSnapshotMeta, 
         player_card_title,
         player_card_nameplate,
         client_dvars,
+        player_data,
         shellshock,
         view_effects,
         menu_commands,
         location_selection,
     })
+}
+
+fn encode_player_data(out: &mut WireWriter, data: &sim::MatchPlayerData) {
+    debug_assert!(data.fields.len() <= u16::MAX as usize);
+    out.put_u16(data.fields.len() as u16);
+    for field in &data.fields {
+        put_text(out, &field.name);
+        match &field.value {
+            sim::MatchDataValue::Unset => out.put_u8(0),
+            sim::MatchDataValue::Int(value) => {
+                out.put_u8(1);
+                out.put_i32(*value);
+            }
+            sim::MatchDataValue::ByKey(entries) => {
+                out.put_u8(2);
+                debug_assert!(entries.len() <= u16::MAX as usize);
+                out.put_u16(entries.len() as u16);
+                for (key, value) in entries {
+                    put_text(out, key);
+                    out.put_i32(*value);
+                }
+            }
+        }
+    }
+}
+
+fn decode_player_data(input: &mut WireReader<'_>) -> Result<sim::MatchPlayerData, WireError> {
+    let mut fields = Vec::new();
+    for _ in 0..input.get_u16()? {
+        let name = get_text(input)?;
+        let value = match input.get_u8()? {
+            0 => sim::MatchDataValue::Unset,
+            1 => sim::MatchDataValue::Int(input.get_i32()?),
+            2 => {
+                let mut entries = Vec::new();
+                for _ in 0..input.get_u16()? {
+                    entries.push((get_text(input)?, input.get_i32()?));
+                }
+                sim::MatchDataValue::ByKey(entries)
+            }
+            _ => return Err(WireError::Malformed("bad player data value tag")),
+        };
+        fields.push(sim::MatchDataField { name, value });
+    }
+    Ok(sim::MatchPlayerData { fields })
 }
 
 fn encode_vision(out: &mut WireWriter, vision: Option<&sim::VisionChange>) {

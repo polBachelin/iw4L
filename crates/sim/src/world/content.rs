@@ -135,6 +135,7 @@ struct ContentData {
     map_custom: std::collections::BTreeMap<String, String>,
     shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>,
     player_anim_script: Option<Arc<PlayerAnimScript>>,
+    class_catalog: Arc<crate::ClassCatalog>,
 }
 
 #[derive(Debug)]
@@ -172,6 +173,7 @@ impl SimContentBuilder {
                 map_custom: Default::default(),
                 shocks: Default::default(),
                 player_anim_script: Default::default(),
+                class_catalog: Default::default(),
             },
         }
     }
@@ -209,6 +211,12 @@ impl SimContentBuilder {
 
     pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
         self.data.player_anim_script = script;
+    }
+
+    /// The class catalog the match's classes name their perks, deathstreak,
+    /// buffs and camouflages from.
+    pub fn set_class_catalog(&mut self, catalog: Arc<crate::ClassCatalog>) {
+        self.data.class_catalog = catalog;
     }
 
     pub fn set_player_kit_collisions(
@@ -360,5 +368,8 @@ impl SimContent {
     }
     pub(super) fn player_anim_script(&self) -> &Option<Arc<PlayerAnimScript>> {
         &self.data.player_anim_script
+    }
+    pub(super) fn class_catalog(&self) -> &crate::ClassCatalog {
+        &self.data.class_catalog
     }
 }

@@ -152,6 +152,11 @@ pub(crate) fn open(
     Ok(stream)
 }
 
+/// `IW4L_MUTE=1` silences the speakers while the whole audio pipeline keeps running.
+fn muted() -> bool {
+    std::env::var("IW4L_MUTE").is_ok_and(|value| matches!(value.as_str(), "1" | "on"))
+}
+
 fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -168,6 +173,7 @@ fn build<T: SizedSample + FromSample<f32>>(
     let mut b = [0.0; 2];
     let mut primed = false;
     let errors = shared.clone();
+    let muted = muted();
     device.build_output_stream(
         config,
         move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -175,6 +181,10 @@ fn build<T: SizedSample + FromSample<f32>>(
             let mut next = || {
                 if position == QUANTUM {
                     shared.render_for(&mut block, Some(true));
+                    // Mute after the mix so peaks and voice stats stay real.
+                    if muted {
+                        block = [[0.0; 2]; QUANTUM];
+                    }
                     position = 0;
                 }
                 let sample = block[position];

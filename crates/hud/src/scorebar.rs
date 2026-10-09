@@ -295,7 +295,9 @@ pub(crate) fn update_scorebar(
     mut exprs: ResMut<crate::expr_cache::MenuExprCache>,
     view: Option<Res<frame::ViewSubject>>,
     vis_input: crate::weaponbar::HudPlayerVisInput,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() {
         return;
     }
@@ -307,6 +309,10 @@ pub(crate) fn update_scorebar(
         hide(&mut pass);
         return;
     };
+    if !snap.meta.kind.has_scorebar() {
+        hide(&mut pass);
+        return;
+    }
     let Some(local_meta) = snap.meta.for_client(local.0) else {
         hide(&mut pass);
         return;
@@ -393,6 +399,7 @@ pub(crate) fn update_scorebar(
         ChromeAssets {
             catalog: catalog.as_deref(),
             localize: strings.as_ref().map(|s| &s.0),
+            host: chrome,
         },
         &mut exprs,
     );

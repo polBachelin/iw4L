@@ -181,7 +181,7 @@ fn data_value<'a>(
     }
 }
 
-fn data_error(error: crate::PersistentDataError) -> String {
+pub(crate) fn data_error(error: crate::PersistentDataError) -> String {
     format!("player data: {error:?}")
 }
 

@@ -4,17 +4,14 @@ use playerstate_iw4::{UserCmd, buttons};
 
 use crate::intent::{BotIntent, MotorReport, MoveMode, PathOutcome};
 use crate::observation::BotObservation;
+use crate::tuning::BotTuning;
 
-const MAX_YAW_DEG_PER_MS: f32 = 0.36;
-const MAX_PITCH_DEG_PER_MS: f32 = 0.24;
-const MAX_YAW_ACCEL_DEG_PER_MS2: f32 = 0.015;
-const MAX_PITCH_ACCEL_DEG_PER_MS2: f32 = 0.01;
-const FIRE_CONE_DEG: f32 = 8.0;
 const ARRIVE_IN: f32 = 24.0;
 const PITCH_LIMIT: f32 = 70.0;
 
 #[derive(Clone, Debug)]
 pub struct Motor {
+    tuning: BotTuning,
     yaw: f32,
     pitch: f32,
     yaw_vel: f32,
@@ -24,15 +21,21 @@ pub struct Motor {
     acquire_yaw: f32,
     last_look: Option<[f32; 3]>,
     armed: Option<sim::LifeSequence>,
+    /// The last command pressed melee: a bash starts on the press, so a
+    /// melee weapon's fire alternates press and release.
+    melee_pressed: bool,
 }
 
 impl Motor {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, tuning: BotTuning) -> Self {
         let self_preserve = (((seed >> 8) & 0xff) as f32) / 255.0;
         let spread = 0.75 + 0.75 * self_preserve;
-        let err_yaw = (((seed >> 3) & 0xffff) as f32 / 65535.0 - 0.5) * 4.0 * spread;
-        let err_pitch = (((seed >> 11) & 0xffff) as f32 / 65535.0 - 0.5) * 2.0 * spread;
+        let err_yaw =
+            (((seed >> 3) & 0xffff) as f32 / 65535.0 - 0.5) * tuning.aim_error_yaw_deg * spread;
+        let err_pitch =
+            (((seed >> 11) & 0xffff) as f32 / 65535.0 - 0.5) * tuning.aim_error_pitch_deg * spread;
         Self {
+            tuning,
             yaw: 0.0,
             pitch: 0.0,
             yaw_vel: 0.0,
@@ -42,6 +45,7 @@ impl Motor {
             acquire_yaw: 0.0,
             last_look: None,
             armed: None,
+            melee_pressed: false,
         }
     }
 
@@ -96,6 +100,7 @@ impl Motor {
             self.acquire_yaw *= 0.85_f32.powf(dt / 16.0);
             let desire = look_angles(obs.eye(), at);
             let (yaw, yaw_vel) = slew_yaw(
+                &self.tuning,
                 self.yaw,
                 desire[1] + self.err_yaw + self.acquire_yaw,
                 self.yaw_vel,
@@ -103,8 +108,13 @@ impl Motor {
             );
             self.yaw = yaw;
             self.yaw_vel = yaw_vel;
-            let (pitch, pitch_vel) =
-                slew_pitch(self.pitch, desire[0] + self.err_pitch, self.pitch_vel, dt);
+            let (pitch, pitch_vel) = slew_pitch(
+                &self.tuning,
+                self.pitch,
+                desire[0] + self.err_pitch,
+                self.pitch_vel,
+                dt,
+            );
             self.pitch = pitch;
             self.pitch_vel = pitch_vel;
         } else {
@@ -144,8 +154,17 @@ impl Motor {
             weapon_mapped: weapon,
             ..UserCmd::default()
         };
-        if intent.fire && self.weapon_on_target(obs, intent) {
-            cmd.buttons |= buttons::ATTACK;
+        let firing = intent.fire && self.weapon_on_target(obs, intent);
+        if firing && obs.self_state.weapon_class.melees() {
+            if !self.melee_pressed {
+                cmd.buttons |= buttons::MELEE_CHARGE;
+            }
+            self.melee_pressed = !self.melee_pressed;
+        } else {
+            self.melee_pressed = false;
+            if firing {
+                cmd.buttons |= buttons::ATTACK;
+            }
         }
         if intent.use_button {
             cmd.buttons |= buttons::USE;
@@ -176,8 +195,8 @@ impl Motor {
             return false;
         };
         let desire = look_angles(obs.eye(), at);
-        angle_subtract(desire[1], self.yaw).abs() <= FIRE_CONE_DEG
-            && (desire[0] - self.pitch).abs() <= FIRE_CONE_DEG
+        let cone = self.tuning.fire_cone_deg;
+        angle_subtract(desire[1], self.yaw).abs() <= cone && (desire[0] - self.pitch).abs() <= cone
     }
 }
 
@@ -189,20 +208,26 @@ fn look_angles(from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
     angles
 }
 
-fn slew_yaw(current: f32, desire: f32, vel: f32, dt: f32) -> (f32, f32) {
+fn slew_yaw(tuning: &BotTuning, current: f32, desire: f32, vel: f32, dt: f32) -> (f32, f32) {
     let err = angle_subtract(desire, current);
-    let (delta, vel) = slew_vel(err, vel, MAX_YAW_DEG_PER_MS, MAX_YAW_ACCEL_DEG_PER_MS2, dt);
+    let (delta, vel) = slew_vel(
+        err,
+        vel,
+        tuning.max_yaw_deg_per_ms,
+        tuning.max_yaw_accel_deg_per_ms2,
+        dt,
+    );
     (angle_normalize_360(current + delta), vel)
 }
 
-fn slew_pitch(current: f32, desire: f32, vel: f32, dt: f32) -> (f32, f32) {
+fn slew_pitch(tuning: &BotTuning, current: f32, desire: f32, vel: f32, dt: f32) -> (f32, f32) {
     let desire = desire.clamp(-PITCH_LIMIT, PITCH_LIMIT);
     let err = desire - current;
     let (delta, vel) = slew_vel(
         err,
         vel,
-        MAX_PITCH_DEG_PER_MS,
-        MAX_PITCH_ACCEL_DEG_PER_MS2,
+        tuning.max_pitch_deg_per_ms,
+        tuning.max_pitch_accel_deg_per_ms2,
         dt,
     );
     ((current + delta).clamp(-PITCH_LIMIT, PITCH_LIMIT), vel)

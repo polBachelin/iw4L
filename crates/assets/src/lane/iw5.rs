@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::helpers::{
-    decode_reflection_probes, report_ffa_spawns, report_intermission, report_map_models,
-    smodel_lighting_samples,
+    decode_reflection_probes, report_combat_tables, report_ffa_spawns, report_intermission,
+    report_map_models, resolve_film_vision, smodel_lighting_samples,
 };
 use super::{
     CommonCensus, CommonWalkSink, LaneGap, LoadedWorld, MaterialPopulation, MaterialPopulationSink,
@@ -135,7 +135,7 @@ impl ZoneLane for Iw5Lane {
         progress: &LoadProgress,
         shared_surfaces: asset_model::SharedXModelSurfaces,
         material_seed: asset_material::MaterialCatalog,
-        _common_film_visions: &super::FilmVisionCatalog,
+        common_film_visions: &super::FilmVisionCatalog,
     ) -> LoadedWorld {
         let mut report = vec![format!("game: IW5 ({})", path.display())];
         let stage = progress.begin_scoped(StageId::MapAssets, "header", None);
@@ -238,6 +238,8 @@ impl ZoneLane for Iw5Lane {
                 None => "createart fog: RED missing maps/createart/<map>_art|_fog setExpFog".into(),
             },
         });
+        let (film_vision, film_visions) =
+            resolve_film_vision(&mut report, path, &sink.film_visions, common_film_visions);
         report.push(format!(
             "serialization: {} ({} B pointers)",
             stream.wire_format().name(),
@@ -270,6 +272,22 @@ impl ZoneLane for Iw5Lane {
         let bodies = std::mem::take(&mut sink.bodies);
         let fpv_meshes = std::mem::take(&mut sink.fpv_meshes);
         let map_xanims = std::mem::take(&mut sink.xanims);
+        let fx = std::mem::take(&mut sink.fx);
+        let fx_models = std::mem::take(&mut sink.fx_models);
+        let impact_fx = sink.impact_fx.take_table();
+        report.push(format!(
+            "fx catalog: {} FxEffectDef owned ({} capture gaps)",
+            fx.len(),
+            fx.capture_gaps
+        ));
+        if let Some(ref table) = impact_fx {
+            report.push(format!(
+                "impactfx: table `{}` rows={} gaps={}",
+                table.name,
+                table.row_count(),
+                table.capture_gaps
+            ));
+        }
 
         let clip = if let Some(geometry) = stream.clip_map() {
             report.push(format!(
@@ -336,7 +354,12 @@ impl ZoneLane for Iw5Lane {
                 LoadedWorld {
                     sound: map_sound,
                     world: PreparedWorld {
+                        fx,
+                        fx_models,
+                        impact_fx,
                         exp_fog,
+                        film_vision,
+                        film_visions,
                         createart_name,
                         policy: WorldDrawPolicy::iw5(),
                         ..PreparedWorld::empty(WorldDrawPolicy::iw5())
@@ -528,6 +551,9 @@ impl ZoneLane for Iw5Lane {
                         sound: map_sound,
                         materials: map_materials,
                         world: PreparedWorld {
+                            fx,
+                            fx_models,
+                            impact_fx,
                             min: draw.stats.min,
                             max: draw.stats.max,
                             world_bounds: draw.stats.bounds,
@@ -543,6 +569,8 @@ impl ZoneLane for Iw5Lane {
                             light_grid,
                             reflection_probe_images,
                             exp_fog,
+                            film_vision,
+                            film_visions,
                             createart_name,
                             policy: WorldDrawPolicy::iw5(),
                             smodel_lighting_samples,
@@ -575,7 +603,12 @@ impl ZoneLane for Iw5Lane {
                     LoadedWorld {
                         sound: map_sound,
                         world: PreparedWorld {
+                            fx,
+                            fx_models,
+                            impact_fx,
                             exp_fog,
+                            film_vision,
+                            film_visions,
                             createart_name,
                             policy: WorldDrawPolicy::iw5(),
                             ..PreparedWorld::empty(WorldDrawPolicy::iw5())
@@ -606,131 +639,19 @@ impl ZoneLane for Iw5Lane {
         decode_color_maps: bool,
         material_seed: asset_material::MaterialCatalog,
     ) -> CommonCensus {
-        let header = match image.iw5_header() {
-            Ok(header) => header,
-            Err(error) => {
-                return CommonCensus {
-                    report: vec![format!("common_mp models: IW5 zone header: {error}")],
-                    ..Default::default()
-                };
-            }
-        };
-        let mut memory = Iw5ZoneMemory::for_header(&header);
-        let mut stream = match memory.stream(&image.bytes) {
-            Ok(stream) => stream,
-            Err(error) => {
-                return CommonCensus {
-                    report: vec![format!("common_mp models: IW5 zone arenas: {error}")],
-                    ..Default::default()
-                };
-            }
-        };
-        let mut sink = CommonWalkSink::default();
-        sink.seed_materials(material_seed);
-        sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
-        sink.set_capture_ns(asset_core::AssetNamespace::Iw5);
-        sink.sound = asset_audio::ZoneSoundCapture::claim_common(
+        let sound = asset_audio::ZoneSoundCapture::claim_common(
             path,
             asset_audio::ZoneGame::Iw5,
             "common census",
         );
-        let walk = fastfile_iw5::load_zone(&mut stream, &mut sink);
-        if let Some(sound) = sink.sound.take() {
-            sound.deposit(walk.as_ref().map(|_| ()).map_err(|e| e.to_string()));
-        }
-        let mut report = vec![format!("common_mp (IW5): walked {} assets", sink.walked)];
-        if let Err(error) = walk {
-            report.push(format!(
-                "common_mp IW5 walk: stopped after {} assets — {error}",
-                sink.walked
-            ));
-        }
-        report.push(format!(
-            "common_mp IW5 pointer drift: {} unsettled offsets",
-            stream.unsettled_offsets()
-        ));
-        sink.weapons.resolve_reticles(&sink.materials);
-        let captured = sink.weapons.len();
-        let mut weapons = sink.weapons.into_build();
-        weapons.apply_stats_tables(sink.stats_tables.values());
-        weapons.resolve_sz_xanim_edges(&sink.xanims);
-        weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
-        weapons.resolve_world_model_edges(&sink.world_weapons);
-        report.push(format!(
-            "common_mp statsTable: tables={} item_groups={}",
-            sink.stats_tables.len(),
-            weapons.item_group_count(),
-        ));
-        let gun_named = weapons.gun_xmodel_count();
-        report.push(format!(
-        "common_mp weapons: {captured} captures -> {} unique catalog ids (sorted); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
-        weapons.len(),
-        weapons.idle_anim_count(),
-        weapons.sz_xanims_count()
-    ));
-        report.push(format!(
-        "common_mp FPV mesh catalog: {} bind-pose viewmodel_* meshes retained ({} with tag_view)",
-        sink.fpv_meshes.len(),
-        sink.fpv_meshes.tag_view_count()
-    ));
-
-        report.push(format!(
-            "common_mp XAnimParts: {} captured ({} gaps)",
-            sink.xanims.len(),
-            sink.xanims.capture_gaps
-        ));
-        report.push(format!(
-            "common_mp IW5 materials: {} authored ({} techsets, {} images, {} capture gaps)",
-            sink.materials.materials.len(),
-            sink.materials.technique_set_facts().len(),
-            sink.materials.images.len(),
-            sink.materials.capture_gaps
-        ));
-        let light_defs = asset_world::capture_iw5_light_defs(&stream, &sink.materials);
-        report.push(format!(
-            "GfxLightDef common_mp: table={} bodies={} recorded={}",
-            sink.light_def_table,
-            sink.light_def_bodies,
-            light_defs.len()
-        ));
-        let mut materials = sink.materials;
-
-        let mut pending_images = None;
-        if decode_color_maps {
-            let stage = progress.begin_scoped(StageId::Images, "common_mp", None);
-            let (inline, plan) = asset_material::material_images::plan_material_color_maps(
-                path,
-                &mut materials,
-                &stage,
-                crate::session_load::load_pool(),
-            );
-            report.push(format!(
-                "common_mp IW5 IWD color maps: {} claimed for the merged pool, {} in-zone bodies decoded here ({} missing, {} unsupported)",
-                plan.len(),
-                inline.decoded,
-                inline.missing,
-                inline.unsupported
-            ));
-            // The plan itself is decoded later, under its own stage. This one
-            // planned and decoded the in-zone bodies, and it finished; letting
-            // the handle drop would record it as interrupted.
-            stage.done();
-            pending_images = Some(plan);
-        }
-        CommonCensus {
-            pending_images,
-            weapons,
-            cac_tables: sink.stats_tables.into_values().collect(),
-            material_population: materials,
-            fpv: sink.fpv_meshes,
-            world_weapons: sink.world_weapons,
-            xanims: sink.xanims,
-            light_defs,
-            scene_models: sink.scene_models,
-            shared_surfaces: sink.shared_surfaces,
-            report,
-            ..Default::default()
-        }
+        census_common_zone(
+            path,
+            image,
+            progress,
+            decode_color_maps,
+            material_seed,
+            sound,
+        )
     }
 
     fn load_material_population(
@@ -802,6 +723,202 @@ impl ZoneLane for Iw5Lane {
             cac_tables: sink.stats_tables.into_values().collect(),
             scripts: sink.scripts,
         }
+    }
+}
+
+/// A launch mode's zone, walked like `common_mp` and laid over it. The mode
+/// names its zones as sound sources, so this walk is the one that captures
+/// their aliases. Their images are decoded with the merged pool, beside the
+/// map's, rather than planned here.
+pub(crate) fn load_mode_zone(
+    path: &Path,
+    image: &ZoneImage,
+    progress: &LoadProgress,
+    material_seed: asset_material::MaterialCatalog,
+) -> CommonCensus {
+    let sound = asset_audio::ZoneSoundCapture::claim_source(
+        path,
+        asset_audio::ZoneGame::Iw5,
+        "mode census",
+    );
+    census_common_zone(path, image, progress, false, material_seed, sound)
+}
+
+fn census_common_zone(
+    path: &Path,
+    image: &ZoneImage,
+    progress: &LoadProgress,
+    decode_color_maps: bool,
+    material_seed: asset_material::MaterialCatalog,
+    sound: Option<asset_audio::ZoneSoundCapture>,
+) -> CommonCensus {
+    // The lines name the zone walked: `common_mp`, or a mode zone after it.
+    let zone = path
+        .file_stem()
+        .map_or_else(|| "common".into(), |stem| stem.to_string_lossy());
+    let header = match image.iw5_header() {
+        Ok(header) => header,
+        Err(error) => {
+            return CommonCensus {
+                report: vec![format!("{zone} models: IW5 zone header: {error}")],
+                ..Default::default()
+            };
+        }
+    };
+    let mut memory = Iw5ZoneMemory::for_header(&header);
+    let mut stream = match memory.stream(&image.bytes) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return CommonCensus {
+                report: vec![format!("{zone} models: IW5 zone arenas: {error}")],
+                ..Default::default()
+            };
+        }
+    };
+    let mut sink = CommonWalkSink::default();
+    sink.seed_materials(material_seed);
+    sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+    sink.set_capture_ns(asset_core::AssetNamespace::Iw5);
+    sink.sound = sound;
+    let walk = fastfile_iw5::load_zone(&mut stream, &mut sink);
+    if let Some(sound) = sink.sound.take() {
+        sound.deposit(walk.as_ref().map(|_| ()).map_err(|e| e.to_string()));
+    }
+    let mut report = vec![format!("{zone} (IW5): walked {} assets", sink.walked)];
+    if let Err(error) = walk {
+        report.push(format!(
+            "{zone} IW5 walk: stopped after {} assets — {error}",
+            sink.walked
+        ));
+    }
+    report.push(format!(
+        "{zone} IW5 pointer drift: {} unsettled offsets",
+        stream.unsettled_offsets()
+    ));
+    sink.weapons.resolve_reticles(&sink.materials);
+    let captured = sink.weapons.len();
+    let mut weapons = sink.weapons.into_build();
+    weapons.apply_stats_tables(sink.stats_tables.values());
+    weapons.resolve_sz_xanim_edges(&sink.xanims);
+    weapons.resolve_fpv_mesh_edges(&sink.fpv_meshes);
+    weapons.resolve_world_model_edges(&sink.world_weapons);
+    report.push(format!(
+        "{zone} statsTable: tables={} item_groups={}",
+        sink.stats_tables.len(),
+        weapons.item_group_count(),
+    ));
+    let gun_named = weapons.gun_xmodel_count();
+    report.push(format!(
+        "{zone} weapons: {captured} captures -> {} unique catalog ids (sorted); {gun_named} with gunXModel[0]; {} with szXAnims[IDLE]; {} with any szXAnims slot",
+        weapons.len(),
+        weapons.idle_anim_count(),
+        weapons.sz_xanims_count()
+    ));
+    report.push(format!(
+        "{zone} FPV mesh catalog: {} bind-pose viewmodel_* meshes retained ({} with tag_view)",
+        sink.fpv_meshes.len(),
+        sink.fpv_meshes.tag_view_count()
+    ));
+
+    report.push(format!(
+        "{zone} XAnimParts: {} captured ({} gaps)",
+        sink.xanims.len(),
+        sink.xanims.capture_gaps
+    ));
+    report.push(format!(
+        "{zone} player animation sources: atr={} script={} types={} decode_errors={}",
+        sink.player_anim_sources.multiplayer_atr().is_some(),
+        sink.player_anim_sources.playeranim_script().is_some(),
+        sink.player_anim_sources.playeranim_types().is_some(),
+        sink.player_anim_sources.decode_errors().len()
+    ));
+    report.push(format!(
+        "{zone} IW5 materials: {} authored ({} techsets, {} images, {} capture gaps)",
+        sink.materials.materials.len(),
+        sink.materials.technique_set_facts().len(),
+        sink.materials.images.len(),
+        sink.materials.capture_gaps
+    ));
+    report_combat_tables(
+        &mut report,
+        sink.pen_table.is_some(),
+        sink.lochit_table.is_some(),
+    );
+    report.push(format!(
+        "{zone} fx catalog: {} FxEffectDef ({} gaps)",
+        sink.fx.len(),
+        sink.fx.capture_gaps
+    ));
+    let impact_fx = sink.impact_fx.take_table();
+    if let Some(ref table) = impact_fx {
+        report.push(format!(
+            "{zone} impactfx: table `{}` rows={} gaps={}",
+            table.name,
+            table.row_count(),
+            table.capture_gaps
+        ));
+    } else {
+        report.push(format!("{zone} impactfx: no table captured"));
+    }
+    report.push(format!(
+        "{zone} TracerDef: {} named ({} capture gaps)",
+        sink.tracers.len(),
+        sink.tracers.capture_gaps
+    ));
+    let light_defs = asset_world::capture_iw5_light_defs(&stream, &sink.materials);
+    report.push(format!(
+        "GfxLightDef {zone}: table={} bodies={} recorded={}",
+        sink.light_def_table,
+        sink.light_def_bodies,
+        light_defs.len()
+    ));
+    let mut materials = sink.materials;
+
+    let mut pending_images = None;
+    if decode_color_maps {
+        let stage = progress.begin_scoped(StageId::Images, "common_mp", None);
+        let (inline, plan) = asset_material::material_images::plan_material_color_maps(
+            path,
+            &mut materials,
+            &stage,
+            crate::session_load::load_pool(),
+        );
+        report.push(format!(
+                "{zone} IW5 IWD color maps: {} claimed for the merged pool, {} in-zone bodies decoded here ({} missing, {} unsupported)",
+                plan.len(),
+                inline.decoded,
+                inline.missing,
+                inline.unsupported
+            ));
+        // The plan itself is decoded later, under its own stage. This one
+        // planned and decoded the in-zone bodies, and it finished; letting
+        // the handle drop would record it as interrupted.
+        stage.done();
+        pending_images = Some(plan);
+    }
+    CommonCensus {
+        pending_images,
+        weapons,
+        cac_tables: sink.stats_tables.into_values().collect(),
+        material_population: materials,
+        fpv: sink.fpv_meshes,
+        world_weapons: sink.world_weapons,
+        xanims: sink.xanims,
+        player_anim_sources: sink.player_anim_sources,
+        light_defs,
+        scene_models: sink.scene_models,
+        shared_surfaces: sink.shared_surfaces,
+        scripts: sink.scripts,
+        fx: sink.fx,
+        fx_models: sink.fx_models,
+        impact_fx,
+        tracers: sink.tracers,
+        pen_table: sink.pen_table.unwrap_or_default(),
+        pen_table_loaded: sink.pen_table.is_some(),
+        lochit_table: sink.lochit_table,
+        film_visions: sink.film_visions,
+        report,
+        ..Default::default()
     }
 }
 

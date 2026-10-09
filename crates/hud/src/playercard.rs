@@ -369,7 +369,7 @@ pub(crate) struct PlayerCardMessages<'w, 's> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_playercard(
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, host_namespace): (Option<Res<MenuCatalog>>, assets::HostNamespace),
     strings: Option<Res<PreparedLocalizedStrings>>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
@@ -384,6 +384,7 @@ pub(crate) fn update_playercard(
     view: Option<Res<frame::ViewSubject>>,
     cg_clock: Res<FrameClock>,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() {
         return;
     }
@@ -545,6 +546,7 @@ pub(crate) fn update_playercard(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize: strings.as_ref().map(|s| &s.0),
+                host: chrome,
             },
             anim,
             &mut exprs,
@@ -565,14 +567,7 @@ pub(crate) fn update_playercard(
     let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     let mut image_missing = false;
     for cmd in &list.cmds {
-        if hud_images
-            .get(
-                crate::images::HUD_CHROME_NAMESPACE,
-                &cmd.material,
-                &mut images,
-            )
-            .is_none()
-        {
+        if hud_images.get(chrome, &cmd.material, &mut images).is_none() {
             image_missing = true;
             gaps.raise(GapCause::PlayerCardMaterialMissing {
                 name: cmd.material.clone(),

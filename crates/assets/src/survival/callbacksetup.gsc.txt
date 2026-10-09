@@ -1,0 +1,42 @@
+codecallback_startgametype()
+{
+	if ( isdefined( level.gametypestarted ) && level.gametypestarted )
+		return;
+	level.gametypestarted = true;
+	[[ level.callbackstartgametype ]]();
+}
+
+codecallback_playerconnect()
+{
+	self endon( "disconnect" );
+	[[ level.callbackplayerconnect ]]();
+}
+
+codecallback_playerdisconnect()
+{
+	self notify( "disconnect" );
+	[[ level.callbackplayerdisconnect ]]();
+}
+
+codecallback_playerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff )
+{
+	self endon( "disconnect" );
+	[[ level.callbackplayerdamage ]]( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff );
+}
+
+codecallback_playerkilled( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen )
+{
+	self endon( "disconnect" );
+	[[ level.callbackplayerkilled ]]( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen );
+}
+
+codecallback_playerlaststand( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen )
+{
+	self endon( "disconnect" );
+	[[ level.callbackplayerlaststand ]]( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen );
+}
+
+codecallback_vehicledamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff, modelidx, hitpart )
+{
+	[[ level.callbackvehicledamage ]]( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff, modelidx, hitpart );
+}

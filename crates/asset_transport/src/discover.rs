@@ -534,29 +534,100 @@ pub fn find_common_mp_for_zone(zone_ff: &Path) -> Result<ZoneFile, String> {
     find_named_zone_for_tree(zone_ff, "common_mp")
 }
 
-pub fn find_runtime_zone(root: &GamesRoot, zone_ff: &Path, zone: &str) -> Result<ZoneFile, String> {
-    match zone_game_for_path(zone_ff) {
-        Some(crate::ZoneGame::Iw4) | None => find_zone_for_tree(zone_ff, zone),
-        Some(_) => {
-            let found = find_zone_file_under(&root.0, zone)?;
-            match peek_zone_version(&found.path) {
-                Some(IW4_ZONE_VERSION) => Ok(found),
-                Some(version) => Err(format!(
-                    "runtime profile is IW4 FFA; {zone} at {} is version {version:#x} \
-                     (want IW4 {IW4_ZONE_VERSION:#x})",
-                    found.path.display()
-                )),
-                None => Err(format!(
-                    "runtime profile is IW4 FFA; {zone} at {} is not a readable IWff envelope",
-                    found.path.display()
-                )),
-            }
+/// The game whose `common_mp` anchors a match: the zones loaded beside it
+/// (`code_post_gfx_mp`, `patch_mp`, localized strings) come from its tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RuntimeProfile {
+    #[default]
+    Iw4,
+    Iw5,
+}
+
+impl RuntimeProfile {
+    pub const fn game(self) -> crate::ZoneGame {
+        match self {
+            Self::Iw4 => crate::ZoneGame::Iw4,
+            Self::Iw5 => crate::ZoneGame::Iw5,
         }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Iw4 => "IW4 FFA",
+            Self::Iw5 => "IW5",
+        }
+    }
+
+    pub fn find_runtime_zone(
+        self,
+        root: &GamesRoot,
+        zone_ff: &Path,
+        zone: &str,
+    ) -> Result<ZoneFile, String> {
+        let game = self.game();
+        let want = zone_version(game);
+        let found = match zone_game_for_path(zone_ff) {
+            Some(map_game) if map_game != game => find_zone_file_under(&root.0, zone)?,
+            _ => find_zone_for_tree(zone_ff, zone)?,
+        };
+        let label = self.label();
+        let want_game = game.prefix().to_ascii_uppercase();
+        match peek_zone_version(&found.path) {
+            Some(version) if version == want => Ok(found),
+            Some(version) => Err(format!(
+                "runtime profile is {label}; {zone} at {} is version {version:#x} \
+                 (want {want_game} {want:#x})",
+                found.path.display()
+            )),
+            None => Err(format!(
+                "runtime profile is {label}; {zone} at {} is not a readable IWff envelope",
+                found.path.display()
+            )),
+        }
+    }
+
+    pub fn find_common_mp(self, root: &GamesRoot, zone_ff: &Path) -> Result<ZoneFile, String> {
+        self.find_runtime_zone(root, zone_ff, "common_mp")
+    }
+
+    /// Every zone of `mode`, in its load order, from the runtime's own tree.
+    /// A mode needs all of them, so the first one missing refuses the set.
+    pub fn find_mode_zones(
+        self,
+        root: &GamesRoot,
+        zone_ff: &Path,
+        mode: &ModeZones,
+    ) -> Result<Vec<PathBuf>, String> {
+        mode.names()
+            .iter()
+            .map(|name| {
+                self.find_runtime_zone(root, zone_ff, name)
+                    .map(|zone| zone.path)
+                    .map_err(|error| format!("mode zone `{name}`: {error}"))
+            })
+            .collect()
     }
 }
 
-pub fn find_runtime_common_mp(root: &GamesRoot, zone_ff: &Path) -> Result<ZoneFile, String> {
-    find_runtime_zone(root, zone_ff, "common_mp")
+/// The zones a launch mode loads after the runtime's `common_mp`, in load
+/// order: an asset a later zone carries replaces the one an earlier zone had.
+/// A launch with no mode of its own has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModeZones(Vec<String>);
+
+impl ModeZones {
+    /// Zone stems separated by whitespace, as a settings row spells them.
+    pub fn parse(row: &str) -> Self {
+        Self(row.split_whitespace().map(str::to_owned).collect())
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 pub fn find_common_mp_for_envelope(root: &GamesRoot, version: u32) -> Result<ZoneFile, String> {

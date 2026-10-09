@@ -76,6 +76,9 @@ pub struct ClientSnapshotMeta {
 
     pub client_dvars: Vec<(String, String)>,
 
+    /// The gametype's match-scoped player data (survival's armory fields).
+    pub player_data: super::MatchPlayerData,
+
     pub shellshock: Option<hud_iw4::ShockParams>,
 
     pub view_effects: ViewEffects,

@@ -9,7 +9,10 @@ player connect/spawn/damage/killed, the in-game menus, and the sounds they play.
 
 Matches support IW4 modes only (dm, war, dom, sd, sab, ctf, koth, dd).
 T5 and IW5 maps supply entities and map declarations; their gameplay/UI scripts
-are excluded. Menu/HUD layout and match flow stay IW4, with weapon and team icons
+are excluded. Under an IW5 runtime (`survival`) every started module is built in
+(`crates/assets/src/survival/`), with its own data files as string tables
+([`SURVIVAL.md`](SURVIVAL.md)).
+Menu/HUD layout and match flow stay IW4, with weapon and team icons
 from the corresponding game. Objective models, materials, shaders and effects
 come from the map's game, including the plant/defuse weapon viewmodels and animations.
 `ObjectiveVisuals` binds IW4 names to those assets at
@@ -46,7 +49,9 @@ stage=compile|install|entry fault="…"` when the load stopped at the script.
 
 Natives are linked against a `Catalog` of the game's builtins (generated into
 `script/profile/iw4_catalog.rs`, split into function and method namespaces), not against the
-registry. An unqualified call resolves to a function in the same file, then a builtin
+registry. The survival gametype links `Catalog::survival`: the IW4 list plus
+`script/profile/survival_catalog.rs`, its own natives, so no other program can
+call them. An unqualified call resolves to a function in the same file, then a builtin
 in the call's namespace, then a unique include. Qualified names and `thread` calls
 never resolve to builtins. A developer builtin used as a statement compiles to nothing
 (arguments are not evaluated); using its value or referencing it fails the load.
@@ -252,6 +257,10 @@ Killstreak hardware:
   from the zone, including weapon bodies loaded inline through the vehicle), so the
   gunner's `turret_fire` → `fireWeapon` loop needs no `setVehWeapon`. Turret and vehicle
   weapons with clip 0 or zero fire/raise times are valid combat rows.
+- `shootTurret` fires by the turret weapon's kind, as a vehicle's `fireWeapon` does:
+  a bullet weapon traces, a projectile weapon launches its projectile owned by the
+  turret's `setSentryOwner` player. A projectile turret with no owning player is a
+  script error.
 - Sentry placement traces a ray to 42 + 5 units ahead,
   a ±30 box drop, normal ≥ 0.7, then four feet (17, 20, 10) traced 20 down that tilt the
   seat, failing when two miss. A failed placement keeps the fallback pose.
@@ -327,9 +336,11 @@ do not load or save this local file. This storage does not implement multiplayer
 account stats, unlocks, rested time or platform identities.
 
 
-Listen hosts and clients load `account.dat` beside `settings.cfg`, with
+Listen hosts and clients load `account.dat` beside `settings.cfg`
+(`account_iw5.dat` under the IW5 runtime profile), with
 `IW4L_ACCOUNT_PATH` as its override. It holds a signing key, derived account ID and
-an optional schema-stamped player-data buffer. Listen binds existing buffers to
+an optional schema-stamped player-data buffer, as long as its schema declares
+(11482 bytes for MW3 `mp/playerdata.def`). Listen binds existing buffers to
 the local client before level entry scripts start and saves authority changes
 at the end of the frame. Schema installation rejects recursive layouts, overflowing
 storage spans and fields or array elements that exceed their containers. Packed
@@ -341,9 +352,11 @@ to that owner over control; saved ACKs require an exact successful disk receipt.
 Dedicated roles do not read or write this file. Version 1 files upgrade to keyed
 identities while retaining all stat bytes and revisions. Writes use a file lock
 and reject stale disk revisions. On Unix the key file is owner-readable/writable.
-A new Listen account initializes an 8,188-byte buffer with the first authored schema stamp, ten raw localized
-class names and the captured `mp/stats_init.cfg` assignments before level entry
-scripts start. Missing or invalid defaults refuse initialization without
+A new Listen account initializes a buffer of the first authored schema's size and stamp, one raw
+localized `CLASS_SLOT<n>` name per element of the schema's `customClasses` array (15 in MW3) and the captured
+`mp/stats_init.cfg` assignments before level entry scripts start. Assignments use `setPlayerData
+<path> <value>` or MW3's `set<Field> <path> <value>` (`setCustomClasses`), which writes under the
+schema root field it names. Missing or invalid defaults refuse initialization without
 publishing a partial record. Existing account records are retained.
 `Get/SetPlayerData` use the bound account buffer with exact schema keys and
 scalar types. Struct and enum-array names use GSC string casts; indexed arrays

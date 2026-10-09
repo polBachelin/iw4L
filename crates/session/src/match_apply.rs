@@ -46,6 +46,7 @@ pub struct PreparedMatchSource<'w, 's> {
     host_classes: Option<Res<'w, HostClassLoadouts>>,
     catalog: Option<Res<'w, asset_game::MenuCatalog>>,
     identity: Option<Res<'w, LaunchIdentity>>,
+    runtime_profile: Option<Res<'w, assets::MatchRuntimeProfile>>,
     install_stage: Local<'s, Option<asset_transport::StageHandle>>,
 }
 
@@ -106,8 +107,11 @@ pub fn apply_prepared_match(
         host_classes,
         catalog,
         identity,
+        runtime_profile,
         mut install_stage,
     } = source;
+    let runtime_profile =
+        runtime_profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
     let MatchInstallAuthority {
         role,
         prediction,
@@ -318,6 +322,9 @@ pub fn apply_prepared_match(
         .map_err(|error| InstallRefusal::new(format!("Invalid simulation weapons: {error:?}")))?;
         let mut content = sim::SimContentBuilder::for_match(Arc::clone(sim_weapons.content()));
         content.set_script_sound_aliases(script_sound_aliases);
+        let class_catalog = Arc::new(crate::class_catalog(weapons.registry(), runtime_profile));
+        diag::info!(Sim, "class catalog: {}", class_catalog.summary());
+        content.set_class_catalog(Arc::clone(&class_catalog));
         let mut sim = sim::SimWorld::new();
         if role.runs_authority()
             && let Some(previous) = previous.as_ref()
@@ -469,6 +476,8 @@ pub fn apply_prepared_match(
             &mut sim_cam,
             &mut input_gate,
             host_classes.as_deref(),
+            prepared_map.namespace,
+            &class_catalog,
             kind,
             allow_debug_actions,
         )?;
@@ -792,7 +801,7 @@ fn script_refusal(
     zone: &str,
     gametype: &str,
     stage: &str,
-    fault: &sim::script::Fault,
+    fault: &impl std::fmt::Display,
 ) -> InstallRefusal {
     let text = fault.to_string();
     let head = text.lines().next().unwrap_or("").replace('"', "'");
@@ -886,7 +895,9 @@ fn preflight_match_install(
         prepared_map.namespace
         && !matches!(
             kind,
-            gamemode_iw4::GameModeKind::FreeForAll | gamemode_iw4::GameModeKind::TeamDeathmatch
+            gamemode_iw4::GameModeKind::FreeForAll
+                | gamemode_iw4::GameModeKind::TeamDeathmatch
+                | gamemode_iw4::GameModeKind::Survival
         )
     {
         let catalog = catalog.ok_or_else(|| {
@@ -987,20 +998,34 @@ fn preflight_match_install(
                 .is_ok()
         })
         .unwrap_or(kind.token());
-    let account_defaults =
-        sources
-            .0
-            .config("mp/stats_init.cfg")
-            .map(|config| sim::PlayerDataDefaults {
-                config: config.to_owned(),
-                class_names: std::array::from_fn(|index| {
-                    let key = format!("CLASS_SLOT{}", index + 1);
+    let account_defaults = sources.0.config("mp/stats_init.cfg").and_then(|config| {
+        let class_count = match sim::custom_class_count(sources.0.schemas()) {
+            Ok(count) => count,
+            Err(error @ sim::CustomClassesError::MissingSchema) => {
+                diag::info!(Sim, "gsc: no account defaults: {error}");
+                return None;
+            }
+            Err(error) => {
+                diag::warn!(
+                    Sim,
+                    "account defaults gap: {error}; new accounts are not initialized"
+                );
+                return None;
+            }
+        };
+        Some(sim::PlayerDataDefaults {
+            config: config.to_owned(),
+            class_names: (1..=class_count)
+                .map(|slot| {
+                    let key = format!("CLASS_SLOT{slot}");
                     strings
                         .raw_text(&key)
                         .filter(|bytes| bytes.first().is_some_and(|byte| *byte != 0))
                         .map_or_else(|| key.into_bytes(), |bytes| bytes.to_vec())
-                }),
-            });
+                })
+                .collect(),
+        })
+    });
     let keys = match sources.0.config("radiant/keys.txt") {
         Some(text) => sim::script::parse_radiant_keys(text).unwrap_or_else(|error| {
             diag::warn!(Sim, "gsc: radiant/keys.txt: {error}");
@@ -1035,8 +1060,20 @@ fn preflight_match_install(
     };
     let startup = sim::script::Iw4Startup::new(&sources, gametype, zone);
     let roots: Vec<&str> = startup.roots.iter().map(String::as_str).collect();
-    let scripts = sim::script::Program::load(&sources, &roots, &sim::script::Catalog::iw4())
+    let script_catalog = match kind {
+        gamemode_iw4::GameModeKind::Survival => sim::script::Catalog::survival(),
+        _ => sim::script::Catalog::iw4(),
+    };
+    let scripts = sim::script::Program::load(&sources, &roots, &script_catalog)
         .map_err(|e| script_refusal(zone, gametype, "compile", &e))?;
+    if kind == gamemode_iw4::GameModeKind::Survival {
+        assets::survival_data_check(
+            sources.0.tables(),
+            zone,
+            |name| matches!(weapons.registry().resolve_index(name), Ok(Some(index)) if index != 0),
+        )
+        .map_err(|gap| script_refusal(zone, gametype, "install", &gap))?;
+    }
     let config = sources
         .0
         .config(MATCH_CONFIG)
@@ -1205,8 +1242,9 @@ fn match_kind(
         return Ok(selection.kind());
     }
     match std::env::var("IW4L_GAMETYPE") {
-        Ok(s) if !s.trim().is_empty() => gamemode_iw4::GameModeKind::parse_ascii_ignore_case(&s)
-            .ok_or("IW4L_GAMETYPE names no known gametype (gsc.mode.out-of-scope)"),
+        Ok(s) if !s.trim().is_empty() => sim::HostGameModeSelection::from_token(&s)
+            .map(sim::HostGameModeSelection::kind)
+            .ok_or("IW4L_GAMETYPE names no lobby gametype (gsc.mode.out-of-scope)"),
         _ => Ok(gamemode_iw4::GameModeKind::FreeForAll),
     }
 }
@@ -1453,6 +1491,8 @@ fn install_clip_and_player(
     sim_cam: &mut SimCamera,
     input_gate: &mut AuthorityInputGate,
     host_classes: Option<&HostClassLoadouts>,
+    class_namespace: Option<asset_core::AssetNamespace>,
+    class_catalog: &sim::ClassCatalog,
     kind: gamemode_iw4::GameModeKind,
     allow_debug_actions: bool,
 ) -> Result<(&'static str, Vec<Option<String>>), InstallRefusal> {
@@ -1593,27 +1633,31 @@ fn install_clip_and_player(
             script_destructable_area: p.script_destructable_area.clone(),
         })
         .collect();
-    let rows = bootstrap_class_rows(host_classes);
+    let authored = authored_class_slots(weapons, class_namespace, class_catalog);
+    let rows = bootstrap_class_rows(host_classes, &authored);
     let projected: Vec<AuthoritativeClassProjection> = rows
         .iter()
         .enumerate()
-        .map(|(index, row)| project_class(index as u32, row, weapons, sim_weapons))
+        .map(|(index, row)| project_class(index as u32, row, weapons, sim_weapons, class_catalog))
         .collect();
     let lock_reasons: Vec<Option<String>> = projected
         .iter()
         .map(|row| row.lock_reason.clone())
         .collect();
     let classes: Vec<sim::ClassDef> = projected.into_iter().map(|row| row.def).collect();
-    let bot_classes: Vec<sim::ClassDef> = frame::showcase_classes()
-        .iter()
-        .enumerate()
-        .map(|(index, preset)| {
-            let row = ClassRow::from(&preset.into());
-            project_class(index as u32, &row, weapons, sim_weapons).def
-        })
-        .filter(|class| !class.locked)
-        .collect();
+    let bot_classes = bot_class_defs(
+        &authored,
+        class_namespace,
+        weapons,
+        sim_weapons,
+        class_catalog,
+    );
     let locked_n = lock_reasons.iter().filter(|r| r.is_some()).count();
+    for (index, reason) in lock_reasons.iter().enumerate() {
+        if let Some(reason) = reason {
+            diag::info!(Sim, "class {index} Locked by coverage: {reason}");
+        }
+    }
     let has_intermission_view = intermission_view.is_some();
     if let Err(err) = sim.bootstrap(sim::MatchBootstrap {
         spawns,
@@ -1627,11 +1671,13 @@ fn install_clip_and_player(
             .unwrap_or(match kind {
                 gamemode_iw4::GameModeKind::Domination => gamemode_iw4::dom::SCORE_LIMIT,
                 gamemode_iw4::GameModeKind::Demolition => 0,
+                gamemode_iw4::GameModeKind::Survival => gamemode_iw4::survival::SCORE_LIMIT,
                 _ => sim::FFA.score_limit,
             }),
         time_limit_ms: match kind {
             gamemode_iw4::GameModeKind::Domination => gamemode_iw4::dom::TIME_LIMIT_MS,
             gamemode_iw4::GameModeKind::Demolition => gamemode_iw4::dd::TIME_LIMIT_MS,
+            gamemode_iw4::GameModeKind::Survival => gamemode_iw4::survival::TIME_LIMIT_MS,
             _ => sim::FFA.time_limit_ms,
         },
         allow_debug_actions,
@@ -1664,10 +1710,131 @@ fn install_clip_and_player(
     Ok((gap, lock_reasons))
 }
 
-pub(crate) fn bootstrap_class_rows(host: Option<&HostClassLoadouts>) -> Vec<ClassRow> {
-    let fallback = HostClassLoadouts::default();
-    let host = host.filter(|h| !h.slots.is_empty()).unwrap_or(&fallback);
-    host.slots.iter().map(ClassRow::from).collect()
+/// The default classes the map's game authors in its class table, as host
+/// slots with the perks the class catalog cannot hold.
+fn authored_class_slots(
+    weapons: &WeaponRegistry,
+    namespace: Option<asset_core::AssetNamespace>,
+    catalog: &sim::ClassCatalog,
+) -> Vec<(frame::HostClassSlot, Vec<String>)> {
+    weapons
+        .weapon_families()
+        .authored_classes()
+        .iter()
+        .filter(|class| Some(class.namespace) == namespace)
+        .map(|class| crate::authored_class_slot(class, catalog))
+        .collect()
+}
+
+/// The host's classes; before the host has any, the game's authored defaults,
+/// and the showcase only for a game that ships no class table.
+pub(crate) fn bootstrap_class_rows(
+    host: Option<&HostClassLoadouts>,
+    authored: &[(frame::HostClassSlot, Vec<String>)],
+) -> Vec<ClassRow> {
+    if let Some(host) = host.filter(|h| !h.slots.is_empty()) {
+        return host.slots.iter().map(ClassRow::from).collect();
+    }
+    if authored.is_empty() {
+        return frame::showcase_classes()
+            .iter()
+            .take(sim::match_state::PERSONAL_CLASS_SLOTS)
+            .map(|preset| ClassRow::from(&frame::HostClassSlot::from(preset)))
+            .collect();
+    }
+    authored
+        .iter()
+        .take(sim::match_state::PERSONAL_CLASS_SLOTS)
+        .map(|(slot, _)| ClassRow::from(slot))
+        .collect()
+}
+
+/// Bots draw from every authored default class of the map's game (the
+/// showcase for a game without a class table); a class whose content does not
+/// project is left out and named.
+fn bot_class_defs(
+    authored: &[(frame::HostClassSlot, Vec<String>)],
+    namespace: Option<asset_core::AssetNamespace>,
+    weapons: &WeaponRegistry,
+    sim_weapons: &weapon_content::PreparedSimWeapons,
+    catalog: &sim::ClassCatalog,
+) -> Vec<sim::ClassDef> {
+    let (source, slots): (String, Vec<(frame::HostClassSlot, Vec<String>)>) = if authored.is_empty()
+    {
+        (
+            "the showcase".to_owned(),
+            frame::showcase_classes()
+                .iter()
+                .map(|preset| (preset.into(), Vec::new()))
+                .collect(),
+        )
+    } else {
+        (
+            format!(
+                "{} class table",
+                namespace.map_or("?", asset_core::AssetNamespace::as_str)
+            ),
+            authored.to_vec(),
+        )
+    };
+    let mut admitted = Vec::new();
+    let mut defs = Vec::new();
+    for (index, (slot, gaps)) in slots.iter().enumerate() {
+        let projection = project_class(
+            index as u32,
+            &ClassRow::from(slot),
+            weapons,
+            sim_weapons,
+            catalog,
+        );
+        let primary_slot = asset_game::FamilyKey::parse(&slot.primary).and_then(|key| {
+            weapons
+                .weapon_families()
+                .find(&key)
+                .map(|family| family.slot)
+        });
+        let lock_reason = match primary_slot {
+            Some(family_slot) if family_slot != asset_game::FamilySlot::Primary => Some(format!(
+                "{}: a {family_slot:?} weapon in the primary slot",
+                slot.primary
+            )),
+            _ => projection.lock_reason,
+        };
+        match lock_reason {
+            Some(reason) => diag::info!(Sim, "bot class {index} Locked: {reason}"),
+            None => {
+                let weapon = |key: &str, attachments: &[String]| {
+                    std::iter::once(key)
+                        .chain(attachments.iter().map(String::as_str))
+                        .collect::<Vec<_>>()
+                        .join("+")
+                };
+                admitted.push(format!(
+                    "{index}:{} {} {} {}",
+                    weapon(&slot.primary, &slot.primary_attachments),
+                    weapon(&slot.secondary, &slot.secondary_attachments),
+                    slot.lethal,
+                    slot.tactical
+                ));
+                defs.push(projection.def);
+            }
+        }
+        if !gaps.is_empty() {
+            diag::info!(
+                Sim,
+                "bot class {index} gap: not in the class catalog, left empty: {}",
+                gaps.join(" ")
+            );
+        }
+    }
+    diag::info!(
+        Sim,
+        "bot classes: {}/{} admitted from {source}: [{}]",
+        defs.len(),
+        slots.len(),
+        admitted.join(", ")
+    );
+    defs
 }
 
 fn install_shocks(

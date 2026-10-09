@@ -205,6 +205,25 @@ pub(crate) fn resume_lifecycle_commands(
 pub struct DebugPosOverlay(pub bool);
 
 pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[String]) {
+    // MW3's own menus name these verbs by the engine's names: its end-of-run
+    // summary restarts with `fast_restart` and leaves with
+    // `disconnect_noMessage`.
+    if registry.resolve("map_restart").is_none() {
+        registry.register(
+            crate::CommandSpec::new("map_restart")
+                .alias("fast_restart")
+                .usage(
+                    "map_restart — a new match on the current map, on what the last one prepared",
+                ),
+        );
+    }
+    if registry.resolve("disconnect").is_none() {
+        registry.register(
+            crate::CommandSpec::new("disconnect")
+                .alias("disconnect_nomessage")
+                .usage("disconnect — leave the session: tear the world down, leave the room, back to the main menu"),
+        );
+    }
     if registry.resolve("map").is_none() {
         registry.register(
             crate::CommandSpec::new("map")
@@ -224,14 +243,6 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         (
             "clip",
             "clip — save last ≤45s available to this client as iw4l-artifacts/clips/<ULID>/{clip.iw4ldemo, dump.txt} (always-on ring)",
-        ),
-        (
-            "map_restart",
-            "map_restart — a new match on the current map, on what the last one prepared",
-        ),
-        (
-            "disconnect",
-            "disconnect — leave the session: tear the world down, leave the room, back to the main menu",
         ),
         (
             "demo",
@@ -264,6 +275,10 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "togglemenu — open the script main menu (g_scriptMainMenu), or escape the top menu",
         ),
         ("openmenu", "openmenu <menu> — open an in-game menuDef"),
+        (
+            "menuresponse",
+            "menuresponse <menu> <response> — send the answer an in-game menu's scriptmenuresponse sends",
+        ),
         (
             "menutext",
             "menutext <text> — type into the active native menu field",

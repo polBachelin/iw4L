@@ -387,6 +387,10 @@ pub struct WeaponGeometry {
 
     pub weap_class: i32,
 
+    /// `weapInventoryType_t`: primary, offhand, item, altmode, exclusive,
+    /// scavenger.
+    pub inventory_type: i32,
+
     pub fire_type: i32,
 
     pub move_speed_scale: f32,
@@ -542,6 +546,7 @@ pub struct GfxWorldGeometry {
     pub outdoor_image: Option<Ptr>,
 
     pub outdoor_lookup: [u32; 16],
+    pub sun_effects: Option<GfxSunEffectsGeometry>,
     pub reflection_probes: Option<Ptr>,
     pub reflection_probe_origins: Option<Ptr>,
     pub reflection_probe_count: usize,
@@ -580,6 +585,20 @@ pub struct GfxWorldGeometry {
     pub bounds: Option<[u32; 6]>,
 }
 
+/// Authored sunflare copied while `GfxWorld` is still intact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GfxSunEffectsGeometry {
+    pub sprite: Ptr,
+    pub flare: Ptr,
+    pub sprite_header: Option<Ptr>,
+    pub flare_header: Option<Ptr>,
+    pub sprite_name: [u8; 32],
+    pub sprite_name_len: u8,
+    pub flare_name: [u8; 32],
+    pub flare_name_len: u8,
+    pub raw: [u8; 112],
+}
+
 impl Default for GfxWorldGeometry {
     fn default() -> Self {
         Self {
@@ -600,6 +619,7 @@ impl Default for GfxWorldGeometry {
             sky_count: 0,
             outdoor_image: None,
             outdoor_lookup: [0; 16],
+            sun_effects: None,
             reflection_probes: None,
             reflection_probe_origins: None,
             reflection_probe_count: 0,
@@ -707,6 +727,7 @@ pub struct MaterialGeometry {
     pub name: Option<Ptr>,
     pub draw_surf: u64,
     pub sort_key: u8,
+    pub texture_atlas: [u8; 2],
 
     pub state_bits: Option<Ptr>,
 
@@ -886,6 +907,46 @@ pub struct FxEffectDefGeometry {
     pub emission_count: i32,
     pub elem_defs: Option<Ptr>,
     pub elem_def_count: usize,
+}
+
+/// An `FxImpactTable` the walk loaded: its rows sit at `entries`, each a
+/// `FxImpactEntry` of non-flesh then flesh `FxEffectDef` slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FxImpactTableGeometry {
+    pub header: Ptr,
+    pub name: Option<Ptr>,
+    pub entries: Ptr,
+    pub row_count: usize,
+}
+
+/// A `Font` the walk loaded. A material name is set when the material body
+/// loaded here or the sink remembered the aliased slot's name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FontDefGeometry {
+    pub name: Option<Ptr>,
+    pub pixel_height: i32,
+    pub glyphs: Option<Ptr>,
+    pub glyph_count: usize,
+    pub material_name: Option<Ptr>,
+    pub glow_material_name: Option<Ptr>,
+}
+
+/// A `TracerDef` the walk loaded. `material_name` is set only when the
+/// material body loaded here; an aliased material is named by the slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TracerDefGeometry {
+    pub header: Option<Ptr>,
+    pub name: Option<Ptr>,
+    pub material_slot: Option<Ptr>,
+    pub material_name: Option<Ptr>,
+    pub material_fresh: bool,
+    pub draw_interval: u32,
+    pub speed: f32,
+    pub beam_length: f32,
+    pub beam_width: f32,
+    pub screw_radius: f32,
+    pub screw_dist: f32,
+    pub colors: [[f32; 4]; crate::size::TRACER_COLOR_COUNT],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

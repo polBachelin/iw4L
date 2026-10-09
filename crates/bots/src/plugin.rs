@@ -111,6 +111,8 @@ impl Plugin for BotsPlugin {
                 Update,
                 (
                     fill_bots_from_rules,
+                    drain_script_bot_requests,
+                    retire_departed_bots,
                     drain_bot_add_queue,
                     evict_bots_claiming_local_client,
                     boot_bots,
@@ -190,6 +192,46 @@ fn fill_bots_from_rules(
     }
 }
 
+fn drain_script_bot_requests(
+    mut queue: ResMut<BotAddQueue>,
+    world: Option<ResMut<AuthorityWorld>>,
+) {
+    let Some(mut world) = world else {
+        return;
+    };
+    for request in world.0.take_script_bot_requests() {
+        queue.push_script(request);
+    }
+}
+
+// A bot leaves when the match script kicks it or its connection faults: the
+// authority drops the client. Its slot goes too, so the roster stops driving a
+// client that is gone and its id is free for the next bot.
+fn retire_departed_bots(mut roster: ResMut<BotRoster>, world: Option<Res<AuthorityWorld>>) {
+    let Some(world) = world else {
+        return;
+    };
+    roster.bots.retain_mut(|bot| {
+        if world.0.client_meta(bot.id).is_some() {
+            bot.present = true;
+            return true;
+        }
+        if !bot.present {
+            return true;
+        }
+        diag::info!(
+            Sim,
+            "bots: retired client {} ({}{}) — it left the match",
+            bot.id.0,
+            bot.name,
+            bot.archetype
+                .as_deref()
+                .map_or(String::new(), |archetype| format!(" archetype={archetype}")),
+        );
+        false
+    });
+}
+
 fn drain_bot_add_queue(
     mut queue: ResMut<BotAddQueue>,
     mut roster: ResMut<BotRoster>,
@@ -210,18 +252,32 @@ fn drain_bot_add_queue(
     }
     for request in requests {
         let count = request.count;
-        let added = roster.add_bots(count, &taken, request.dummy, request.side);
+        let added = roster.add_bots(
+            count,
+            &taken,
+            request.dummy,
+            request.side,
+            request.archetype.as_ref(),
+            request.skill,
+        );
         if added.len() < count as usize {
             diag::warn!(
                 Sim,
-                "bots: add {count} — only {} minted, the roster is full",
+                "bots: add {count} — only {} minted, the roster or the client slots are full",
                 added.len()
             );
         }
         diag::info!(
             Sim,
-            "bots: add {count} (dummy={}) → clients {:?}",
+            "bots: add {count} (dummy={}){} → clients {:?}",
             request.dummy,
+            request
+                .archetype
+                .as_deref()
+                .map_or(String::new(), |archetype| format!(
+                    " archetype={archetype} skill={}",
+                    request.skill
+                )),
             added.iter().map(|id| id.0).collect::<Vec<_>>()
         );
     }
@@ -249,6 +305,7 @@ fn boot_bots(
     installed: Option<Res<HasWorld>>,
     world: Option<ResMut<AuthorityWorld>>,
     local: Res<LocalPresentClient>,
+    (survival_teams, mut survival_teams_missing): (Option<Res<sim::SurvivalTeams>>, Local<bool>),
 ) {
     let Some(mut world) = world else {
         return;
@@ -257,7 +314,21 @@ fn boot_bots(
         return;
     }
     let seed = roster.seed;
-    let team_based = world.0.game_mode_kind() != gamemode_iw4::GameModeKind::FreeForAll;
+    let kind = world.0.game_mode_kind();
+    let survival_rules = match (kind, survival_teams) {
+        (gamemode_iw4::GameModeKind::Survival, Some(teams)) => Some(teams.0),
+        (gamemode_iw4::GameModeKind::Survival, None) => {
+            if !std::mem::replace(&mut *survival_teams_missing, true) {
+                diag::warn!(
+                    Sim,
+                    "bots: survival match without survival team rules — no bot joins"
+                );
+            }
+            return;
+        }
+        _ => None,
+    };
+    let team_based = kind != gamemode_iw4::GameModeKind::FreeForAll;
     let local_team = match world.0.client_state_team(local.0) {
         Some(entity_iw4::TEAM_AXIS) => Some(("axis", "allies")),
         Some(entity_iw4::TEAM_ALLIES) => Some(("allies", "axis")),
@@ -267,16 +338,25 @@ fn boot_bots(
         if bot.joined {
             continue;
         }
-        let team = match bot.side.filter(|_| team_based) {
-            None => None,
-            Some(side) => {
-                let Some((mine, theirs)) = local_team else {
-                    continue;
-                };
-                Some(match side {
-                    crate::BotSide::Friendly => mine,
-                    crate::BotSide::Enemy => theirs,
-                })
+        let team = if let Some(rules) = survival_rules {
+            // Survival sides are fixed by the mode, not by the local player:
+            // a bot fights the players unless it was added as friendly support.
+            Some(match bot.side.unwrap_or(crate::BotSide::Enemy) {
+                crate::BotSide::Friendly => rules.human.script_name(),
+                crate::BotSide::Enemy => rules.enemy.script_name(),
+            })
+        } else {
+            match bot.side.filter(|_| team_based) {
+                None => None,
+                Some(side) => {
+                    let Some((mine, theirs)) = local_team else {
+                        continue;
+                    };
+                    Some(match side {
+                        crate::BotSide::Friendly => mine,
+                        crate::BotSide::Enemy => theirs,
+                    })
+                }
             }
         };
         if world.0.gsc_realm() == Some(sim::script::Realm::Iw4)
@@ -292,9 +372,19 @@ fn boot_bots(
             );
             continue;
         }
+        // A bot the script asked for joins bound to its archetype and picks no
+        // class: the script's connect callback reads the archetype and gives
+        // the loadout itself.
+        if let Some(archetype) = &bot.archetype {
+            world.0.bind_script_bot(bot.id, archetype.clone());
+        }
         let index = default_class_index(seed, bot.id, bot.class_picks);
+        // The authority applies a client's actions in request-id order, so the
+        // ids follow the order the join must play out: the team answer lands
+        // before the class pick, which would otherwise autoassign a team first.
         let join_id = request_ids.allocate();
-        let class_request = request_ids.allocate();
+        let team_request = team.map(|_| request_ids.allocate());
+        let class_request = bot.archetype.is_none().then(|| request_ids.allocate());
         let name_request = request_ids.allocate();
         let queued = [
             actions.push(
@@ -303,8 +393,7 @@ fn boot_bots(
                     request_id: join_id,
                 },
             ),
-            team.map_or(Ok(()), |team| {
-                let request_id = request_ids.allocate();
+            team.zip(team_request).map_or(Ok(()), |(team, request_id)| {
                 match (
                     sim::menu_response_field(sim::TEAM_MENU),
                     sim::menu_response_field(team),
@@ -320,13 +409,12 @@ fn boot_bots(
                     _ => Ok(()),
                 }
             }),
-            actions.push(
-                bot.id,
-                ClientAction::ChooseDefaultClass {
-                    request_id: class_request,
-                    index,
-                },
-            ),
+            class_request.map_or(Ok(()), |request_id| {
+                actions.push(
+                    bot.id,
+                    ClientAction::ChooseDefaultClass { request_id, index },
+                )
+            }),
             actions.push(
                 bot.id,
                 ClientAction::SetName {
@@ -340,12 +428,24 @@ fn boot_bots(
             continue;
         }
         bot.joined = true;
-        bot.class_picks += 1;
-        diag::info!(
-            Sim,
-            "bots: JoinMatch+changeclass client={} pick={index} request_id={class_request}",
-            bot.id.0,
-        );
+        match (class_request, bot.archetype.as_deref()) {
+            (Some(class_request), _) => {
+                bot.class_picks += 1;
+                diag::info!(
+                    Sim,
+                    "bots: JoinMatch+changeclass client={} team={} pick={index} request_id={class_request}",
+                    bot.id.0,
+                    team.unwrap_or("auto"),
+                );
+            }
+            (None, archetype) => diag::info!(
+                Sim,
+                "bots: JoinMatch client={} team={} archetype={} — no class, the script arms it",
+                bot.id.0,
+                team.unwrap_or("auto"),
+                archetype.unwrap_or("none"),
+            ),
+        }
     }
 }
 
@@ -453,6 +553,7 @@ struct ThinkBots<'w> {
     fire: ResMut<'w, BotFireQueue>,
     reliable: ResMut<'w, ReliableEventHub>,
     meter: ResMut<'w, BotMeter>,
+    survival: Option<Res<'w, sim::SurvivalTeams>>,
 }
 
 fn think_bots(mut p: ThinkBots) {
@@ -476,6 +577,7 @@ fn think_bots(mut p: ThinkBots) {
     let start = (p.clock.tick as usize / 2) % count.max(1);
     let mut controller_us = 0u64;
     let seed = p.roster.seed;
+    let survival = p.survival.as_deref().map(|teams| teams.0);
     for offset in 0..count {
         let bot = &mut p.roster.bots[(start + offset) % count];
         let Some(meta) = snapshot.meta.for_client(bot.id) else {
@@ -487,7 +589,8 @@ fn think_bots(mut p: ThinkBots) {
             }
             continue;
         }
-        if bot.class_picked_in != Some(meta.life_sequence) {
+        // The script arms the bots it asked for on every spawn it gives them.
+        if bot.archetype.is_none() && bot.class_picked_in != Some(meta.life_sequence) {
             bot.class_picked_in = Some(meta.life_sequence);
             let index = default_class_index(seed, bot.id, bot.class_picks);
             let request_id = p.request_ids.allocate();
@@ -518,9 +621,14 @@ fn think_bots(mut p: ThinkBots) {
             }
         } else if let Some(brain) = bot.brain.as_mut() {
             let mut queried = Budgeted::new(&mut p.world.0, &mut budget);
-            let Some(obs) =
-                sensor::observe_focused(&snapshot, bot.id, &mut queried, brain.focus_target())
-            else {
+            let Some(obs) = sensor::observe_focused(
+                &snapshot,
+                bot.id,
+                &mut queried,
+                brain.focus_target(),
+                brain.tuning(),
+                survival,
+            ) else {
                 continue;
             };
             let started = std::time::Instant::now();

@@ -1,0 +1,2372 @@
+main()
+{
+	level.callbackstartgametype = ::onstartgametype;
+	level.callbackplayerconnect = ::onplayerconnect;
+	level.callbackplayerdisconnect = ::onplayerdisconnect;
+	level.callbackplayerdamage = ::onplayerdamage;
+	level.callbackplayerkilled = ::onplayerkilled;
+	level.callbackplayerlaststand = ::onplayerlaststand;
+	level.callbackvehicledamage = ::onvehicledamage;
+}
+
+setting( key )
+{
+	return tablelookup( "survival/settings.csv", 0, key, 1 );
+}
+
+weaponsfor( ref )
+{
+	weapons = tablelookup( "survival/weapon_aliases.csv", 0, ref, 1 );
+	if ( weapons == "" )
+		weapons = ref;
+	return strtok( weapons, " " );
+}
+
+weaponfor( ref )
+{
+	return weaponsfor( ref )[ 0 ];
+}
+
+support( key )
+{
+	return tablelookup( "survival/airsupport.csv", 0, key, 1 );
+}
+
+// How the armory item `ref` is given (survival/grants.csv c1): `airstrike`
+// and `predator` wait on the action slot, `sentry` is carried and placed,
+// `ammo` refills the weapons, `grenade`, `explosive` and `launcher` are
+// counted in their weapon's ammo, `armor` in points, `laststand` in
+// self-revives.
+tablegrant( ref )
+{
+	return tablelookup( "survival/grants.csv", 0, ref, 1 );
+}
+
+// How many of a counted item one purchase adds (survival/grants.csv c3),
+// 0 to fill up to the item's most.
+grantamount( ref )
+{
+	return int( tablelookup( "survival/grants.csv", 0, ref, 3 ) );
+}
+
+// The most of `ref` a player holds (the armory table's c10).
+itemmost( ref )
+{
+	return int( tablelookup( setting( "armory_table" ), 1, ref, 10 ) );
+}
+
+
+// The counted grants held as their weapon's ammo.
+isammogrant( grant )
+{
+	return grant == "grenade" || grant == "explosive" || grant == "launcher";
+}
+
+isslotgrant( grant )
+{
+	return grant == "airstrike" || grant == "predator";
+}
+
+heavy( key )
+{
+	return tablelookup( "survival/heavies.csv", 0, key, 1 );
+}
+
+// A heavies.csv duration in milliseconds, as seconds to wait.
+heavyseconds( key )
+{
+	return int( heavy( key ) ) / 1000;
+}
+
+onstartgametype()
+{
+	precacheshellshock( setting( "getup_shock" ) );
+	precacheshader( support( "airstrike_selector" ) );
+	level.airstrikefx = loadfx( support( "airstrike_fx" ) );
+	precachemodel( support( "airstrike_plane" ) );
+	readgrants();
+	level.gasfx = loadfx( heavy( "gas_fx" ) );
+	level.chopperdeathfx = loadfx( heavy( "chopper_death_fx" ) );
+	precacheshellshock( heavy( "gas_shock_high" ) );
+	precacheshellshock( heavy( "gas_shock_med" ) );
+	precacheshellshock( heavy( "gas_shock_low" ) );
+	level.playerspawns = getentarray( setting( "player_spawn_classname" ), "classname" );
+	level.enemyspawns = getentarray( setting( "enemy_spawn_classname" ), "classname" );
+	readwaves();
+	for ( i = 0; i < level.archetypes.size; i++ )
+	{
+		if ( archetypetrait( level.archetypes[ i ] ) == "chopper" )
+			precachemodel( archetypebody( level.archetypes[ i ] ) );
+	}
+	readchopperpath();
+	readarmory();
+	// The armories wait on it from the start.
+	level.armoryunlocked = [];
+	readplacements();
+	readchallenges();
+	level.unsimulated = strtok( setting( "unsimulated_archetypes" ), " " );
+	level.humans = [];
+	level.friendlies = 0;
+	level.alliesrequested = 0;
+	level.allyqueue = [];
+	level.squads = [];
+	level.enemiesinplay = 0;
+	level.wavequeue = [];
+	level.wavevehicles = [];
+	level.wavenext = 0;
+	level.wave = 0;
+	level.wavetotal = 0;
+	level.wavekilled = 0;
+	logprint( "survival: ready waves=" + level.wavecount + " repeat_block=" + level.repeatwaves.size + " archetypes=" + level.archetypes.size + " armory_items=" + level.armoryitems.size + " player_spawns=" + level.playerspawns.size + " enemy_spawns=" + level.enemyspawns.size + "\n" );
+	level notify( "prematch_over" );
+	level thread runwaves();
+}
+
+readwaves()
+{
+	table = setting( "waves_table" );
+	level.wavecount = 0;
+	level.waverows = [];
+	level.archetypes = [];
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		if ( tablelookupbyrow( table, row, 1 ) == "1" )
+		{
+			level.wavecount++;
+			level.waverows[ int( tablelookupbyrow( table, row, 2 ) ) ] = row;
+			continue;
+		}
+		key = int( tablelookupbyrow( table, row, 0 ) );
+		if ( key >= 100 && key < 1000 )
+			level.archetypes[ level.archetypes.size ] = tablelookupbyrow( table, row, 1 );
+	}
+	// Past the last row the waves marked in c9 repeat, in order: our reading of
+	// the column, which MW3 sets on waves 16-21 only.
+	level.repeatwaves = [];
+	for ( wave = 1; wave <= level.wavecount; wave++ )
+	{
+		if ( tablelookupbyrow( table, level.waverows[ wave ], 9 ) == "1" )
+			level.repeatwaves[ level.repeatwaves.size ] = wave;
+	}
+}
+
+// An armory item is a row of the armory table whose kind (c2) keys a field
+// of survival/playerdata.csv (c1 lists the kinds): the field the armory
+// menus read for it with getPlayerData( "armory" + kind, ref ).
+readarmory()
+{
+	fields = "survival/playerdata.csv";
+	level.armoryfields = [];
+	for ( row = 0; tablelookupbyrow( fields, row, 0 ) != ""; row++ )
+	{
+		kinds = strtok( tablelookupbyrow( fields, row, 1 ), " " );
+		for ( i = 0; i < kinds.size; i++ )
+			level.armoryfields[ kinds[ i ] ] = tablelookupbyrow( fields, row, 0 );
+	}
+	table = setting( "armory_table" );
+	level.armoryitems = [];
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		if ( isdefined( level.armoryfields[ tablelookupbyrow( table, row, 2 ) ] ) )
+			level.armoryitems[ level.armoryitems.size ] = tablelookupbyrow( table, row, 1 );
+	}
+	level.maxrank = int( tablelookup( setting( "rank_table" ), 0, "maxrank", 1 ) );
+}
+
+// MW3's levelForExperienceSO, which the armory menus gate items with: the
+// first rank of rank_table (c0) whose experience ends (c7) above
+// `experience`, else the last (the `maxrank` row's c1).
+rankforexperience( experience )
+{
+	table = setting( "rank_table" );
+	for ( rank = 0; rank < level.maxrank; rank++ )
+	{
+		if ( experience < int( tablelookup( table, 0, rank, 7 ) ) )
+			return rank;
+	}
+	return level.maxrank;
+}
+
+// A player starts a run at `start_rank` (`max`: the rank table's last), with
+// the experience that rank begins at (c2).
+startexperience()
+{
+	rank = setting( "start_rank" );
+	if ( rank == "max" )
+		rank = level.maxrank;
+	return int( tablelookup( setting( "rank_table" ), 0, rank, 2 ) );
+}
+
+// Every change of what the script alone keeps of an item (air support,
+// sentries, perks) goes through here, so the armory menus read what the
+// purchase rules decide.
+setheld( ref, count )
+{
+	self.held[ ref ] = count;
+	self publishheld( ref );
+}
+
+// What the armory menus read for `ref`: the count the player holds once it
+// is the most the item allows (c10), 0 below that. The menus disable an
+// item whose count is above 0, and a purchase is refused at c10, so the two
+// agree on what can be bought. That MW3 kept this count, and not the plain
+// count held, is our reading: its menus test only for a count above 0. The
+// ammo refill (c10 0) reads 1 while there is nothing to refill. A value is
+// written, and logged, when it changes; the store reads 0 for a ref never
+// written.
+publishheld( ref )
+{
+	table = setting( "armory_table" );
+	held = self helditem( ref );
+	grant = itemgrant( ref );
+	if ( grant != "ammo" && held < heldmost( ref, grant ) )
+		held = 0;
+	if ( !isdefined( self.published[ ref ] ) )
+		self.published[ ref ] = 0;
+	if ( self.published[ ref ] == held )
+		return;
+	self.published[ ref ] = held;
+	field = level.armoryfields[ tablelookup( table, 1, ref, 2 ) ];
+	self survival_setplayerdata( field, ref, held );
+	logprint( "survival: playerdata client=" + self getentitynumber() + " " + field + " " + ref + "=" + held + "\n" );
+}
+
+// What a player holds of the items of armory `kind` follows their inventory
+// (weapons fired, grenades thrown, armor spent), so it is written again as
+// that armory opens and after each purchase from it.
+publishkind( kind )
+{
+	table = setting( "armory_table" );
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		if ( tablelookupbyrow( table, row, 2 ) == kind )
+			self publishheld( tablelookupbyrow( table, row, 1 ) );
+	}
+}
+
+// A squad is held by every player while any of its allies is in play or
+// owed a slot.
+publishsquad( ref )
+{
+	for ( i = 0; i < level.humans.size; i++ )
+		level.humans[ i ] publishheld( ref );
+}
+
+// A sentry grant's model is survival/grants.csv c2; its weapon is how its
+// kills are told apart. A launcher's weapon keeps its own ammo: the ammo
+// refill leaves it out.
+readgrants()
+{
+	table = "survival/grants.csv";
+	level.sentryweapons = [];
+	level.launcherweapons = [];
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		grant = tablelookupbyrow( table, row, 1 );
+		weapon = weaponfor( tablelookupbyrow( table, row, 0 ) );
+		if ( grant == "launcher" )
+			level.launcherweapons[ level.launcherweapons.size ] = weapon;
+		if ( grant != "sentry" )
+			continue;
+		precachemodel( tablelookupbyrow( table, row, 2 ) );
+		level.sentryweapons[ level.sentryweapons.size ] = weapon;
+	}
+}
+
+placementorigin( origin )
+{
+	words = strtok( origin, " " );
+	if ( words[ 0 ] == "drop" )
+		words = strtok( tablelookup( setting( "drop_table" ), 0, words[ 1 ], 2 ), ", " );
+	return ( int( words[ 0 ] ), int( words[ 1 ] ), int( words[ 2 ] ) );
+}
+
+// Each armory the map's placements name stands in the world as its model,
+// and opens its kind's menu (`armory_menu_prefix` + kind) to a player who
+// uses it.
+readplacements()
+{
+	table = "survival/maps/" + getdvar( "mapname" ) + ".csv";
+	level.armories = [];
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		model = tablelookupbyrow( table, row, 3 );
+		precachemodel( model );
+		armory = spawn( "script_model", placementorigin( tablelookupbyrow( table, row, 1 ) ) );
+		armory.angles = ( 0, int( tablelookupbyrow( table, row, 2 ) ), 0 );
+		armory setmodel( model );
+		armory.kind = tablelookupbyrow( table, row, 0 );
+		armory.menu = setting( "armory_menu_prefix" ) + armory.kind;
+		level.armories[ level.armories.size ] = armory;
+		logprint( "survival: armory " + armory.kind + " spawned at " + armory.origin + " yaw " + armory.angles[ 1 ] + " model " + model + " menu " + armory.menu + "\n" );
+		armory thread armoryuse();
+	}
+	if ( !level.armories.size )
+		logprint( "survival: " + table + " places no armory on this map\n" );
+}
+
+// An armory can be used once the wave that unlocks its kind is over.
+armoryuse()
+{
+	level endon( "game_over" );
+	while ( !isdefined( level.armoryunlocked[ self.kind ] ) )
+		level waittill( "armory_unlocked" );
+	self makeusable();
+	logprint( "survival: armory " + self.kind + " usable at " + self.origin + "\n" );
+	for ( ;; )
+	{
+		self waittill( "trigger", player );
+		if ( ishuman( player ) )
+			player openarmory( self );
+	}
+}
+
+// The player stands at the armory, held in place, until its menu closes or
+// they go down.
+openarmory( armory )
+{
+	if ( isdefined( self.armory ) )
+		return;
+	if ( isdefined( self.downed ) )
+	{
+		logprint( "survival: armory " + armory.kind + " refused client=" + self getentitynumber() + ": down\n" );
+		return;
+	}
+	self.armory = armory;
+	self freezecontrols( true );
+	self publishkind( armory.kind );
+	self openpopupmenu( armory.menu );
+	logprint( "survival: armory " + armory.kind + " opened client=" + self getentitynumber() + " menu=" + armory.menu + "\n" );
+}
+
+closearmory( reason )
+{
+	logprint( "survival: armory " + self.armory.kind + " closed client=" + self getentitynumber() + " reason=" + reason + "\n" );
+	self.armory = undefined;
+	self freezecontrols( false );
+	self.replacing = undefined;
+	if ( reason == "closed" )
+		return;
+	// The armory's menu opens its own submenus (a weapon category, the
+	// replacement warning) over itself: the whole stack goes, not the top.
+	self closeingamemenu();
+}
+
+// The challenges of MW3's table (a row whose c6, the count it asks for, is
+// positive) a kill can advance: survival/challenges.csv names the means of
+// death that counts for each (our reading); the others are not played.
+readchallenges()
+{
+	table = setting( "challenge_table" );
+	level.challenges = [];
+	played = "";
+	skipped = "";
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		required = int( tablelookupbyrow( table, row, 6 ) );
+		if ( required <= 0 )
+			continue;
+		ref = tablelookupbyrow( table, row, 1 );
+		means = tablelookup( "survival/challenges.csv", 0, ref, 1 );
+		if ( means == "" )
+		{
+			skipped = skipped + " " + ref;
+			continue;
+		}
+		challenge = spawnstruct();
+		challenge.ref = ref;
+		challenge.means = means;
+		challenge.required = required;
+		challenge.reward = int( tablelookupbyrow( table, row, 7 ) );
+		level.challenges[ level.challenges.size ] = challenge;
+		played = played + " " + ref + "=" + means + "x" + required + ":" + challenge.reward;
+	}
+	logprint( "survival: challenges played" + played + " not played" + skipped + "\n" );
+}
+
+tablewave( wave )
+{
+	if ( wave <= level.wavecount )
+		return wave;
+	return level.repeatwaves[ ( wave - level.wavecount - 1 ) % level.repeatwaves.size ];
+}
+
+runwaves()
+{
+	level endon( "game_over" );
+	while ( !level.humans.size )
+		level waittill( "human_connected" );
+	level.starttime = gettime();
+	for ( wave = 1; ; wave++ )
+	{
+		row = level.waverows[ tablewave( wave ) ];
+		runwave( wave, row );
+		intermission( wave, row );
+	}
+}
+
+issimulated( archetype )
+{
+	for ( i = 0; i < level.unsimulated.size; i++ )
+	{
+		if ( level.unsimulated[ i ] == archetype )
+			return false;
+	}
+	return true;
+}
+
+// Queues `count` enemies of `archetype` for the wave: a chopper flies the
+// map's chopper path, any other is a bot. Tallies them as skipped when no
+// bot can play them or the map has no chopper path.
+queueenemies( archetype, count )
+{
+	if ( archetypetrait( archetype ) == "chopper" )
+	{
+		if ( level.chopperstarts.size )
+		{
+			for ( i = 0; i < count; i++ )
+				level.wavevehicles[ level.wavevehicles.size ] = archetype;
+			return;
+		}
+	}
+	else if ( issimulated( archetype ) )
+	{
+		for ( i = 0; i < count; i++ )
+			level.wavequeue[ level.wavequeue.size ] = archetype;
+		return;
+	}
+	if ( !isdefined( level.waveskipped[ archetype ] ) )
+	{
+		level.waveskips[ level.waveskips.size ] = archetype;
+		level.waveskipped[ archetype ] = 0;
+	}
+	level.waveskipped[ archetype ] = level.waveskipped[ archetype ] + count;
+}
+
+// One of each ref, the way c7 lists bosses and c8 vehicles.
+queueeach( refs )
+{
+	for ( i = 0; i < refs.size; i++ )
+		queueenemies( refs[ i ], 1 );
+	summary = refs[ 0 ];
+	for ( i = 1; i < refs.size; i++ )
+		summary = summary + "," + refs[ i ];
+	return summary;
+}
+
+runwave( wave, row )
+{
+	table = setting( "waves_table" );
+	level.wave = wave;
+	level.wavequeue = [];
+	level.wavevehicles = [];
+	level.waveskips = [];
+	level.waveskipped = [];
+	// A development aid: with `test_wave` set, wave 1 is one of each
+	// archetype it lists instead of the table's.
+	test = setting( "test_wave" );
+	if ( wave == 1 && test != "" )
+		summary = " test=" + queueeach( strtok( test, " " ) );
+	else
+		summary = wavecontents( table, row );
+	level.wavetotal = level.wavequeue.size + level.wavevehicles.size;
+	level.wavekilled = 0;
+	level.wavenext = 0;
+	repeats = "";
+	if ( wave > level.wavecount )
+		repeats = " repeats=" + tablewave( wave );
+	logprint( "survival: wave=" + wave + " start" + summary + " total=" + level.wavetotal + " budget=" + enemybudget() + repeats + "\n" );
+	updatewavehud();
+	for ( i = 0; i < level.waveskips.size; i++ )
+		logprint( "survival: wave " + wave + " skips " + level.waveskips[ i ] + " x" + level.waveskipped[ level.waveskips[ i ] ] + " (not simulated)\n" );
+	refill();
+	level thread spawnchoppers( level.wavevehicles );
+	// An enemy bot leaves the count when its client is gone, not when it
+	// dies: the session frees a client slot only once the kick has dropped
+	// it. A chopper leaves it when it is destroyed.
+	while ( level.wavekilled < level.wavetotal || level.enemiesinplay > 0 )
+	{
+		level waittill( "roster_changed" );
+		refill();
+	}
+	logprint( "survival: wave=" + wave + " complete killed=" + level.wavekilled + "\n" );
+	wavegetup( wave );
+	bonus = int( setting( "wave_bonus" ) );
+	for ( i = 0; i < level.humans.size; i++ )
+		level.humans[ i ] addcredits( bonus, "wave_bonus:" + wave );
+}
+
+// Queues the table wave's enemies: its squad (c3 x c4), its specials (each
+// c5 ref by its c6 count), then one of each boss (c7) and vehicle (c8).
+wavecontents( table, row )
+{
+	summary = "";
+	squad = tablelookupbyrow( table, row, 3 );
+	if ( squad != "" )
+	{
+		count = int( tablelookupbyrow( table, row, 4 ) );
+		queueenemies( squad, count );
+		summary = summary + " squad=" + squad + " x" + count;
+	}
+	specials = strtok( tablelookupbyrow( table, row, 5 ), " " );
+	counts = strtok( tablelookupbyrow( table, row, 6 ), " " );
+	for ( i = 0; i < specials.size; i++ )
+	{
+		queueenemies( specials[ i ], int( counts[ i ] ) );
+		if ( i == 0 )
+			summary = summary + " specials=";
+		else
+			summary = summary + ",";
+		summary = summary + specials[ i ] + " x" + counts[ i ];
+	}
+	bosses = strtok( tablelookupbyrow( table, row, 7 ), " " );
+	if ( bosses.size )
+		summary = summary + " bosses=" + queueeach( bosses );
+	vehicles = strtok( tablelookupbyrow( table, row, 8 ), " " );
+	if ( vehicles.size )
+		summary = summary + " vehicles=" + queueeach( vehicles );
+	return summary;
+}
+
+intermission( wave, row )
+{
+	seconds = int( setting( "intermission_seconds" ) );
+	logprint( "survival: intermission " + seconds + "s before wave=" + ( wave + 1 ) + "\n" );
+	kind = tablelookupbyrow( setting( "waves_table" ), row, 10 );
+	if ( kind != "" && !isdefined( level.armoryunlocked[ kind ] ) )
+	{
+		level.armoryunlocked[ kind ] = true;
+		logprint( "survival: armory unlocked " + kind + " after wave=" + wave + "\n" );
+		level notify( "armory_unlocked", kind );
+	}
+	wait seconds;
+}
+
+// Client slots left for enemies: every client the wave did not ask for, the
+// players and their allies (in play, asked for or still owed a slot), holds
+// one.
+enemybudget()
+{
+	return allyroom();
+}
+
+// Client slots allies could still take: every one no player or ally holds,
+// is asked for or is owed. Enemies give theirs up as they die.
+allyroom()
+{
+	return getdvarint( "sv_maxclients" ) - level.humans.size - level.friendlies - level.alliesrequested - level.allyqueue.size;
+}
+
+// Client slots no client holds or has been asked for.
+freeslots()
+{
+	return getdvarint( "sv_maxclients" ) - level.humans.size - level.friendlies - level.alliesrequested - level.enemiesinplay;
+}
+
+// Asks for the allies an armory squad is owed first, as many as there are
+// free slots, then for the next queued enemies, as many as the budget leaves
+// room for; one request per run of the same archetype.
+refill()
+{
+	free = freeslots();
+	while ( free > 0 && level.allyqueue.size )
+	{
+		archetype = level.allyqueue[ 0 ];
+		count = 0;
+		rest = [];
+		for ( i = 0; i < level.allyqueue.size; i++ )
+		{
+			if ( count < free && level.allyqueue[ i ] == archetype && rest.size == 0 )
+				count++;
+			else
+				rest[ rest.size ] = level.allyqueue[ i ];
+		}
+		level.allyqueue = rest;
+		level.alliesrequested = level.alliesrequested + count;
+		free = free - count;
+		survival_requestallies( count, archetype );
+		logprint( "survival: requests ally " + archetype + " x" + count + " owed=" + level.allyqueue.size + " free=" + free + "\n" );
+	}
+	budget = enemybudget();
+	room = budget - level.enemiesinplay;
+	if ( room > free )
+		room = free;
+	while ( room > 0 && level.wavenext < level.wavequeue.size )
+	{
+		archetype = level.wavequeue[ level.wavenext ];
+		count = 0;
+		for ( ; count < room && level.wavenext < level.wavequeue.size; level.wavenext++ )
+		{
+			if ( level.wavequeue[ level.wavenext ] != archetype )
+				break;
+			count++;
+		}
+		level.enemiesinplay = level.enemiesinplay + count;
+		room = room - count;
+		survival_requestenemies( count, archetype );
+		logprint( "survival: wave=" + level.wave + " requests " + archetype + " x" + count + " in_play=" + level.enemiesinplay + " budget=" + budget + "\n" );
+	}
+}
+
+archetypefield( archetype, column )
+{
+	return tablelookup( setting( "waves_table" ), 1, archetype, column );
+}
+
+// What sets the archetype apart (archetypes.csv c3): `explosive`,
+// `martyrdom`, `claymore`, `gas`, or "" for nothing.
+archetypetrait( archetype )
+{
+	return tablelookup( "survival/archetypes.csv", 0, archetype, 3 );
+}
+
+// The archetype's model (archetypes.csv c2): a chopper's vehicle model.
+archetypebody( archetype )
+{
+	return tablelookup( "survival/archetypes.csv", 0, archetype, 2 );
+}
+
+archetypeweapon( archetype )
+{
+	weapon = tablelookup( "survival/archetypes.csv", 0, archetype, 1 );
+	if ( weapon == "" )
+		weapon = archetypefield( archetype, 5 );
+	return weaponfor( weapon );
+}
+
+// No menu of the loaded zones reads the surHUD_* client dvars: MW3's armory
+// menus read credits with getPlayerData( "surHUD_credits" ) (the match
+// player data addcredits writes), and the menu that drew MW3's survival HUD
+// is not in the data (surHUD_display only stamps animations). So client
+// hudelems laid out by survival/hud.csv draw the wave, the enemies left and
+// the credits.
+createhud()
+{
+	table = "survival/hud.csv";
+	self.hud = [];
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		elem = newclienthudelem( self );
+		elem.label = tablelookupbyrow( table, row, 1 );
+		elem.font = tablelookupbyrow( table, row, 2 );
+		elem.fontscale = int( tablelookupbyrow( table, row, 3 ) ) / 100;
+		elem.horzalign = tablelookupbyrow( table, row, 4 );
+		elem.vertalign = tablelookupbyrow( table, row, 5 );
+		elem.alignx = tablelookupbyrow( table, row, 6 );
+		elem.aligny = tablelookupbyrow( table, row, 7 );
+		elem.x = int( tablelookupbyrow( table, row, 8 ) );
+		elem.y = int( tablelookupbyrow( table, row, 9 ) );
+		elem.hidewheninmenu = true;
+		elem setvalue( 0 );
+		self.hud[ tablelookupbyrow( table, row, 0 ) ] = elem;
+	}
+}
+
+showwave()
+{
+	enemies = level.wavetotal - level.wavekilled;
+	self setclientdvar( "surHUD_wave", level.wave );
+	self setclientdvar( "surHUD_enemy", enemies );
+	self.hud[ "wave" ] setvalue( level.wave );
+	self.hud[ "enemies" ] setvalue( enemies );
+}
+
+updatewavehud()
+{
+	for ( i = 0; i < level.humans.size; i++ )
+		level.humans[ i ] showwave();
+	logprint( "survival: hud wave=" + level.wave + " enemies=" + ( level.wavetotal - level.wavekilled ) + " players=" + level.humans.size + "\n" );
+}
+
+// The score is the credits, so the scoreboard shows them. What a player
+// earns is every credit after the start's. The armory menus read them as
+// getPlayerData( "surHUD_credits" ).
+addcredits( amount, reason )
+{
+	self.credits = self.credits + amount;
+	if ( amount > 0 && reason != "start" )
+		self.stats[ "credits_earned" ] = self.stats[ "credits_earned" ] + amount;
+	self.score = self.credits;
+	self survival_setplayerdata( "surHUD_credits", self.credits );
+	self setclientdvar( "surHUD_credits", self.credits );
+	self.hud[ "credits" ] setvalue( self.credits );
+	logprint( "survival: credits client=" + self getentitynumber() + " credits=" + self.credits + " delta=" + amount + " reason=" + reason + "\n" );
+}
+
+ishuman( entity )
+{
+	return isdefined( entity ) && isplayer( entity ) && !isdefined( entity.archetype );
+}
+
+// A player's kill pays the archetype's reward (c9), and advances every
+// played challenge its means of death counts for; one that reaches its count
+// pays its reward and starts over.
+rewardkill( archetype, means )
+{
+	self addcredits( int( archetypefield( archetype, 9 ) ), "kill:" + archetype );
+	for ( i = 0; i < level.challenges.size; i++ )
+	{
+		challenge = level.challenges[ i ];
+		if ( challenge.means != means )
+			continue;
+		progress = self.challengeprogress[ challenge.ref ] + 1;
+		logprint( "survival: challenge client=" + self getentitynumber() + " " + challenge.ref + " " + progress + "/" + challenge.required + "\n" );
+		if ( progress < challenge.required )
+		{
+			self.challengeprogress[ challenge.ref ] = progress;
+			continue;
+		}
+		self.challengeprogress[ challenge.ref ] = 0;
+		self addcredits( challenge.reward, "challenge:" + challenge.ref );
+	}
+}
+
+onplayerconnect()
+{
+	self.archetype = self survival_archetype();
+	if ( isdefined( self.archetype ) )
+	{
+		// An armory squad's archetype is an ally, every other an enemy of the
+		// wave, which counted it in play when it asked.
+		self.side = "enemy";
+		if ( issquad( self.archetype ) )
+		{
+			self.side = "ally";
+			level.alliesrequested--;
+			level.friendlies++;
+		}
+		// The session answers a requested bot's team menu with the side it was
+		// asked for; it spawns on that answer.
+		self thread onteamanswer();
+		self openmenu( "team_marinesopfor" );
+		return;
+	}
+	level.humans[ level.humans.size ] = self;
+	self.sessionteam = setting( "human_team" );
+	self.team = self.sessionteam;
+	self.held = [];
+	// What the armory menus were last given, by ref.
+	self.published = [];
+	self.supportkills = [];
+	self.stats = [];
+	self.stats[ "kills" ] = 0;
+	self.stats[ "headshots" ] = 0;
+	self.stats[ "credits_earned" ] = 0;
+	self.stats[ "downs" ] = 0;
+	self.challengeprogress = [];
+	for ( i = 0; i < level.challenges.size; i++ )
+		self.challengeprogress[ level.challenges[ i ].ref ] = 0;
+	self createhud();
+	self showwave();
+	// The armory menus gate items with levelForExperienceSO( getPlayerData(
+	// "experience" ) ); the purchase rules use the same rank.
+	self.experience = startexperience();
+	self.sorank = rankforexperience( self.experience );
+	self survival_setplayerdata( "experience", self.experience );
+	logprint( "survival: playerdata client=" + self getentitynumber() + " experience=" + self.experience + " rank=" + self.sorank + "\n" );
+	self.credits = 0;
+	self addcredits( int( setting( "start_credits" ) ), "start" );
+	self setclientdvar( "g_scriptMainMenu", setting( "pause_menu" ) );
+	self thread onteamanswer();
+	self thread onarmoryanswer();
+	self spawnplayer();
+	level notify( "human_connected" );
+}
+
+onteamanswer()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		self waittill( "menuresponse", menu, response );
+		if ( menu != "team_marinesopfor" )
+			continue;
+		if ( response == "autoassign" )
+			response = setting( "human_team" );
+		if ( response != setting( "human_team" ) && response != setting( "enemy_team" ) )
+		{
+			logprint( "survival: client " + self getentitynumber() + " answered no survival team: " + response + "\n" );
+			continue;
+		}
+		// The team field is what turrets and radius damage tell sides apart by.
+		self.sessionteam = response;
+		self.team = response;
+		if ( !isdefined( self.archetype ) )
+		{
+			logprint( "survival: client " + self getentitynumber() + " plays for " + response + "\n" );
+			continue;
+		}
+		if ( isdefined( self.spawnedbot ) )
+			continue;
+		self.spawnedbot = true;
+		logprint( "survival: " + self.side + " connected client=" + self getentitynumber() + " archetype=" + self.archetype + " team=" + response + " health=" + archetypefield( self.archetype, 7 ) + " trait=" + archetypetrait( self.archetype ) + "\n" );
+		self spawnbot();
+	}
+}
+
+isenemy()
+{
+	return isdefined( self.archetype ) && self.side == "enemy";
+}
+
+issquad( archetype )
+{
+	return setting( "squad_" + archetype ) != "";
+}
+
+onplayerdisconnect()
+{
+	if ( !isdefined( self.archetype ) )
+	{
+		humans = [];
+		for ( i = 0; i < level.humans.size; i++ )
+		{
+			if ( level.humans[ i ] != self )
+				humans[ humans.size ] = level.humans[ i ];
+		}
+		level.humans = humans;
+		return;
+	}
+	if ( !self isenemy() )
+	{
+		level.friendlies--;
+		level.squads[ self.archetype ]--;
+		logprint( "survival: ally left client=" + self getentitynumber() + " archetype=" + self.archetype + " squad=" + level.squads[ self.archetype ] + "\n" );
+		publishsquad( self.archetype );
+		level notify( "roster_changed" );
+		return;
+	}
+	level.enemiesinplay--;
+	if ( !isdefined( self.killed ) )
+	{
+		// It still owes the wave its kill: ask for it again.
+		level.wavequeue[ level.wavequeue.size ] = self.archetype;
+		logprint( "survival: enemy left client=" + self getentitynumber() + " archetype=" + self.archetype + " without a kill, asked again\n" );
+	}
+	level notify( "roster_changed" );
+}
+
+spawnplayer()
+{
+	spawnpoint = level.playerspawns[ randomint( level.playerspawns.size ) ];
+	self.sessionstate = "playing";
+	self.maxhealth = int( setting( "max_health" ) );
+	self.health = self.maxhealth;
+	self spawn( spawnpoint.origin, spawnpoint.angles );
+	self giveloadout();
+	self notify( "spawned_player" );
+	level notify( "player_spawned", self );
+}
+
+// Squared distance from `origin` to the nearest player; 0 with none left.
+nearesthuman( origin )
+{
+	nearest = 0;
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		distance = distancesquared( origin, level.humans[ i ].origin );
+		if ( i == 0 || distance < nearest )
+			nearest = distance;
+	}
+	return nearest;
+}
+
+// The enemy spawn point farthest from the players that no live client
+// stands on, undefined while every one is taken.
+enemyspawnpoint()
+{
+	best = undefined;
+	bestdistance = -1;
+	for ( i = 0; i < level.enemyspawns.size; i++ )
+	{
+		point = level.enemyspawns[ i ];
+		if ( positionwouldtelefrag( point.origin ) )
+			continue;
+		distance = nearesthuman( point.origin );
+		if ( distance > bestdistance )
+		{
+			best = point;
+			bestdistance = distance;
+		}
+	}
+	return best;
+}
+
+// The player spawn point nearest the players that no live client stands on:
+// an armory squad joins the players where they are.
+allyspawnpoint()
+{
+	best = level.playerspawns[ randomint( level.playerspawns.size ) ];
+	bestdistance = -1;
+	for ( i = 0; i < level.playerspawns.size; i++ )
+	{
+		point = level.playerspawns[ i ];
+		if ( positionwouldtelefrag( point.origin ) )
+			continue;
+		distance = nearesthuman( point.origin );
+		if ( bestdistance < 0 || distance < bestdistance )
+		{
+			best = point;
+			bestdistance = distance;
+		}
+	}
+	return best;
+}
+
+botspawnpoint()
+{
+	if ( self.side != "enemy" )
+		return allyspawnpoint();
+	for ( ;; )
+	{
+		spawnpoint = enemyspawnpoint();
+		if ( isdefined( spawnpoint ) )
+			return spawnpoint;
+		if ( !isdefined( waiting ) )
+		{
+			waiting = true;
+			logprint( "survival: client " + self getentitynumber() + " waits for a free enemy spawn\n" );
+		}
+		wait 0.05;
+	}
+}
+
+spawnbot()
+{
+	spawnpoint = self botspawnpoint();
+	weapon = archetypeweapon( self.archetype );
+	self.sessionstate = "playing";
+	self.maxhealth = int( archetypefield( self.archetype, 7 ) );
+	self.health = self.maxhealth;
+	self spawn( spawnpoint.origin, spawnpoint.angles );
+	self takeallweapons();
+	self giveweapon( weapon );
+	self givemaxammo( weapon );
+	summary = weapon;
+	offhand = archetypefield( self.archetype, 6 );
+	if ( offhand != "" )
+	{
+		offhand = weaponfor( offhand );
+		if ( weaponinventorytype( offhand ) == "offhand" )
+			self setoffhandprimaryclass( offhand );
+		self giveweapon( offhand );
+		self givemaxammo( offhand );
+		summary = summary + " " + offhand;
+	}
+	self setspawnweapon( weapon );
+	self switchtoweapon( weapon );
+	speed = tablelookup( "survival/archetypes.csv", 0, self.archetype, 4 );
+	if ( speed != "" )
+	{
+		self setmovespeedscale( int( speed ) / 100 );
+		summary = summary + " speed=" + speed + "%";
+	}
+	logprint( "survival: " + self.archetype + " spawned client=" + self getentitynumber() + " at " + spawnpoint.origin + " weapons=" + summary + " health=" + self.health + "\n" );
+	if ( archetypetrait( self.archetype ) == "claymore" )
+		self thread layclaymores();
+	self notify( "spawned_player" );
+	level notify( "player_spawned", self );
+}
+
+loadoutslot( slot, column )
+{
+	return tablelookup( setting( "waves_table" ), 1, slot, column );
+}
+
+giveloadout()
+{
+	self takeallweapons();
+	self.selfrevives = 0;
+	self.armor = 0;
+	summary = "";
+	spawnweapon = undefined;
+	for ( i = 1; i <= 3; i++ )
+	{
+		ref = loadoutslot( "weapon_" + i, 2 );
+		if ( ref == "" )
+			continue;
+		weapon = weaponfor( ref );
+		ammo = loadoutslot( "weapon_" + i, 3 );
+		self giveweapon( weapon );
+		if ( ammo == "max" )
+			self givemaxammo( weapon );
+		else
+			self setweaponammostock( weapon, int( ammo ) );
+		if ( !isdefined( spawnweapon ) )
+			spawnweapon = weapon;
+		summary = summary + " " + weapon;
+	}
+	for ( i = 1; i <= 2; i++ )
+	{
+		ref = loadoutslot( "grenade_" + i, 2 );
+		if ( ref == "" )
+			continue;
+		weapon = weaponfor( ref );
+		count = int( loadoutslot( "grenade_" + i, 3 ) );
+		if ( i == 1 )
+			self setoffhandprimaryclass( weapon );
+		else
+			self setoffhandsecondaryclass( weapon );
+		self giveweapon( weapon );
+		self setammocount( weapon, count );
+		// The table's count can be more than the weapon holds (MW3's SP
+		// frag count on the MP frag): the log says what was given.
+		summary = summary + " " + weapon + " x" + self roundsof( weapon );
+		if ( self roundsof( weapon ) < count )
+			summary = summary + " of " + count;
+	}
+	for ( i = 1; i <= 3; i++ )
+	{
+		ref = loadoutslot( "equipment_" + i, 2 );
+		if ( ref == "laststand" )
+			self.selfrevives = self.selfrevives + int( loadoutslot( "equipment_" + i, 3 ) );
+	}
+	if ( loadoutslot( "armor_1", 2 ) == "armor" )
+		self.armor = int( loadoutslot( "armor_1", 3 ) );
+	self updatelaststand();
+	self setspawnweapon( spawnweapon );
+	self switchtoweapon( spawnweapon );
+	logprint( "survival: loadout" + summary + " selfrevive=" + self.selfrevives + " armor=" + self.armor + "\n" );
+}
+
+onplayerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff )
+{
+	if ( self isfriendlyfire( attackerent ) )
+		return;
+	// The explosive juggernaut takes extra damage from explosives.
+	if ( isdefined( self.archetype ) && archetypetrait( self.archetype ) == "explosive" && isexplosive( mod ) )
+	{
+		scaled = int( dmg * int( heavy( "explosive_damage_percent" ) ) / 100 );
+		logprint( "survival: explosive weakness client=" + self getentitynumber() + " archetype=" + self.archetype + " means=" + mod + " weapon=" + weaponname + " damage=" + dmg + " scaled=" + scaled + "\n" );
+		dmg = scaled;
+	}
+	if ( isdefined( self.armor ) && self.armor > 0 )
+		dmg = self absorbarmor( dmg, mod );
+	self finishplayerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff );
+}
+
+// Armor takes `armor_absorb_percent` of a hit, as much as it has left; the
+// rest reaches health. The hit still lands, at what armor left of it.
+absorbarmor( damage, means )
+{
+	absorbed = int( damage * int( setting( "armor_absorb_percent" ) ) / 100 );
+	if ( absorbed > self.armor )
+		absorbed = self.armor;
+	self.armor = self.armor - absorbed;
+	logprint( "survival: armor absorbed client=" + self getentitynumber() + " damage=" + damage + " absorbed=" + absorbed + " armor=" + self.armor + " health_damage=" + ( damage - absorbed ) + " means=" + means + "\n" );
+	return damage - absorbed;
+}
+
+// Clients and choppers of one team hurt each other only with `friendly_fire`
+// 1; anyone can still hurt themselves. An ownerless chopper is its own
+// attacker.
+isfriendlyfire( attacker )
+{
+	if ( setting( "friendly_fire" ) == "1" || !isdefined( attacker ) || attacker == self )
+		return false;
+	return isdefined( attacker.team ) && isdefined( self.team ) && attacker.team == self.team;
+}
+
+onplayerkilled( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen )
+{
+	self.sessionstate = "dead";
+	if ( isdefined( self.archetype ) )
+	{
+		if ( isdefined( self.killed ) )
+			return;
+		self.killed = true;
+		self notify( "death" );
+		if ( self isenemy() )
+		{
+			level.wavekilled++;
+			logprint( "survival: enemy killed client=" + self getentitynumber() + " archetype=" + self.archetype + " remaining=" + ( level.wavetotal - level.wavekilled ) + " means=" + mod + " weapon=" + weaponname + " by=" + dealer( attackerent ) + "\n" );
+			updatewavehud();
+			if ( ishuman( attackerent ) )
+				attackerent creditkill( self, mod, weaponname );
+		}
+		else
+			logprint( "survival: ally killed client=" + self getentitynumber() + " archetype=" + self.archetype + "\n" );
+		// A martyr's C4 and a chemical enemy's gas are its own: it stays
+		// connected, dead, until they are spent, then leaves.
+		trait = archetypetrait( self.archetype );
+		if ( trait == "martyrdom" )
+			self thread martyrdom();
+		else if ( trait == "gas" )
+			self thread gascloud();
+		else
+			kick( self getentitynumber() );
+		return;
+	}
+	self notify( "death" );
+	self.downed = undefined;
+	if ( isdefined( self.armory ) )
+		self closearmory( "died" );
+	logprint( "survival: player died client=" + self getentitynumber() + " means=" + mod + " selfrevive=" + self.selfrevives + " by=" + dealer( attackerent ) + "\n" );
+	if ( !livehumans() )
+		gameover();
+}
+
+// A player's kill of an enemy, a bot or a chopper: it is counted and paid,
+// and gets a downed player up.
+creditkill( victim, means, weapon )
+{
+	self countsupportkill( weapon, victim );
+	self countkill( means );
+	self rewardkill( victim.archetype, means );
+	if ( isdefined( self.downed ) && self.selfrevives > 0 )
+		self selfrevive();
+}
+
+// Who dealt damage, for the log: `client<N>`, a chopper's archetype, or
+// `world`.
+dealer( attacker )
+{
+	if ( isdefined( attacker ) && isplayer( attacker ) )
+		return "client" + attacker getentitynumber();
+	if ( isdefined( attacker ) && isdefined( attacker.archetype ) )
+		return attacker.archetype;
+	return "world";
+}
+
+countkill( means )
+{
+	self.stats[ "kills" ]++;
+	if ( means == "MOD_HEAD_SHOT" )
+		self.stats[ "headshots" ]++;
+}
+
+livehumans()
+{
+	count = 0;
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		if ( level.humans[ i ].sessionstate == "playing" )
+			count++;
+	}
+	return count;
+}
+
+// A self-revive (the armory's `laststand`, which the start loadout gives) is
+// what lets a player go down instead of dying: lethal damage with one held
+// puts them in last stand, with none they die.
+updatelaststand()
+{
+	if ( self.selfrevives > 0 )
+		self setperk( "specialty_pistoldeath" );
+	else
+		self unsetperk( "specialty_pistoldeath" );
+}
+
+pistol()
+{
+	weapons = self getweaponslistprimaries();
+	for ( i = 0; i < weapons.size; i++ )
+	{
+		if ( weaponclass( weapons[ i ] ) == "pistol" )
+			return weapons[ i ];
+	}
+	return undefined;
+}
+
+// Down with a self-revive: the player fights on with a pistol, and gets up
+// by killing an enemy, or when the wave ends, before bleeding out. Enemies
+// keep shooting: lethal damage while down kills.
+onplayerlaststand( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen )
+{
+	self.downed = true;
+	self.stats[ "downs" ]++;
+	if ( isdefined( self.armory ) )
+		self closearmory( "downed" );
+	self.upweapon = self getcurrentweapon();
+	weapon = self pistol();
+	if ( isdefined( weapon ) )
+		self switchtoweapon( weapon );
+	else
+		weapon = "none (keeps " + self.upweapon + ")";
+	self disableoffhandweapons();
+	seconds = int( setting( "bleedout_seconds" ) );
+	logprint( "survival: laststand client=" + self getentitynumber() + " selfrevive=" + self.selfrevives + " bleedout=" + seconds + " weapon=" + weapon + " means=" + mod + " by=" + dealer( attackerent ) + "\n" );
+	self thread bleedout( seconds );
+}
+
+bleedout( seconds )
+{
+	self endon( "disconnect" );
+	self endon( "death" );
+	self endon( "revived" );
+	wait seconds;
+	self.bledout = true;
+	logprint( "survival: bled out client=" + self getentitynumber() + " after " + seconds + "s\n" );
+	self suicide();
+}
+
+// A kill while down spends a self-revive to get up.
+selfrevive()
+{
+	self.selfrevives--;
+	self getup( "kill" );
+}
+
+// The end of a wave gets every downed player up, without spending a
+// self-revive.
+wavegetup( wave )
+{
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		if ( isdefined( level.humans[ i ].downed ) )
+			level.humans[ i ] getup( "wave_complete wave=" + wave );
+	}
+}
+
+// Up from last stand, which ends the bleed-out: full health, the weapon the
+// player went down with and the offhands back, then the getup shock. `how`
+// names what got them up, for the log.
+getup( how )
+{
+	self.downed = undefined;
+	self notify( "revived" );
+	self laststandrevive();
+	self.health = self.maxhealth;
+	self enableoffhandweapons();
+	if ( self.upweapon != "none" && self hasweapon( self.upweapon ) )
+		self switchtoweapon( self.upweapon );
+	self updatelaststand();
+	self shellshock( setting( "getup_shock" ), int( setting( "getup_shock_seconds" ) ) );
+	logprint( "survival: revived by " + how + " selfrevive=" + self.selfrevives + " client=" + self getentitynumber() + " health=" + self.health + "\n" );
+}
+
+// The run ends when no player is left alive: the waves stop and every player
+// gets MW3's end-of-game summary, its rows laid out by survival/eog.csv.
+gameover()
+{
+	if ( isdefined( level.gameover ) )
+		return;
+	level.gameover = true;
+	level notify( "game_over" );
+	seconds = 0;
+	if ( isdefined( level.starttime ) )
+		seconds = int( ( gettime() - level.starttime ) / 1000 );
+	level.survivedtime = int( seconds / 60 ) + ":" + int( seconds % 60 / 10 ) + int( seconds % 10 );
+	for ( i = 0; i < level.humans.size; i++ )
+		level.humans[ i ] showsummary();
+}
+
+summarystat( stat )
+{
+	if ( stat == "wave" )
+		return level.wave;
+	if ( stat == "time" )
+		return level.survivedtime;
+	if ( stat == "credits" )
+		return self.credits;
+	return self.stats[ stat ];
+}
+
+showsummary()
+{
+	table = "survival/eog.csv";
+	column = setting( "eog_value_column" );
+	rows = "";
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		line = tablelookupbyrow( table, row, 0 );
+		stat = tablelookupbyrow( table, row, 2 );
+		value = self summarystat( stat );
+		self setclientdvar( "ui_eog_r" + line + "c1_player1", tablelookupbyrow( table, row, 1 ) );
+		self setclientdvar( "ui_eog_r" + line + "c" + column + "_player1", value );
+		rows = rows + " r" + line + ":" + stat + "=" + value;
+	}
+	self setclientdvar( "so_survival", 1 );
+	self setclientdvar( "ui_mission_success", 1 );
+	self setclientdvar( "ui_eog_success_heading_player1", level.wave );
+	self setclientdvar( "ui_hide_hint", 0 );
+	if ( isdefined( self.bledout ) )
+		self setclientdvar( "ui_bled_out", 1 );
+	else
+		self setclientdvar( "ui_deadquote", setting( "eog_deadquote" ) );
+	menu = setting( "eog_menu" );
+	logprint( "survival: game over wave=" + level.wave + " kills=" + self.stats[ "kills" ] + " credits=" + self.credits + " earned=" + self.stats[ "credits_earned" ] + " headshots=" + self.stats[ "headshots" ] + " downs=" + self.stats[ "downs" ] + " time=" + level.survivedtime + " client=" + self getentitynumber() + " menu=" + menu + rows + "\n" );
+	self openpopupmenu( menu );
+}
+
+// MW3's armory menus answer a purchase with `purchase_<c0>`, the item's row
+// index in the armory table (`armory_purchase_prefix`), and closing with
+// `armory_close_response`.
+onarmoryanswer()
+{
+	self endon( "disconnect" );
+	prefix = setting( "armory_purchase_prefix" );
+	for ( ;; )
+	{
+		self waittill( "menuresponse", menu, response );
+		if ( menu == setting( "armory_replacement_menu" ) )
+		{
+			self answerreplacement( response );
+			continue;
+		}
+		if ( !issubstr( menu, setting( "armory_menu_prefix" ) ) )
+			continue;
+		if ( response == setting( "armory_close_response" ) )
+		{
+			if ( isdefined( self.armory ) && menu == self.armory.menu )
+				self closearmory( "closed" );
+			continue;
+		}
+		if ( getsubstr( response, 0, prefix.size ) != prefix )
+			continue;
+		self purchase( getsubstr( response, prefix.size ) );
+	}
+}
+
+// What a purchase of `ref` would be refused for, "" when nothing. An item is
+// bought at an armory of its kind, while the player uses it.
+purchaseblock( ref, kind, price, rank, most )
+{
+	if ( !isdefined( self.armory ) )
+		return "uses no armory";
+	if ( self.armory.kind != kind )
+		return "uses the " + self.armory.kind + " armory, which sells no " + kind + " item";
+	if ( !isdefined( level.armoryunlocked[ kind ] ) )
+		return "the " + kind + " armory is locked";
+	if ( self.sorank < rank )
+		return "rank " + rank + " needed, holds " + self.sorank;
+	if ( self.credits < price )
+		return "costs " + price + ", holds " + self.credits;
+	grant = itemgrant( ref );
+	if ( grant == "" )
+		return "this build grants no " + kind + " item " + ref;
+	held = self helditem( ref );
+	if ( grant == "ammo" )
+	{
+		if ( held > 0 )
+			return "no weapon to refill";
+	}
+	else if ( held >= heldmost( ref, grant ) )
+	{
+		if ( heldmost( ref, grant ) < most )
+			return "holds " + held + ", all " + weaponfor( ref ) + " holds (" + most + " in " + setting( "armory_table" ) + ")";
+		return "holds " + held + " of " + most;
+	}
+	if ( isslotgrant( grant ) && isdefined( self.slotitem ) )
+		return "action slot " + support( "action_slot" ) + " holds " + self.slotitem;
+	if ( grant == "sentry" && isdefined( self.carriedsentry ) )
+		return "carries a " + self.carriedsentry + " still to place";
+	if ( grant == "predator" && weapontype( weaponsfor( ref )[ 1 ] ) != "projectile" )
+		return weaponsfor( ref )[ 1 ] + " is a " + weapontype( weaponsfor( ref )[ 1 ] ) + " weapon, no missile to steer";
+	if ( grant == "squad" && allyroom() < int( setting( "squad_" + ref ) ) )
+		return "only " + allyroom() + " client slots are left for allies";
+	return "";
+}
+
+// How an armory item is given: its survival/grants.csv grant, "squad" for an
+// armory squad, which asks for allies, "perk" for a perk of MW3's perks table,
+// "weapon" for any other item of the weapon armory, whose ref is the weapon;
+// "" for an item this build does not grant (the weapon upgrades).
+itemgrant( ref )
+{
+	if ( tablegrant( ref ) != "" )
+		return tablegrant( ref );
+	if ( issquad( ref ) )
+		return "squad";
+	if ( tablelookup( setting( "perks_table" ), 1, ref, 6 ) == "1" )
+		return "perk";
+	if ( tablelookup( setting( "armory_table" ), 1, ref, 2 ) == "weapon" )
+		return "weapon";
+	return "";
+}
+
+// How many of `ref` the player holds: a squad counts once while any of its
+// allies is in play or owed a slot, a weapon once while it is in the
+// inventory, a grenade, explosive or launcher as its weapon's ammo, armor
+// as its points, the self-revive as the revives left. The ammo refill holds
+// 1 while no weapon it refills is short of a full clip and stock.
+helditem( ref )
+{
+	if ( issquad( ref ) )
+	{
+		if ( squadsize( ref ) > 0 )
+			return 1;
+		return 0;
+	}
+	grant = itemgrant( ref );
+	if ( grant == "weapon" )
+	{
+		if ( self hasweapon( weaponfor( ref ) ) )
+			return 1;
+		return 0;
+	}
+	if ( grant == "ammo" )
+	{
+		if ( self refillweapons().size > 0 )
+			return 0;
+		return 1;
+	}
+	if ( isammogrant( grant ) )
+		return self roundsof( weaponfor( ref ) );
+	if ( grant == "armor" )
+		return self.armor;
+	if ( grant == "laststand" )
+		return self.selfrevives;
+	if ( !isdefined( self.held[ ref ] ) )
+		return 0;
+	return self.held[ ref ];
+}
+
+// A purchase is `purchase_<c0>`. One that would put a weapon in the place of
+// another, for a grant `armory_replacement_grants` names, first asks with
+// MW3's `armory_replacement_menu`; `confirmed` is its answer to go ahead.
+purchase( index, confirmed )
+{
+	table = setting( "armory_table" );
+	ref = tablelookup( table, 0, index, 1 );
+	if ( ref == "" )
+	{
+		logprint( "survival: purchase refused client=" + self getentitynumber() + " item=" + index + ": no row of " + table + "\n" );
+		return;
+	}
+	kind = tablelookup( table, 0, index, 2 );
+	price = int( tablelookup( table, 0, index, 3 ) );
+	block = self purchaseblock( ref, kind, price, int( tablelookup( table, 0, index, 7 ) ), int( tablelookup( table, 0, index, 10 ) ) );
+	if ( block != "" )
+	{
+		logprint( "survival: purchase refused client=" + self getentitynumber() + " " + ref + ": " + block + "\n" );
+		return;
+	}
+	grant = itemgrant( ref );
+	if ( !isdefined( confirmed ) && self warnsreplacement( ref, grant ) )
+	{
+		self.replacing = index;
+		self openpopupmenu( setting( "armory_replacement_menu" ) );
+		logprint( "survival: purchase " + ref + " asks client=" + self getentitynumber() + " menu=" + setting( "armory_replacement_menu" ) + ": replaces " + self replaceableweapon() + "\n" );
+		return;
+	}
+	self addcredits( 0 - price, "purchase:" + ref );
+	logprint( "survival: bought " + ref + " kind=" + kind + " price=" + price + " client=" + self getentitynumber() + "\n" );
+	if ( isslotgrant( grant ) )
+		self thread slotitem( ref, grant );
+	else if ( grant == "sentry" )
+		self thread carrysentry( ref );
+	else if ( grant == "squad" )
+		requestsquad( ref );
+	else if ( grant == "perk" )
+	{
+		self setheld( ref, 1 );
+		self setperk( ref );
+		logprint( "survival: perk " + ref + " set client=" + self getentitynumber() + "\n" );
+	}
+	else
+		self grantitem( ref, grant );
+	self publishkind( kind );
+}
+
+// Whether buying `ref` asks first: its grant is one of
+// `armory_replacement_grants`, the player does not hold its weapon, and
+// every primary slot is taken.
+warnsreplacement( ref, grant )
+{
+	grants = strtok( setting( "armory_replacement_grants" ), " " );
+	for ( i = 0; i < grants.size; i++ )
+	{
+		if ( grants[ i ] == grant )
+			return !self hasweapon( weaponfor( ref ) ) && isdefined( self replaceableweapon() );
+	}
+	return false;
+}
+
+// The replacement warning's answer: `armory_replacement_continue` buys the
+// item it asked about, anything else keeps the weapons. The warning opens
+// over the armory's menu, which stays open beneath it.
+answerreplacement( response )
+{
+	if ( !isdefined( self.replacing ) )
+	{
+		logprint( "survival: " + setting( "armory_replacement_menu" ) + " answered " + response + " client=" + self getentitynumber() + " with no purchase asked\n" );
+		return;
+	}
+	index = self.replacing;
+	self.replacing = undefined;
+	logprint( "survival: replacement answered " + response + " item=" + index + " client=" + self getentitynumber() + "\n" );
+	if ( response == setting( "armory_replacement_continue" ) )
+		self purchase( index, true );
+}
+
+// The primaries a new one takes the place of once `primary_slots` are all
+// taken: the one in hand when it is a primary, else the first. Undefined
+// while a slot is free.
+replaceableweapon()
+{
+	primaries = self getweaponslistprimaries();
+	if ( primaries.size < int( setting( "primary_slots" ) ) )
+		return undefined;
+	current = self getcurrentweapon();
+	for ( i = 0; i < primaries.size; i++ )
+	{
+		if ( primaries[ i ] == current )
+			return current;
+	}
+	return primaries[ 0 ];
+}
+
+// A new primary, in the place of `replaceableweapon()` when the slots are
+// full; the weapon it replaced, undefined when none.
+giveprimary( weapon )
+{
+	replaced = self replaceableweapon();
+	if ( isdefined( replaced ) )
+	{
+		self takeweapon( replaced );
+		logprint( "survival: replaced " + replaced + " with " + weapon + " client=" + self getentitynumber() + "\n" );
+	}
+	self giveweapon( weapon );
+	self switchtoweapon( weapon );
+	return replaced;
+}
+
+islauncherweapon( weapon )
+{
+	for ( i = 0; i < level.launcherweapons.size; i++ )
+	{
+		if ( level.launcherweapons[ i ] == weapon )
+			return true;
+	}
+	return false;
+}
+
+isshort( weapon )
+{
+	return self getweaponammoclip( weapon ) < weaponclipsize( weapon ) || self getweaponammostock( weapon ) < weaponmaxammo( weapon );
+}
+
+// The weapons the ammo refill tops up: every primary but a launcher's that
+// is short of a full clip or stock, its own or its alternate mode's.
+refillweapons()
+{
+	weapons = [];
+	primaries = self getweaponslistprimaries();
+	for ( i = 0; i < primaries.size; i++ )
+	{
+		weapon = primaries[ i ];
+		if ( islauncherweapon( weapon ) )
+			continue;
+		alternate = weaponaltweaponname( weapon );
+		if ( self isshort( weapon ) || ( alternate != "none" && self isshort( alternate ) ) )
+			weapons[ weapons.size ] = weapon;
+	}
+	return weapons;
+}
+
+fillweapon( weapon )
+{
+	self setweaponammoclip( weapon, weaponclipsize( weapon ) );
+	self setweaponammostock( weapon, weaponmaxammo( weapon ) );
+}
+
+// A primary keeps rounds in its clip and its stock; an offhand or item
+// weapon (a grenade, a claymore) keeps its count in the clip, as the
+// engine's own `givemaxammo` fills it.
+keepsstock( weapon )
+{
+	return weaponinventorytype( weapon ) == "primary";
+}
+
+// The most rounds `weapon` holds.
+weaponcapacity( weapon )
+{
+	if ( keepsstock( weapon ) )
+		return weaponclipsize( weapon ) + weaponmaxammo( weapon );
+	return weaponclipsize( weapon );
+}
+
+roundsof( weapon )
+{
+	if ( !self hasweapon( weapon ) )
+		return 0;
+	if ( keepsstock( weapon ) )
+		return self getweaponammoclip( weapon ) + self getweaponammostock( weapon );
+	return self getweaponammoclip( weapon );
+}
+
+// `count` rounds of `weapon`: the clip first, the rest in stock for a
+// primary.
+setammocount( weapon, count )
+{
+	clip = count;
+	if ( clip > weaponclipsize( weapon ) )
+		clip = weaponclipsize( weapon );
+	self setweaponammoclip( weapon, clip );
+	if ( keepsstock( weapon ) )
+		self setweaponammostock( weapon, count - clip );
+}
+
+// The most of `ref` a player can hold: the item's most (c10), or for one
+// counted in a weapon's rounds what the weapon holds when that is less (the
+// MP frag holds 1 where MW3's table allows 4).
+heldmost( ref, grant )
+{
+	most = itemmost( ref );
+	if ( isammogrant( grant ) && weaponcapacity( weaponfor( ref ) ) < most )
+		most = weaponcapacity( weaponfor( ref ) );
+	return most;
+}
+
+// What a counted item comes to after a purchase: survival/grants.csv c3
+// more, or all it can hold (`heldmost`) when c3 is empty, never past that.
+grantedcount( ref, grant )
+{
+	most = heldmost( ref, grant );
+	count = most;
+	if ( grantamount( ref ) > 0 )
+		count = self helditem( ref ) + grantamount( ref );
+	if ( count > most )
+		count = most;
+	return count;
+}
+
+// The items that change the player's own kit: a weapon, the ammo refill,
+// grenades, explosives on their action slot (survival/grants.csv c4), a
+// launcher, armor and the self-revive.
+grantitem( ref, grant )
+{
+	weapon = weaponfor( ref );
+	detail = "";
+	if ( grant == "weapon" )
+	{
+		replaced = self giveprimary( weapon );
+		self fillweapon( weapon );
+		if ( isdefined( replaced ) )
+			detail = " replaced=" + replaced;
+	}
+	else if ( grant == "ammo" )
+	{
+		weapons = self refillweapons();
+		for ( i = 0; i < weapons.size; i++ )
+		{
+			self fillweapon( weapons[ i ] );
+			alternate = weaponaltweaponname( weapons[ i ] );
+			if ( alternate != "none" )
+				self fillweapon( alternate );
+			detail = detail + " " + weapons[ i ] + "=" + self getweaponammoclip( weapons[ i ] ) + "+" + self getweaponammostock( weapons[ i ] );
+		}
+		logprint( "survival: granted ammo client=" + self getentitynumber() + " refilled" + detail + "\n" );
+		return;
+	}
+	else if ( grant == "armor" )
+		self.armor = self grantedcount( ref, grant );
+	else if ( grant == "laststand" )
+	{
+		self.selfrevives = self grantedcount( ref, grant );
+		self updatelaststand();
+	}
+	else
+	{
+		count = self grantedcount( ref, grant );
+		if ( !self hasweapon( weapon ) )
+		{
+			if ( grant == "launcher" )
+			{
+				replaced = self giveprimary( weapon );
+				if ( isdefined( replaced ) )
+					detail = " replaced=" + replaced;
+			}
+			else
+				self giveweapon( weapon );
+			if ( grant == "explosive" )
+			{
+				slot = int( tablelookup( "survival/grants.csv", 0, ref, 4 ) );
+				self setactionslot( slot, "weapon", weapon );
+				detail = " action_slot=" + slot;
+			}
+		}
+		self setammocount( weapon, count );
+		detail = " weapon=" + weapon + " clip=" + self getweaponammoclip( weapon ) + " stock=" + self getweaponammostock( weapon ) + detail;
+	}
+	logprint( "survival: granted " + ref + " grant=" + grant + " held=" + self helditem( ref ) + " of " + heldmost( ref, grant ) + detail + " armor=" + self.armor + " selfrevive=" + self.selfrevives + " client=" + self getentitynumber() + "\n" );
+}
+
+countsupportkill( weapon, victim )
+{
+	if ( !isdefined( self.supportkills[ weapon ] ) )
+		self.supportkills[ weapon ] = 0;
+	self.supportkills[ weapon ]++;
+	if ( issentryweapon( weapon ) )
+		logprint( "survival: sentry kill client=" + self getentitynumber() + " victim=" + victim getentitynumber() + " archetype=" + victim.archetype + " weapon=" + weapon + "\n" );
+}
+
+issentryweapon( weapon )
+{
+	for ( i = 0; i < level.sentryweapons.size; i++ )
+	{
+		if ( level.sentryweapons[ i ] == weapon )
+			return true;
+	}
+	return false;
+}
+
+supportkills( weapon )
+{
+	if ( !isdefined( self.supportkills[ weapon ] ) )
+		return 0;
+	return self.supportkills[ weapon ];
+}
+
+// An air support item waits on the action slot until the player switches to
+// it, then is used once.
+slotitem( ref, grant )
+{
+	self endon( "disconnect" );
+	item = weaponfor( ref );
+	slot = int( support( "action_slot" ) );
+	self setheld( ref, 1 );
+	self.slotitem = ref;
+	self giveweapon( item );
+	self setactionslot( slot, "weapon", item );
+	logprint( "survival: " + ref + " on action slot " + slot + " weapon=" + item + " client=" + self getentitynumber() + "\n" );
+	for ( ;; )
+	{
+		self.returnweapon = self getcurrentweapon();
+		self waitforweapon( item );
+		used = false;
+		if ( grant == "airstrike" )
+			used = self airstrikeitem();
+		else
+			used = self predatoritem( weaponsfor( ref )[ 1 ] );
+		if ( self hasweapon( self.returnweapon ) )
+			self switchtoweapon( self.returnweapon );
+		if ( used )
+			break;
+	}
+	self takeweapon( item );
+	self setactionslot( slot, "" );
+	self.slotitem = undefined;
+	self setheld( ref, 0 );
+}
+
+waitforweapon( weapon )
+{
+	for ( ;; )
+	{
+		self waittill( "weapon_change", current );
+		if ( current == weapon )
+			return;
+		self.returnweapon = current;
+	}
+}
+
+// The map's location selector, with a direction; false when the player
+// backs out.
+airstrikeitem()
+{
+	self beginlocationselection( support( "airstrike_selector" ), true );
+	self thread answerlocation( "confirm_location" );
+	self thread answerlocation( "cancel_location" );
+	self waittill( "location_answer", location, yaw );
+	self endlocationselection();
+	if ( !isdefined( location ) )
+	{
+		logprint( "survival: airstrike cancelled client=" + self getentitynumber() + "\n" );
+		return false;
+	}
+	self thread airstrike( location, yaw );
+	return true;
+}
+
+answerlocation( notification )
+{
+	self endon( "disconnect" );
+	self endon( "location_answer" );
+	self waittill( notification, location, yaw );
+	self notify( "location_answer", location, yaw );
+}
+
+// The selector answers in map plane coordinates: each bomb lands where a
+// trace down from `airstrike_height` above the player's height meets the
+// world. A jet crosses the point along the chosen yaw and its
+// `airstrike_bombs` bombs burst along that line, `airstrike_spacing` apart,
+// as radius damage the game's MP strikes deal in the bomb weapon's name, so
+// their kills are the caller's.
+airstrike( location, yaw )
+{
+	self endon( "disconnect" );
+	height = int( support( "airstrike_height" ) );
+	forward = anglestoforward( ( 0, yaw, 0 ) );
+	center = self airstrikeground( location, height );
+	flight = int( support( "airstrike_flight" ) );
+	flightseconds = int( support( "airstrike_flight_ms" ) ) / 1000;
+	release = center + ( 0, 0, height );
+	logprint( "survival: airstrike called at " + center + " yaw " + yaw + " client=" + self getentitynumber() + "\n" );
+	plane = spawn( "script_model", release - forward * ( flight / 2 ) );
+	plane setmodel( support( "airstrike_plane" ) );
+	plane.angles = ( 0, yaw, 0 );
+	plane moveto( release + forward * ( flight / 2 ), flightseconds );
+	wait flightseconds / 2;
+	bomb = support( "airstrike_bomb" );
+	bombs = int( support( "airstrike_bombs" ) );
+	spacing = int( support( "airstrike_spacing" ) );
+	radius = int( support( "airstrike_radius" ) );
+	most = int( support( "airstrike_damage_max" ) );
+	least = int( support( "airstrike_damage_min" ) );
+	before = self supportkills( bomb );
+	for ( i = 0; i < bombs; i++ )
+	{
+		point = self airstrikeground( location + forward * ( ( i * 2 - ( bombs - 1 ) ) * spacing / 2 ), height );
+		playfx( level.airstrikefx, point );
+		radiusdamage( point, radius, most, least, self, support( "airstrike_means" ), bomb );
+		wait int( support( "airstrike_interval_ms" ) ) / 1000;
+	}
+	wait int( support( "support_settle_ms" ) ) / 1000;
+	logprint( "survival: airstrike at " + center + " kills=" + ( self supportkills( bomb ) - before ) + " bombs=" + bombs + " weapon=" + bomb + " client=" + self getentitynumber() + "\n" );
+	wait flightseconds / 2;
+	plane delete();
+}
+
+airstrikeground( location, height )
+{
+	top = ( location[ 0 ], location[ 1 ], self.origin[ 2 ] + height );
+	bottom = ( location[ 0 ], location[ 1 ], self.origin[ 2 ] - height );
+	return bullettrace( top, bottom, false, self )[ "position" ];
+}
+
+// The detonator in hand launches the missile from `predator_height` above
+// and `predator_offset` behind the player, aimed as far ahead, and the
+// player steers it until it explodes.
+predatoritem( missile )
+{
+	forward = anglestoforward( ( 0, self.angles[ 1 ], 0 ) );
+	offset = int( support( "predator_offset" ) );
+	start = self.origin - forward * offset + ( 0, 0, int( support( "predator_height" ) ) );
+	before = self supportkills( missile );
+	rocket = magicbullet( missile, start, self.origin + forward * offset, self );
+	logprint( "survival: predator launched client=" + self getentitynumber() + " weapon=" + missile + " from " + start + "\n" );
+	self.predatorimpact = undefined;
+	self thread predatorimpact( rocket );
+	self controlslinkto( rocket );
+	self cameralinkto( rocket, "tag_origin" );
+	rocket waittill( "death" );
+	self controlsunlink();
+	self cameraunlink();
+	wait int( support( "support_settle_ms" ) ) / 1000;
+	impact = "nowhere (no explosion)";
+	if ( isdefined( self.predatorimpact ) )
+		impact = self.predatorimpact;
+	logprint( "survival: predator impact at " + impact + " kills=" + ( self supportkills( missile ) - before ) + " client=" + self getentitynumber() + "\n" );
+	return true;
+}
+
+predatorimpact( rocket )
+{
+	rocket waittill( "explode", position );
+	self.predatorimpact = position;
+}
+
+// The player carries a bought sentry in front of them and places it with
+// the attack button where the sentry fits; placed, it fights on its own on
+// the player's team, and its kills are the player's.
+carrysentry( ref )
+{
+	self endon( "disconnect" );
+	self setheld( ref, self helditem( ref ) + 1 );
+	self.carriedsentry = ref;
+	weapon = weaponfor( ref );
+	sentry = spawnturret( "misc_turret", self.origin, weapon );
+	sentry setmodel( tablelookup( "survival/grants.csv", 0, ref, 2 ) );
+	sentry setsentryowner( self );
+	sentry setturretteam( self.team );
+	sentry setmode( "sentry_offline" );
+	sentry setsentrycarried( true );
+	logprint( "survival: sentry carried weapon=" + weapon + " client=" + self getentitynumber() + "\n" );
+	self notifyonplayercommand( "place_sentry", "+attack" );
+	self thread carrysentryfollow( sentry );
+	for ( ;; )
+	{
+		self waittill( "place_sentry" );
+		placement = self canplayerplacesentry();
+		if ( placement[ "result" ] )
+			break;
+		logprint( "survival: sentry does not fit at " + placement[ "origin" ] + " client=" + self getentitynumber() + "\n" );
+	}
+	self notify( "sentry_placed" );
+	self.carriedsentry = undefined;
+	sentry.origin = placement[ "origin" ];
+	sentry.angles = placement[ "angles" ];
+	sentry setsentrycarried( false );
+	sentry setmode( "sentry" );
+	interval = weaponfiretime( weapon );
+	logprint( "survival: sentry placed weapon=" + weapon + " at " + sentry.origin + " team=" + self.team + " firetime=" + interval + " client=" + self getentitynumber() + "\n" );
+	if ( interval <= 0 )
+	{
+		logprint( "survival: sentry " + weapon + " has no fire time: it aims but never fires\n" );
+		return;
+	}
+	sentry thread sentryfire( interval );
+}
+
+carrysentryfollow( sentry )
+{
+	self endon( "disconnect" );
+	self endon( "sentry_placed" );
+	for ( ;; )
+	{
+		placement = self canplayerplacesentry();
+		sentry.origin = placement[ "origin" ];
+		sentry.angles = placement[ "angles" ];
+		wait 0.05;
+	}
+}
+
+sentryfire( interval )
+{
+	self endon( "death" );
+	for ( ;; )
+	{
+		if ( self isfiringturret() )
+		{
+			self shootturret();
+			wait interval;
+		}
+		else
+			self waittill( "turretstatechange" );
+	}
+}
+
+squadsize( ref )
+{
+	if ( !isdefined( level.squads[ ref ] ) )
+		return 0;
+	return level.squads[ ref ];
+}
+
+// An armory squad is `squad_<ref>` allies of the waves table's archetype
+// `ref`, owed a client slot each until one is free.
+requestsquad( ref )
+{
+	size = int( setting( "squad_" + ref ) );
+	for ( i = 0; i < size; i++ )
+		level.allyqueue[ level.allyqueue.size ] = ref;
+	level.squads[ ref ] = squadsize( ref ) + size;
+	logprint( "survival: allies requested " + size + " archetype=" + ref + " free=" + freeslots() + "\n" );
+	publishsquad( ref );
+	refill();
+}
+
+isexplosive( means )
+{
+	explosive = strtok( heavy( "explosive_means" ), " " );
+	for ( i = 0; i < explosive.size; i++ )
+	{
+		if ( explosive[ i ] == means )
+			return true;
+	}
+	return false;
+}
+
+// The nearest live player within `range` of the client, undefined when none.
+nearesthumanwithin( range )
+{
+	nearest = undefined;
+	best = range * range;
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		human = level.humans[ i ];
+		if ( human.sessionstate != "playing" )
+			continue;
+		distance = distancesquared( self.origin, human.origin );
+		if ( distance <= best )
+		{
+			nearest = human;
+			best = distance;
+		}
+	}
+	return nearest;
+}
+
+// A martyr drops its C4 where it died, and the C4 goes off
+// `martyrdom_delay_ms` later as the weapon's own blast, in the martyr's name.
+martyrdom()
+{
+	weapon = weaponfor( heavy( "martyrdom_weapon" ) );
+	origin = self.origin;
+	c4 = magicbullet( weapon, origin + ( 0, 0, int( heavy( "martyrdom_drop_height" ) ) ), origin, self );
+	logprint( "survival: martyrdom c4 dropped client=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
+	wait heavyseconds( "martyrdom_delay_ms" );
+	c4 detonate();
+	logprint( "survival: martyrdom c4 detonated client=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
+	wait int( support( "support_settle_ms" ) ) / 1000;
+	kick( self getentitynumber() );
+}
+
+// A claymore enemy plants `claymore_count` claymores at its feet, each facing
+// the nearest player within `claymore_plant_range` when it is planted.
+layclaymores()
+{
+	self endon( "death" );
+	self endon( "disconnect" );
+	weapon = weaponfor( heavy( "claymore_weapon" ) );
+	count = int( heavy( "claymore_count" ) );
+	for ( planted = 0; planted < count; planted++ )
+	{
+		for ( ;; )
+		{
+			target = self nearesthumanwithin( int( heavy( "claymore_plant_range" ) ) );
+			if ( isdefined( target ) )
+				break;
+			wait heavyseconds( "claymore_poll_ms" );
+		}
+		yaw = vectortoyaw( target.origin - self.origin );
+		forward = anglestoforward( ( 0, yaw, 0 ) );
+		start = self.origin + ( 0, 0, int( heavy( "claymore_plant_height" ) ) );
+		claymore = magicbullet( weapon, start, self.origin + forward * int( heavy( "claymore_plant_reach" ) ), self );
+		level thread claymoretrip( claymore, yaw, self, weapon );
+		wait heavyseconds( "claymore_arm_ms" );
+	}
+}
+
+// Armed `claymore_arm_ms` after it is planted, a claymore goes off
+// `claymore_trip_delay_ms` after a live player comes within
+// `claymore_trip_radius` and `claymore_trip_arc` degrees of the way it faces.
+// Its blast is its planter's, so it is disarmed when the planter leaves (a
+// killed enemy is kicked): with no planter its damage would be nobody's, and
+// would spare no team.
+claymoretrip( claymore, yaw, owner, weapon )
+{
+	claymore endon( "death" );
+	planter = owner getentitynumber();
+	level thread claymoredisarm( claymore, owner, planter );
+	claymore endon( "disarmed" );
+	wait heavyseconds( "claymore_arm_ms" );
+	logprint( "survival: claymore planted client=" + planter + " at " + claymore.origin + " yaw " + int( yaw ) + " weapon=" + weapon + "\n" );
+	forward = anglestoforward( ( 0, yaw, 0 ) );
+	radius = int( heavy( "claymore_trip_radius" ) );
+	arc = cos( int( heavy( "claymore_trip_arc" ) ) );
+	for ( ;; )
+	{
+		wait heavyseconds( "claymore_poll_ms" );
+		for ( i = 0; i < level.humans.size; i++ )
+		{
+			human = level.humans[ i ];
+			if ( human.sessionstate != "playing" || distancesquared( human.origin, claymore.origin ) > radius * radius )
+				continue;
+			if ( vectordot( vectornormalize( human.origin - claymore.origin ), forward ) < arc )
+				continue;
+			logprint( "survival: claymore tripped by client=" + human getentitynumber() + " planter=" + planter + " at " + claymore.origin + "\n" );
+			wait heavyseconds( "claymore_trip_delay_ms" );
+			claymore detonate();
+			logprint( "survival: claymore detonated planter=" + planter + " at " + claymore.origin + "\n" );
+			return;
+		}
+	}
+}
+
+// A chemical enemy's tanks burst where it died: for `gas_ms` the cloud deals
+// `gas_damage` in its name within `gas_radius` every `gas_interval_ms`, and
+// shocks each player in it by how deep they stand.
+gascloud()
+{
+	origin = self.origin;
+	radius = int( heavy( "gas_radius" ) );
+	damage = int( heavy( "gas_damage" ) );
+	playfx( level.gasfx, origin );
+	logprint( "survival: chemical gas at " + origin + " radius=" + radius + " ms=" + heavy( "gas_ms" ) + " client=" + self getentitynumber() + "\n" );
+	for ( end = gettime() + int( heavy( "gas_ms" ) ); gettime() < end; )
+	{
+		radiusdamage( origin, radius, damage, damage, self, heavy( "gas_means" ) );
+		for ( i = 0; i < level.humans.size; i++ )
+			level.humans[ i ] gasshock( origin, radius );
+		wait heavyseconds( "gas_interval_ms" );
+	}
+	logprint( "survival: chemical gas at " + origin + " cleared client=" + self getentitynumber() + "\n" );
+	kick( self getentitynumber() );
+}
+
+gasshock( origin, radius )
+{
+	if ( self.sessionstate != "playing" )
+		return;
+	distance = distance( self.origin, origin );
+	if ( distance > radius )
+		return;
+	shock = heavy( "gas_shock_low" );
+	if ( distance <= int( heavy( "gas_high_radius" ) ) )
+		shock = heavy( "gas_shock_high" );
+	else if ( distance <= int( heavy( "gas_med_radius" ) ) )
+		shock = heavy( "gas_shock_med" );
+	self shellshock( shock, heavyseconds( "gas_shock_ms" ) );
+	logprint( "survival: gas shock client=" + self getentitynumber() + " shock=" + shock + " distance=" + int( distance ) + "\n" );
+}
+
+claymoredisarm( claymore, owner, planter )
+{
+	claymore endon( "death" );
+	owner waittill( "disconnect" );
+	claymore notify( "disarmed" );
+	logprint( "survival: claymore disarmed planter=" + planter + " left, at " + claymore.origin + "\n" );
+}
+
+// MW3's own chopper path on the map: the entities whose script_noteworthy is
+// `chopper_path_noteworthy`, each naming the ones it leads to in its
+// script_linkto by their script_linkname. Those whose targetname is
+// `chopper_start_targetname` are where a chopper enters; it never flies back
+// to one. Every other link is flown either way.
+readchopperpath()
+{
+	structs = getentarray( heavy( "chopper_path_noteworthy" ), "script_noteworthy" );
+	level.chopperstarts = [];
+	level.chopperstartnext = 0;
+	nodes = [];
+	byname = [];
+	for ( i = 0; i < structs.size; i++ )
+	{
+		node = structs[ i ];
+		node.links = [];
+		if ( isdefined( node.targetname ) && node.targetname == heavy( "chopper_start_targetname" ) )
+			node.isstart = true;
+		else if ( isdefined( node.script_linkname ) )
+		{
+			byname[ node.script_linkname ] = node;
+			nodes[ nodes.size ] = node;
+		}
+	}
+	links = 0;
+	dangling = 0;
+	for ( i = 0; i < structs.size; i++ )
+	{
+		node = structs[ i ];
+		if ( !isdefined( node.script_linkto ) )
+			continue;
+		names = strtok( node.script_linkto, " " );
+		for ( j = 0; j < names.size; j++ )
+		{
+			if ( !isdefined( byname[ names[ j ] ] ) )
+			{
+				dangling++;
+				continue;
+			}
+			other = byname[ names[ j ] ];
+			node linkchopper( other );
+			if ( !isdefined( node.isstart ) )
+				other linkchopper( node );
+			links++;
+		}
+	}
+	for ( i = 0; i < structs.size; i++ )
+	{
+		if ( isdefined( structs[ i ].isstart ) && structs[ i ].links.size )
+			level.chopperstarts[ level.chopperstarts.size ] = structs[ i ];
+	}
+	logprint( "survival: chopper path starts=" + level.chopperstarts.size + " nodes=" + nodes.size + " links=" + links + " dangling=" + dangling + "\n" );
+	if ( !level.chopperstarts.size )
+		logprint( "survival: " + getdvar( "mapname" ) + " has no chopper path entered from a `" + heavy( "chopper_start_targetname" ) + "`: choppers are not flown\n" );
+}
+
+linkchopper( other )
+{
+	for ( i = 0; i < self.links.size; i++ )
+	{
+		if ( self.links[ i ] == other )
+			return;
+	}
+	self.links[ self.links.size ] = other;
+}
+
+// A wave's choppers enter one by one, `chopper_spawn_interval_ms` apart,
+// each from the next start of the path.
+spawnchoppers( choppers )
+{
+	level endon( "game_over" );
+	for ( i = 0; i < choppers.size; i++ )
+	{
+		if ( i > 0 )
+			wait heavyseconds( "chopper_spawn_interval_ms" );
+		spawnchopper( choppers[ i ] );
+	}
+}
+
+// A chopper is a vehicle of the archetype's model (archetypes.csv c2) with no
+// owner, on `enemy_team`, with the archetype's health (c7) and its gun
+// (archetypes.csv c1).
+spawnchopper( archetype )
+{
+	start = level.chopperstarts[ level.chopperstartnext % level.chopperstarts.size ];
+	level.chopperstartnext++;
+	chopper = spawnvehicle( archetypebody( archetype ), archetype, heavy( "chopper_vehicle" ), start.origin, start.angles );
+	chopper.archetype = archetype;
+	chopper.team = setting( "enemy_team" );
+	chopper.health = int( archetypefield( archetype, 7 ) );
+	chopper.maxhealth = chopper.health;
+	chopper.weapon = archetypeweapon( archetype );
+	chopper setvehweapon( chopper.weapon );
+	chopper vehicle_setspeed( int( heavy( "chopper_speed" ) ), int( heavy( "chopper_accel" ) ) );
+	first = start.links[ randomint( start.links.size ) ];
+	logprint( "survival: chopper spawned path=" + first.script_linkname + " from " + start.origin + " health=" + chopper.health + " weapon=" + chopper.weapon + " type=" + weapontype( chopper.weapon ) + " firetime=" + weaponfiretime( chopper.weapon ) + " model=" + archetypebody( archetype ) + " team=" + chopper.team + "\n" );
+	chopper thread chopperdeath();
+	chopper thread chopperfly( first );
+	chopper thread chopperfire();
+}
+
+// The chopper flies to a node, holds there `chopper_dwell_ms`, then flies to
+// the linked node nearest the nearest live player, or holds again when its
+// own is nearer: it closes on the players along the path and stays over
+// them. A node a chopper flies to is its own until it leaves: no other
+// chopper flies there.
+chopperfly( node )
+{
+	self endon( "death" );
+	self holdchoppernode( node );
+	for ( ;; )
+	{
+		self setvehgoalpos( node.origin, 1 );
+		self waittill( "goal" );
+		wait heavyseconds( "chopper_dwell_ms" );
+		next = self nextchoppernode( node );
+		if ( next != node )
+		{
+			self holdchoppernode( next );
+			logprint( "survival: chopper heads to " + next.script_linkname + " at " + next.origin + "\n" );
+		}
+		node = next;
+	}
+}
+
+holdchoppernode( node )
+{
+	self releasechoppernode();
+	self.node = node;
+	node.heldby = self;
+}
+
+releasechoppernode()
+{
+	if ( isdefined( self.node ) && isdefined( self.node.heldby ) && self.node.heldby == self )
+		self.node.heldby = undefined;
+	self.node = undefined;
+}
+
+// Squared distance in the map plane from `origin` to the nearest live
+// player; undefined with none.
+nearestliveflat( origin )
+{
+	nearest = undefined;
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		human = level.humans[ i ];
+		if ( human.sessionstate != "playing" )
+			continue;
+		distance = distancesquared( ( origin[ 0 ], origin[ 1 ], 0 ), ( human.origin[ 0 ], human.origin[ 1 ], 0 ) );
+		if ( !isdefined( nearest ) || distance < nearest )
+			nearest = distance;
+	}
+	return nearest;
+}
+
+nextchoppernode( node )
+{
+	best = node;
+	bestdistance = nearestliveflat( node.origin );
+	if ( !isdefined( bestdistance ) )
+		return node.links[ randomint( node.links.size ) ];
+	for ( i = 0; i < node.links.size; i++ )
+	{
+		if ( isdefined( node.links[ i ].heldby ) && node.links[ i ].heldby != self )
+			continue;
+		distance = nearestliveflat( node.links[ i ].origin );
+		if ( distance < bestdistance )
+		{
+			best = node.links[ i ];
+			bestdistance = distance;
+		}
+	}
+	return best;
+}
+
+// The nearest live player within `chopper_range` its gun can see, aimed at
+// `chopper_aim_height` above their feet; undefined when none.
+choppertarget()
+{
+	best = undefined;
+	bestdistance = 0;
+	range = int( heavy( "chopper_range" ) );
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		human = level.humans[ i ];
+		if ( human.sessionstate != "playing" )
+			continue;
+		point = human.origin + ( 0, 0, int( heavy( "chopper_aim_height" ) ) );
+		distance = distancesquared( self.origin, point );
+		if ( distance > range * range || ( isdefined( best ) && distance >= bestdistance ) )
+			continue;
+		if ( !self vehicle_canturrettargetpoint( point, 1, human ) )
+			continue;
+		best = human;
+		bestdistance = distance;
+	}
+	return best;
+}
+
+// Bursts of `chopper_burst_ms` at the gun's fire time on the target, each
+// shot off the aim point by up to `chopper_spread` units per 1000 of range,
+// then `chopper_rest_ms` before the next.
+chopperfire()
+{
+	self endon( "death" );
+	interval = weaponfiretime( self.weapon );
+	if ( interval <= 0 )
+	{
+		logprint( "survival: chopper gun " + self.weapon + " has no fire time: it never fires\n" );
+		return;
+	}
+	burst = heavyseconds( "chopper_burst_ms" );
+	for ( ;; )
+	{
+		target = self choppertarget();
+		if ( !isdefined( target ) )
+		{
+			self clearlookatent();
+			wait heavyseconds( "chopper_rest_ms" );
+			continue;
+		}
+		self setlookatent( target );
+		shots = 0;
+		for ( fired = 0; fired < burst && isdefined( target ) && target.sessionstate == "playing"; fired = fired + interval )
+		{
+			spread = distance( self.origin, target.origin ) * int( heavy( "chopper_spread" ) ) / 1000;
+			offset = ( randomfloatrange( 0 - spread, spread ), randomfloatrange( 0 - spread, spread ), int( heavy( "chopper_aim_height" ) ) + randomfloatrange( 0 - spread, spread ) );
+			self fireweapon( "", target, offset );
+			shots++;
+			wait interval;
+		}
+		if ( isdefined( target ) )
+			logprint( "survival: chopper fired at client=" + target getentitynumber() + " shots=" + shots + " from " + self.origin + " archetype=" + self.archetype + "\n" );
+		wait heavyseconds( "chopper_rest_ms" );
+	}
+}
+
+// A chopper's damage, after friendly fire is refused; the last hit's means
+// and weapon are what its kill is credited with.
+onvehicledamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff, modelidx, hitpart )
+{
+	if ( self isfriendlyfire( attackerent ) )
+		return;
+	self.lastmeans = mod;
+	self.lastweapon = weaponname;
+	self vehicle_finishdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff, modelidx, hitpart );
+}
+
+// Destroyed, a chopper is a kill of the wave; a player's kill pays its
+// reward (c9) like any enemy's.
+chopperdeath()
+{
+	self waittill( "death", attacker );
+	origin = self.origin;
+	level.wavekilled++;
+	reward = 0;
+	if ( ishuman( attacker ) )
+	{
+		reward = int( archetypefield( self.archetype, 9 ) );
+		attacker creditkill( self, self.lastmeans, self.lastweapon );
+	}
+	logprint( "survival: chopper destroyed reward=" + reward + " by=" + dealer( attacker ) + " means=" + self.lastmeans + " weapon=" + self.lastweapon + " at " + origin + " remaining=" + ( level.wavetotal - level.wavekilled ) + "\n" );
+	updatewavehud();
+	self releasechoppernode();
+	playfx( level.chopperdeathfx, origin );
+	self delete();
+	level notify( "roster_changed" );
+}

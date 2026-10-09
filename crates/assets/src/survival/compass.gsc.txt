@@ -1,0 +1,7 @@
+setupminimap( material )
+{
+	corners = getentarray( "minimap_corner", "targetname" );
+	if ( corners.size != 2 )
+		return;
+	setminimap( material, corners[ 0 ].origin[ 0 ], corners[ 0 ].origin[ 1 ], corners[ 1 ].origin[ 0 ], corners[ 1 ].origin[ 1 ] );
+}

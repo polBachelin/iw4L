@@ -129,7 +129,9 @@ pub(crate) fn update_killcam_skip(
     mut gaps: ResMut<HudPresentationGaps>,
     mut pass: ResMut<HudTessPass>,
     mut exprs: ResMut<crate::expr_cache::MenuExprCache>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     let seated = view.as_deref().is_some_and(|v| v.in_killcam());
     if !seated {
         hide(&mut pass);
@@ -182,16 +184,13 @@ pub(crate) fn update_killcam_skip(
         ChromeAssets {
             catalog: Some(catalog),
             localize: strings.as_ref().map(|s| &s.0),
+            host: chrome,
         },
         &mut exprs,
     );
     let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     for cmd in &frame.list.cmds {
-        let _ = hud_images.get(
-            crate::images::HUD_CHROME_NAMESPACE,
-            &cmd.material,
-            &mut images,
-        );
+        let _ = hud_images.get(chrome, &cmd.material, &mut images);
         if let Draw2dOp::TextRun { font, .. } = &cmd.op
             && !fonts.contains_key(font)
             && let Some(def) = catalog.font(font)

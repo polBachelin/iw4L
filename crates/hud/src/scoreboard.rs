@@ -17,7 +17,7 @@ use crate::chrome::ui_text_width;
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate_fonts};
 use crate::font_overlay::HUD_SMALL_FONT;
 use crate::gpu_list::{HudTessPass, TessJob};
-use crate::images::{HUD_CHROME_NAMESPACE, HudImages};
+use crate::images::HudImages;
 use crate::overhead_names::rank_presentation;
 use crate::surface::Hud2dSurface;
 
@@ -95,6 +95,7 @@ fn localized(strings: Option<&PreparedLocalizedStrings>, key: &str) -> String {
 struct BoardDraw<'a> {
     surface: &'a Hud2dSurface,
     font: &'a FontDef,
+    chrome: asset_core::AssetNamespace,
     cmds: Vec<Draw2dCmd>,
 }
 
@@ -114,7 +115,7 @@ impl BoardDraw<'_> {
             t1: 1.0,
             color,
             material: material.to_owned(),
-            material_namespace: HUD_CHROME_NAMESPACE,
+            material_namespace: self.chrome,
             op: Draw2dOp::StretchPic,
             provenance: Draw2dProvenance::CgDraw { site: "scoreboard" },
             layer: 1,
@@ -172,7 +173,7 @@ impl BoardDraw<'_> {
             t1: 1.0,
             color,
             material: asset_core::AssetRef::bare_name(&self.font.material).to_owned(),
-            material_namespace: HUD_CHROME_NAMESPACE,
+            material_namespace: self.chrome,
             op: Draw2dOp::TextRun {
                 font: HUD_SMALL_FONT.to_owned(),
                 scale: r.w,
@@ -286,6 +287,7 @@ pub(crate) fn update_scoreboard(
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
     mut pass: ResMut<HudTessPass>,
+    host_namespace: assets::HostNamespace,
 ) {
     pass.scoreboard = TessJob::Hide;
     let Some(snap) = presented.snapshot() else {
@@ -336,6 +338,7 @@ pub(crate) fn update_scoreboard(
     let mut draw = BoardDraw {
         surface: &surface,
         font,
+        chrome: host_namespace.get(),
         cmds: Vec::new(),
     };
 

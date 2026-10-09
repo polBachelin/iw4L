@@ -16,7 +16,11 @@ pub const PM_TYPE_NORMAL_LINKED: i32 = 1;
 
 pub const MAX_CLIENT_CORPSES: i32 = 8;
 
-pub const PLAYER_CORPSE_ENTITY_BASE: i32 = 18;
+/// Client slots: a client's id is its entity number, so the corpse entities
+/// start right after them.
+pub const MAX_CLIENTS: i32 = 18;
+
+pub const PLAYER_CORPSE_ENTITY_BASE: i32 = MAX_CLIENTS;
 
 pub const GENTITY_SPAWN_BASE: i32 = PLAYER_CORPSE_ENTITY_BASE + MAX_CLIENT_CORPSES;
 

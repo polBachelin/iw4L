@@ -406,7 +406,10 @@ impl WorldQuery for SimWorld {
     }
 
     fn weapon_class(&self, weapon: u16) -> WeaponClass {
-        WeaponClass::from_script_name(self.weapon_script_name(u32::from(weapon)))
+        self.weapon_combat_facts(u32::from(weapon))
+            .map_or_else(WeaponClass::default, |facts| {
+                WeaponClass::from_weapon(facts.weap_type, facts.weap_class)
+            })
     }
 
     fn weapon_facts(&self, weapon: u16) -> Option<WeaponFacts> {

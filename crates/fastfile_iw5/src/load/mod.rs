@@ -67,7 +67,7 @@ fn load_asset_body_observed(
         Tracer => tracer::load_tracer(s, links),
         Vehicle => vehicle::load_vehicle(s, links),
         Leaderboard => simple::load_leaderboard_def(s),
-        StructuredDataDef => simple::load_structured_data_def_set(s),
+        StructuredDataDef => simple::load_structured_data_def_set(s, links),
         other => Err(ZoneError::NoAssetLoader(other)),
     }
 }
@@ -98,6 +98,48 @@ pub trait AssetLinkSink {
         geometry: crate::zone::FxEffectDefGeometry,
     ) -> Result<()> {
         let _ = (s, geometry);
+        Ok(())
+    }
+
+    fn capture_impact_fx(
+        &mut self,
+        s: &ZoneStream<'_>,
+        geometry: crate::zone::FxImpactTableGeometry,
+    ) -> Result<()> {
+        let _ = (s, geometry);
+        Ok(())
+    }
+
+    fn capture_font(
+        &mut self,
+        s: &ZoneStream<'_>,
+        geometry: crate::zone::FontDefGeometry,
+    ) -> Result<()> {
+        let _ = (s, geometry);
+        Ok(())
+    }
+
+    fn capture_tracer(
+        &mut self,
+        s: &ZoneStream<'_>,
+        geometry: crate::zone::TracerDefGeometry,
+    ) -> Result<()> {
+        let _ = (s, geometry);
+        Ok(())
+    }
+
+    /// A `MenuList` header after its walk; the header lives in the temp
+    /// block, so it is only readable during this call.
+    fn capture_menu_list(&mut self, s: &ZoneStream<'_>, header: Ptr) -> Result<()> {
+        let _ = (s, header);
+        Ok(())
+    }
+
+    /// A `menuDef_t` header after its walk. Every pointer below it has been
+    /// fixed up, so the whole menu (menuData, items, statements, handler sets)
+    /// reads as resolved offsets; the header itself lives in the temp block.
+    fn capture_menu_def(&mut self, s: &ZoneStream<'_>, header: Ptr) -> Result<()> {
+        let _ = (s, header);
         Ok(())
     }
 
@@ -140,6 +182,11 @@ pub trait AssetLinkSink {
     }
 
     fn capture_string_table(&mut self, s: &ZoneStream<'_>, header: Ptr) -> Result<()> {
+        let _ = (s, header);
+        Ok(())
+    }
+
+    fn capture_structured_data_def_set(&mut self, s: &ZoneStream<'_>, header: Ptr) -> Result<()> {
         let _ = (s, header);
         Ok(())
     }

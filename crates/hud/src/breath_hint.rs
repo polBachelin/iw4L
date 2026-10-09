@@ -26,7 +26,9 @@ pub(crate) fn update(
     mut pass: ResMut<HudTessPass>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     pass.breath_hint = TessJob::Hide;
     if !surface.is_ready()
         || input.script_menu_open
@@ -104,7 +106,7 @@ pub(crate) fn update(
     let material = asset_core::AssetRef::bare_name(&font.material).to_owned();
     let list = Draw2dList {
         cmds: vec![Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: rect.x,
             y: rect.y,
             w: rect.w,
@@ -133,11 +135,7 @@ pub(crate) fn update(
     let mut fonts = HashMap::new();
     fonts.insert(font_name.to_owned(), font);
     let (quads, _) = tessellate_fonts(&list, &fonts);
-    if !quads.is_empty()
-        && hud_images
-            .get(crate::images::HUD_CHROME_NAMESPACE, &material, &mut images)
-            .is_some()
-    {
+    if !quads.is_empty() && hud_images.get(chrome, &material, &mut images).is_some() {
         pass.breath_hint = TessJob::Quads(quads);
     }
 }

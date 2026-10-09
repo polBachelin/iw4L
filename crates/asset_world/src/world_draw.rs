@@ -1723,14 +1723,14 @@ fn sun_i32(raw: &[u8], off: usize) -> Option<i32> {
     Some(i32::from_le_bytes(bytes.try_into().ok()?))
 }
 
-fn sun_name(bytes: &[u8], len: u8) -> Option<&str> {
+pub(crate) fn sun_name(bytes: &[u8], len: u8) -> Option<&str> {
     let len = usize::from(len);
     core::str::from_utf8(bytes.get(..len)?)
         .ok()
         .filter(|name| !name.is_empty())
 }
 
-fn resolve_sun_material(
+pub(crate) fn resolve_sun_material(
     materials: &MaterialCatalog,
     slot: Ptr,
     header: Option<Ptr>,
@@ -1761,27 +1761,39 @@ fn extract_sun_effects(
     let flare_name = sun_name(&sun.flare_name, sun.flare_name_len);
     let sprite_index = resolve_sun_material(materials, sun.sprite, sun.sprite_header, sprite_name);
     let flare_index = resolve_sun_material(materials, sun.flare, sun.flare_header, flare_name);
-    if sun.raw[0] == 0 {
-        return Ok(None);
+    Ok(sun_effects_from_record(
+        &sun.raw,
+        |off32, off64| s.layout(off32, off64),
+        sprite_index,
+        flare_index,
+    ))
+}
+
+/// Reads an authored `sunflare_t`; IW4 and IW5 share its layout.
+pub(crate) fn sun_effects_from_record(
+    raw: &[u8],
+    layout: impl Fn(usize, usize) -> usize,
+    sprite_material: Option<usize>,
+    flare_material: Option<usize>,
+) -> Option<SunEffectsCapture> {
+    if raw
+        .first()
+        .is_none_or(|&has_valid_data| has_valid_data == 0)
+    {
+        return None;
     }
-    let direction = [
-        sun_f32(&sun.raw, s.layout(84, 96)).unwrap_or(0.0),
-        sun_f32(&sun.raw, s.layout(88, 100)).unwrap_or(0.0),
-        sun_f32(&sun.raw, s.layout(92, 104)).unwrap_or(0.0),
-    ];
+    let need = |off32: usize, off64: usize| sun_f32(raw, layout(off32, off64)).unwrap_or(0.0);
+    let need_i = |off32: usize, off64: usize| sun_i32(raw, layout(off32, off64)).unwrap_or(0);
+    let direction = [need(84, 96), need(88, 100), need(92, 104)];
     let len_sq =
         direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2];
     if !len_sq.is_finite() || len_sq < 0.25 {
-        return Ok(None);
+        return None;
     }
     let inv = 1.0 / len_sq.sqrt();
-    let need =
-        |off32: usize, off64: usize| sun_f32(&sun.raw, s.layout(off32, off64)).unwrap_or(0.0);
-    let need_i =
-        |off32: usize, off64: usize| sun_i32(&sun.raw, s.layout(off32, off64)).unwrap_or(0);
-    Ok(Some(SunEffectsCapture {
-        sprite_material: sprite_index,
-        flare_material: flare_index,
+    Some(SunEffectsCapture {
+        sprite_material,
+        flare_material,
         sprite_size: need(12, 24),
         flare_min_size: need(16, 28),
         flare_min_dot: need(20, 32),
@@ -1801,7 +1813,7 @@ fn extract_sun_effects(
         glare_fade_in_ms: need_i(76, 88),
         glare_fade_out_ms: need_i(80, 92),
         direction: [direction[0] * inv, direction[1] * inv, direction[2] * inv],
-    }))
+    })
 }
 
 fn extract_dpvs(s: &ZoneStream<'_>, g: GfxWorldGeometry) -> Result<DpvsWorldData, WorldMeshError> {

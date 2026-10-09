@@ -48,10 +48,6 @@ impl SoundAliasKey {
             name: name.into(),
         }
     }
-
-    pub fn host(name: impl Into<String>) -> Self {
-        Self::new(AssetNamespace::Iw4, name)
-    }
 }
 
 fn mint_revision() -> u64 {
@@ -521,7 +517,12 @@ impl SoundCatalog {
         self.loaded.push(loaded);
     }
 
-    pub fn script_alias_looping(&self) -> std::collections::BTreeMap<String, Option<bool>> {
+    /// Every alias by its qualified name, plus the bare name for the aliases
+    /// of `host`, the runtime game, which scripts name unqualified.
+    pub fn script_alias_looping(
+        &self,
+        host: AssetNamespace,
+    ) -> std::collections::BTreeMap<String, Option<bool>> {
         self.sounds
             .iter()
             .flat_map(|sound| {
@@ -530,7 +531,7 @@ impl SoundCatalog {
                 let looping = sound.aliases.first().and_then(CapturedAlias::is_looping);
                 let qualified = format!("{}:{name}", namespace.as_str());
                 std::iter::once((qualified, looping))
-                    .chain((namespace == AssetNamespace::Iw4).then_some((name, looping)))
+                    .chain((namespace == host).then_some((name, looping)))
             })
             .collect()
     }
@@ -542,10 +543,6 @@ impl SoundCatalog {
         self.by_alias_ci
             .get(&(ns, alias.to_ascii_lowercase()))
             .copied()
-    }
-
-    pub fn index_by_name(&self, alias: &str) -> Option<usize> {
-        self.index_in(AssetNamespace::Iw4, alias)
     }
 
     pub fn index_unique(&self, alias: &str) -> Option<usize> {
@@ -567,10 +564,6 @@ impl SoundCatalog {
 
     pub fn sound_in(&self, ns: AssetNamespace, alias: &str) -> Option<&CapturedSound> {
         self.index_in(ns, alias).map(|i| &self.sounds[i])
-    }
-
-    pub fn sound(&self, alias: &str) -> Option<&CapturedSound> {
-        self.sound_in(AssetNamespace::Iw4, alias)
     }
 
     pub fn loaded_index_in(&self, ns: AssetNamespace, name: &str) -> Option<usize> {

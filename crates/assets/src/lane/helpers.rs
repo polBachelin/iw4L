@@ -287,6 +287,8 @@ impl MapXModelCatalog {
         Ok(())
     }
 
+    /// Returns the scene skeleton it captured, for the other catalogs that
+    /// keep the same model.
     pub(crate) fn capture_iw5(
         &mut self,
         stream: &fastfile_iw5::ZoneStream<'_>,
@@ -294,31 +296,33 @@ impl MapXModelCatalog {
         slot: fastfile_iw5::Ptr,
         insert_slot: Option<fastfile_iw5::Ptr>,
         strings: &fastfile_iw5::ScriptStrings,
-    ) {
+    ) -> Option<std::sync::Arc<asset_model::ModelSkel>> {
         let Some(geometry) = stream.latest_xmodel() else {
             self.failed += 1;
-            return;
+            return None;
         };
         let Some(name) = geometry.name.and_then(|p| stream.cstr(p).ok()) else {
             self.failed += 1;
-            return;
+            return None;
         };
         let scene_key = MapXModelAssetKey(name.to_owned());
-        let scene_asset = asset_model::capture_xmodel_skel_iw5_with_shared(
+        let skel = asset_model::capture_xmodel_skel_iw5_with_shared(
             stream,
             strings,
             geometry,
             materials,
             &self.shared_surfaces,
         )
-        .map(|skel| MapXModelSceneAsset::Iw5(std::sync::Arc::new(skel)))
-        .unwrap_or(MapXModelSceneAsset::Unavailable {
-            reason: "IW5 XModel scene skeleton capture failed",
-        });
+        .map(std::sync::Arc::new);
+        let scene_asset = skel.clone().map(MapXModelSceneAsset::Iw5).unwrap_or(
+            MapXModelSceneAsset::Unavailable {
+                reason: "IW5 XModel scene skeleton capture failed",
+            },
+        );
         self.scene_assets.insert(scene_key, scene_asset);
         let Ok(mesh) = build_iw5_xmodel_mesh(stream, geometry, Some(materials)) else {
             self.failed += 1;
-            return;
+            return skel;
         };
         let index = self.meshes.len();
         self.meshes.push(mesh);
@@ -336,6 +340,7 @@ impl MapXModelCatalog {
                 index,
             );
         }
+        skel
     }
 
     pub(crate) fn alias(&mut self, slot: Ptr, target: Ptr) {
@@ -900,4 +905,80 @@ pub(super) fn smodel_lighting_samples(
         ));
     }
     tiles
+}
+
+pub(super) fn report_combat_tables(
+    report: &mut Vec<String>,
+    pen_loaded: bool,
+    lochit_loaded: bool,
+) {
+    report.push(if pen_loaded {
+        format!(
+            "common_mp bullet_penetration_mp: loaded ({}x{})",
+            weapon_iw4::PENETRATE_TYPE_COUNT,
+            weapon_iw4::PEN_SURF_TYPE_COUNT
+        )
+    } else {
+        "common_mp bullet_penetration_mp: missing — FirePenetrate depths are 0".into()
+    });
+    report.push(if lochit_loaded {
+        format!(
+            "common_mp mp_lochit_dmgtable: loaded ({})",
+            weapon_iw4::HITLOC_COUNT
+        )
+    } else {
+        "common_mp mp_lochit_dmgtable: missing — location scale is identity".into()
+    });
+}
+
+pub(super) fn resolve_film_vision(
+    report: &mut Vec<String>,
+    path: &std::path::Path,
+    map: &super::FilmVisionCatalog,
+    common: &super::FilmVisionCatalog,
+) -> (Option<asset_world::FilmVision>, super::FilmVisionCatalog) {
+    let vision_name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| format!("vision/{}.vision", stem.to_ascii_lowercase()));
+    let mut film_visions = common.clone();
+    film_visions.extend(map.clone());
+    let film_vision = match select_film_vision(vision_name.as_deref(), map, common) {
+        Ok(Some((vision, source))) => {
+            report.push(format!(
+                "film vision: READY source={source} enable={} contrast={:.4} brightness={:.4} desaturation={:.5}",
+                vision.enable, vision.contrast, vision.brightness, vision.desaturation,
+            ));
+            Some(vision)
+        }
+        Ok(None) => {
+            report.push(format!(
+                "film vision: RED missing `{}` in map and common_mp fastfiles",
+                vision_name.as_deref().unwrap_or("<invalid map stem>")
+            ));
+            None
+        }
+        Err(error) => {
+            report.push(format!("film vision: RED {error}"));
+            None
+        }
+    };
+    (film_vision, film_visions)
+}
+
+fn select_film_vision(
+    name: Option<&str>,
+    map: &super::FilmVisionCatalog,
+    common: &super::FilmVisionCatalog,
+) -> Result<Option<(asset_world::FilmVision, &'static str)>, String> {
+    let name = name.ok_or_else(|| "map path has no UTF-8 stem".to_owned())?;
+    let candidate = map
+        .get(name)
+        .map(|vision| (vision, "fastfile"))
+        .or_else(|| common.get(name).map(|vision| (vision, "common_mp")));
+    match candidate {
+        Some((Ok(vision), source)) => Ok(Some((*vision, source))),
+        Some((Err(error), source)) => Err(format!("{source} parse error {error:?}")),
+        None => Ok(None),
+    }
 }

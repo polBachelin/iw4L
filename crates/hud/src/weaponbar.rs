@@ -504,7 +504,7 @@ fn paint_heading_tape(
     push_owner_pic(
         args,
         material,
-        crate::images::HUD_CHROME_NAMESPACE,
+        args.assets.host,
         args.color,
         Draw2dOp::StretchPic,
         frame,
@@ -529,7 +529,7 @@ fn paint_compass_ring(
     push_owner_pic(
         args,
         material,
-        crate::images::HUD_CHROME_NAMESPACE,
+        args.assets.host,
         args.color,
         Draw2dOp::RotateSt {
             center_s: 0.5,
@@ -684,7 +684,7 @@ pub(crate) struct WeaponbarInput<'w, 's> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_weaponbar(
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, host_namespace): (Option<Res<MenuCatalog>>, assets::HostNamespace),
     strings: Option<Res<PreparedLocalizedStrings>>,
     weapons: Option<Res<PreparedWeapons>>,
     compass: Option<Res<SessionCompass>>,
@@ -700,6 +700,7 @@ pub(crate) fn update_weaponbar(
     cg_clock: Res<FrameClock>,
     client_input: WeaponbarInput,
 ) {
+    let chrome = host_namespace.get();
     let weapons = weapons
         .as_deref()
         .and_then(|weapons| weapons.for_snapshot(presented.weapon_epoch()).ok());
@@ -839,6 +840,7 @@ pub(crate) fn update_weaponbar(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize: strings.as_ref().map(|s| &s.0),
+                host: chrome,
             },
             ChromeMenuAnim::IDENTITY,
             &mut exprs,
@@ -879,6 +881,7 @@ pub(crate) fn update_weaponbar(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize: strings.as_ref().map(|s| &s.0),
+                host: chrome,
             },
             ChromeMenuAnim::IDENTITY,
             &mut exprs,
@@ -915,6 +918,7 @@ pub(crate) fn update_weaponbar(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize: strings.as_ref().map(|s| &s.0),
+                host: chrome,
             },
             ChromeMenuAnim::IDENTITY,
             &mut exprs,

@@ -20,6 +20,35 @@ pub struct MatchLoadBusy(pub bool);
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchLoadAbort(pub u64);
 
+/// Fixed for the process: every map change resolves its `common_mp` the same
+/// way the launch did.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MatchRuntimeProfile(pub asset_transport::RuntimeProfile);
+
+/// Fixed for the process like the profile: the zones the launch mode loads
+/// after `common_mp`, resolved again beside every map's `common_mp`. A launch
+/// that inserts none loads no mode zones.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct MatchModeZones(pub asset_transport::ModeZones);
+
+/// The namespace the runtime game's own assets live in: an unqualified alias
+/// (movement, HUD, menu and code cues, script sounds) resolves here, while a
+/// donor game's asset keeps its own namespace. The menu shell inserts no
+/// profile; it runs IW4, as its own sound bank load does.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct HostNamespace<'w> {
+    profile: Option<Res<'w, MatchRuntimeProfile>>,
+}
+
+impl HostNamespace<'_> {
+    pub fn get(&self) -> asset_core::AssetNamespace {
+        self.profile
+            .as_deref()
+            .map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0)
+            .game()
+    }
+}
+
 #[derive(Resource)]
 pub struct MatchLoadRequest {
     pub request_id: u64,
@@ -28,6 +57,8 @@ pub struct MatchLoadRequest {
     pub zone: String,
     pub zone_ff: Result<PathBuf, String>,
     pub common_mp: Result<PathBuf, String>,
+    /// The mode zones found beside `common_mp`, in load order.
+    pub mode_zones: Result<Vec<PathBuf>, String>,
     pub progress: LoadProgress,
 }
 
@@ -67,6 +98,7 @@ pub struct PreparedMatchSound {
 fn start_match_load(
     mut commands: Commands,
     identity: Option<Res<LaunchIdentity>>,
+    profile: Option<Res<MatchRuntimeProfile>>,
     request: Option<Res<MatchLoadRequest>>,
     busy: Option<Res<MatchLoadTask>>,
     retiring: Option<Res<frame::Retiring>>,
@@ -116,22 +148,25 @@ fn start_match_load(
         );
     }
     *waiting_for_retirement = None;
-    if let Some(error) = request
+    let mode_zones = match request
         .zone_ff
         .as_ref()
-        .err()
-        .or_else(|| request.common_mp.as_ref().err())
+        .and(request.common_mp.as_ref())
+        .and(request.mode_zones.as_ref())
     {
-        failed.write(MapLoadFailed {
-            request_id: request.request_id,
-            load_key: request.load_key,
-            zone: request.zone.clone(),
-            error: error.clone(),
-        });
-        commands.remove_resource::<MatchLoadRequest>();
-        inflight.0 = false;
-        return;
-    }
+        Ok(mode_zones) => mode_zones.clone(),
+        Err(error) => {
+            failed.write(MapLoadFailed {
+                request_id: request.request_id,
+                load_key: request.load_key,
+                zone: request.zone.clone(),
+                error: error.clone(),
+            });
+            commands.remove_resource::<MatchLoadRequest>();
+            inflight.0 = false;
+            return;
+        }
+    };
     let zone_ff = request.zone_ff.clone();
     let common_mp = request.common_mp.clone();
     let progress = request.progress.clone();
@@ -151,16 +186,26 @@ fn start_match_load(
     ));
 
     let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
     let task = crate::session_load::load_pool().spawn(async move {
         let sound_path = zone_ff.clone();
-        match load_prepared_match(zone_ff, common_mp, progress.clone()).await {
+        match load_prepared_match(
+            profile,
+            zone_ff,
+            common_mp,
+            mode_zones.clone(),
+            progress.clone(),
+        )
+        .await
+        {
             MatchLoadOutcome::Ready(mut prepared) => {
                 if progress.is_canceled() {
                     return Ok(None);
                 }
                 prepared.sound = Some(match (games, sound_path) {
                     (Some(games), Ok(path)) => {
-                        let sources = asset_audio::gather_sound_sources(&games, &path);
+                        let sources =
+                            asset_audio::gather_sound_sources(profile, &games, &path, &mode_zones);
                         let map = prepared
                             .sound
                             .take()
@@ -175,7 +220,8 @@ fn start_match_load(
                             map,
                         );
                         prepared.sound_gaps = bank.gaps.len();
-                        prepared.script_sound_aliases = Some(bank.catalog.script_alias_looping());
+                        prepared.script_sound_aliases =
+                            Some(bank.catalog.script_alias_looping(profile.game()));
                         Ok(bank.catalog)
                     }
                     _ => Err("no launch identity or map path to compose the sound bank".into()),
@@ -218,8 +264,12 @@ fn approve_map_load(
     mut approved: MessageReader<MapLoadApproved>,
     mut failed: MessageWriter<MapLoadFailed>,
     identity: Res<LaunchIdentity>,
+    profile: Option<Res<MatchRuntimeProfile>>,
+    mode: Option<Res<MatchModeZones>>,
     abort: Option<Res<MatchLoadAbort>>,
 ) {
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let mode = mode.map_or_else(asset_transport::ModeZones::default, |mode| mode.0.clone());
     for request in approved.read() {
         if abort
             .as_ref()
@@ -241,13 +291,18 @@ fn approve_map_load(
             .unwrap_or_else(|_| request.zone.clone());
         let zone_ff = found.map(|zone| zone.path);
         let common_mp = match &zone_ff {
-            Ok(path) => asset_transport::find_runtime_common_mp(&games, path).map(|zone| zone.path),
+            Ok(path) => profile.find_common_mp(&games, path).map(|zone| zone.path),
+            Err(error) => Err(error.clone()),
+        };
+        let mode_zones = match &zone_ff {
+            Ok(path) => profile.find_mode_zones(&games, path, &mode),
             Err(error) => Err(error.clone()),
         };
         let error = zone_ff
             .as_ref()
             .err()
             .or_else(|| common_mp.as_ref().err())
+            .or_else(|| mode_zones.as_ref().err())
             .cloned();
         if let Some(error) = error {
             failed.write(MapLoadFailed {
@@ -267,6 +322,7 @@ fn approve_map_load(
             zone,
             zone_ff,
             common_mp,
+            mode_zones,
             progress,
         });
     }

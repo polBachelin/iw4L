@@ -1,4 +1,4 @@
-use crate::{dd, dom, ffa};
+use crate::{dd, dom, ffa, survival};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -19,6 +19,8 @@ pub enum GameModeKind {
     Headquarters = 6,
 
     Sabotage = 7,
+
+    Survival = 8,
 }
 
 impl GameModeKind {
@@ -35,6 +37,7 @@ impl GameModeKind {
             b"ctf" | b"capturetheflag" | b"capture_the_flag" => Some(Self::CaptureTheFlag),
             b"koth" | b"hq" | b"headquarters" => Some(Self::Headquarters),
             b"sab" | b"sabotage" => Some(Self::Sabotage),
+            b"survival" => Some(Self::Survival),
             _ => None,
         }
     }
@@ -61,6 +64,7 @@ impl GameModeKind {
             Self::CaptureTheFlag => "ctf",
             Self::Headquarters => "koth",
             Self::Sabotage => "sab",
+            Self::Survival => survival::GAMETYPE_TOKEN,
         }
     }
 
@@ -74,6 +78,7 @@ impl GameModeKind {
             Self::CaptureTheFlag => &["ctf"],
             Self::Headquarters => &["koth"],
             Self::Sabotage => &["sab"],
+            Self::Survival => &[survival::GAMETYPE_TOKEN],
         }
     }
 
@@ -91,6 +96,7 @@ impl GameModeKind {
             5 => Some(Self::CaptureTheFlag),
             6 => Some(Self::Headquarters),
             7 => Some(Self::Sabotage),
+            8 => Some(Self::Survival),
             _ => None,
         }
     }
@@ -105,11 +111,26 @@ impl GameModeKind {
             Self::CaptureTheFlag => "CAPTURE THE FLAG",
             Self::Headquarters => "HEADQUARTERS",
             Self::Sabotage => "SABOTAGE",
+            Self::Survival => survival::DISPLAY_NAME,
         }
     }
 
     pub fn is_team(self) -> bool {
         !matches!(self, Self::FreeForAll)
+    }
+
+    /// Whether the in-game main menu (`g_scriptMainMenu`) asks the host to
+    /// stop the game. Only a solo listen host grants it; the multiplayer modes
+    /// never ask, so their menus leave the match running.
+    pub fn main_menu_pauses(self) -> bool {
+        matches!(self, Self::Survival)
+    }
+
+    /// Whether the HUD draws the multiplayer scorebar (`scorebar_hd` of
+    /// `ui_mp/hud_720.txt`): a match score against the score limit. Survival
+    /// has no such score; MW3 runs it on SP's HUD, whose list has no scorebar.
+    pub fn has_scorebar(self) -> bool {
+        !matches!(self, Self::Survival)
     }
 
     pub fn team_start_classname(self, axis: bool) -> Option<&'static str> {
@@ -119,7 +140,8 @@ impl GameModeKind {
             | Self::SearchAndDestroy
             | Self::CaptureTheFlag
             | Self::Headquarters
-            | Self::Sabotage => None,
+            | Self::Sabotage
+            | Self::Survival => None,
             Self::Domination => Some(if axis {
                 dom::START_SPAWN_AXIS
             } else {
@@ -140,7 +162,8 @@ impl GameModeKind {
             | Self::SearchAndDestroy
             | Self::CaptureTheFlag
             | Self::Headquarters
-            | Self::Sabotage => &[],
+            | Self::Sabotage
+            | Self::Survival => &[],
             Self::Domination => &[dom::SPAWN_CLASSNAME],
             Self::Demolition => {
                 if axis {

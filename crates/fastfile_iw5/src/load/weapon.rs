@@ -166,13 +166,14 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         ZonePtr::Offset(q) => Some(s.resolve_alias(q)),
         _ => None,
     };
-    let (weap_type, weap_class, fire_type) = match weap_def {
+    let (weap_type, weap_class, inventory_type, fire_type) = match weap_def {
         Some(body) => (
             s.i32_at(body, s.layout(sz::WEAPON_DEF_WEAP_TYPE_OFF, 84))?,
             s.i32_at(body, s.layout(sz::WEAPON_DEF_WEAP_CLASS_OFF, 88))?,
+            s.i32_at(body, s.layout(sz::WEAPON_DEF_INVENTORY_TYPE_OFF, 96))?,
             s.i32_at(body, s.layout(sz::WEAPON_DEF_FIRE_TYPE_OFF, 100))?,
         ),
-        None => (0, 0, 0),
+        None => (0, 0, 0, 0),
     };
     let (ads_zoom_in_frac, ads_zoom_out_frac, ads_in_rate, ads_out_rate) = match weap_def {
         Some(body) => (
@@ -286,6 +287,7 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         impact_type: s.i32_at(p, s.layout(sz::WEAPON_COMPLETE_IMPACT_TYPE_OFF, 160))?,
         weap_type,
         weap_class,
+        inventory_type,
         fire_type,
         move_speed_scale,
         ads_move_speed_scale,
@@ -416,11 +418,13 @@ fn load_weapon_def(
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1316, 1696)))?;
     follow_snd_alias_custom(s, p.at(s.layout(1320, 1704)))?;
     follow_snd_alias_custom(s, p.at(s.layout(1324, 1712)))?;
-    if s.begin_body(p.at(s.layout(1352, 1744)))? {
-        s.alloc_load(4, 4 * sz::SURF_TYPE_COUNT)?;
-    }
-    if s.begin_body(p.at(s.layout(1356, 1752)))? {
-        s.alloc_load(4, 4 * sz::SURF_TYPE_COUNT)?;
+    for off in [
+        s.layout(sz::WEAPON_DEF_PARALLEL_BOUNCE_OFF, 1744),
+        s.layout(sz::WEAPON_DEF_PERPENDICULAR_BOUNCE_OFF, 1752),
+    ] {
+        if s.begin_body(p.at(off))? {
+            s.alloc_load(4, 4 * sz::SURF_TYPE_COUNT)?;
+        }
     }
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1360, 1760)))?;
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1364, 1768)))?;
@@ -446,7 +450,12 @@ fn load_weapon_def(
     }
     follow_name(s, p, s.layout(1724, 2184))?;
     follow_name(s, p, s.layout(1728, 2192))?;
-    asset_ptr_at(s, links, AssetType::Tracer, p.at(s.layout(1732, 2200)))?;
+    asset_ptr_at(
+        s,
+        links,
+        AssetType::Tracer,
+        p.at(s.layout(sz::WEAPON_DEF_TRACER_OFF, 2200)),
+    )?;
     follow_snd_alias_custom(s, p.at(s.layout(1776, 2248)))?;
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1780, 2256)))?;
     follow_name(s, p, s.layout(1784, 2264))?;

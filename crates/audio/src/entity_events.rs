@@ -102,6 +102,7 @@ fn entity_event_sound(
     weapons: Option<Res<PreparedWeapons>>,
     bank: Option<Res<SoundBank>>,
     adopted: Option<Res<net::LastAdoptedSnapshot>>,
+    host: assets::HostNamespace,
     mut output: MessageWriter<WeaponSound>,
     mut play: MessageWriter<crate::AliasCommand>,
 ) {
@@ -114,6 +115,7 @@ fn entity_event_sound(
     }
     if event == EntityEventKind::SOUND_ALIAS {
         play_cs_sound_alias(
+            host.get(),
             &sound.event,
             Some(crate::AudioEvent::from_entity(
                 *generation,
@@ -238,6 +240,7 @@ fn entity_event_sound(
 }
 
 fn play_cs_sound_alias(
+    host: asset_core::AssetNamespace,
     payload: &net::DispatchedEntityEvent,
     event: Option<crate::AudioEvent>,
     adopted: Option<&net::LastAdoptedSnapshot>,
@@ -259,16 +262,11 @@ fn play_cs_sound_alias(
         "cs_sound",
         "audio: cs sound `{alias}` local={local}"
     );
-    let (namespace, alias) = alias
-        .split_once(':')
-        .and_then(|(ns, name)| {
-            asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name.to_owned()))
-        })
-        .unwrap_or((asset_core::AssetNamespace::Iw4, alias));
+    let (namespace, name) = crate::aliases::namespace_alias(host, &alias);
     play.write(crate::AliasCommand::Play(PlayAlias {
         event,
         namespace,
-        alias,
+        alias: name.to_owned(),
         fallback: None,
         origin_inches: (!local).then_some(payload.payload.origin),
         snd_ent: if local {
@@ -289,6 +287,7 @@ fn movement_sound(
     mut gear: MessageWriter<WeaponSound>,
     mut play: MessageWriter<crate::AliasCommand>,
     mut land: MessageWriter<LandSound>,
+    host: assets::HostNamespace,
 ) {
     let Ok(identity) = identities.get(sound.entity) else {
         diag::warn!(
@@ -336,7 +335,7 @@ fn movement_sound(
                     &sound.event,
                     0,
                 )),
-                namespace: asset_core::AssetNamespace::Iw4,
+                namespace: host.get(),
                 alias,
                 fallback,
                 origin_inches,
@@ -375,7 +374,7 @@ fn movement_sound(
             &sound.event,
             1,
         )),
-        namespace: asset_core::AssetNamespace::Iw4,
+        namespace: host.get(),
         alias: gear_rattle_alias(gait, player_view).to_owned(),
         origin_inches,
         snd_ent: Some(u32::from(identity.number())),
@@ -423,6 +422,7 @@ impl NotetrackSoundTable {
     }
 
     fn bind(
+        host: asset_core::AssetNamespace,
         bank: &Arc<asset_audio::SoundCatalog>,
         weapons: &Arc<asset_game::WeaponRegistry>,
     ) -> Self {
@@ -453,7 +453,7 @@ impl NotetrackSoundTable {
                     BoundNotetrack {
                         sound,
                         rumble_alias: action.rumble_alias.as_ref().map(|alias| {
-                            if namespace == asset_core::AssetNamespace::Iw4 {
+                            if namespace == host {
                                 alias.clone()
                             } else {
                                 format!("{}:{alias}", namespace.as_str())
@@ -503,6 +503,7 @@ impl NotetrackSoundTable {
 pub(crate) fn bind_notetrack_sounds(
     bank: Option<Res<SoundBank>>,
     weapons: Option<Res<PreparedWeapons>>,
+    host: assets::HostNamespace,
     mut table: ResMut<NotetrackSoundTable>,
 ) {
     let (Some(bank), Some(weapons)) = (bank, weapons) else {
@@ -514,7 +515,7 @@ pub(crate) fn bind_notetrack_sounds(
     if table.owns(&bank.0, &weapons.registry()) {
         return;
     }
-    *table = NotetrackSoundTable::bind(&bank.0, &weapons.registry());
+    *table = NotetrackSoundTable::bind(host.get(), &bank.0, &weapons.registry());
 }
 
 pub(crate) fn play_viewmodel_notetrack_messages(

@@ -28,13 +28,13 @@ pub use missile_guidance::{MissileGuide, MissileTarget};
 mod penetration;
 mod persistent_data;
 mod persistent_defaults;
-pub use persistent_data::{
-    AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES, PersistentDataError, PersistentDataStore,
-};
-pub use persistent_defaults::PlayerDataDefaults;
+pub use persistent_data::{AccountId, AccountSnapshot, PersistentDataError, PersistentDataStore};
+pub use persistent_defaults::{CustomClassesError, PlayerDataDefaults, custom_class_count};
 mod presence;
 mod remote_missile;
 pub mod script;
+mod script_bots;
+pub use script_bots::{ScriptBotRequest, ScriptBotSide};
 mod weapon_lock;
 pub use weapon_lock::WeaponLock;
 pub mod player_anim_script;
@@ -112,15 +112,16 @@ pub const FRIENDLY_BOTS_DVAR: &str = "scr_game_friendlybots";
 
 pub const TEAM_MENU: &str = "team_marinesopfor";
 pub use match_state::{
-    ClassDef, ClassRejectReason, ClientLifecycle, ClientSnapshotMeta,
-    ConfigurationChangeRejectReason, DroppedItemAmmo, EntityEventPayload, EntityEventRecord,
-    EventAudience, EventRecord, GiveRejectReason, HealthRegenCensus, InputReceipt,
-    ItemPickupRecord, KillcamHud, LinkedWeaponView, LoadoutSpec, LocationSelection,
-    MENU_COMMAND_TAIL, MatchEndReason, MenuCommand, MenuCommandKind, PelletFxRecord, PersonalClass,
-    RadarMode, RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur, ScriptControls,
-    ScriptDepthOfField, ScriptDvars, ScriptSeat, SimEvent, SimEventRow, SnapshotMeta,
-    TargetBoxDvar, UNRELIABLE_SIM_EVENT_COUNT, ViewEffects, VisionChange, is_postfx_dvar,
-    sim_event_is_reliable,
+    ClassCatalog, ClassCatalogEntry, ClassCatalogSlot, ClassDef, ClassRejectReason,
+    ClientLifecycle, ClientSnapshotMeta, ConfigurationChangeRejectReason, DroppedItemAmmo,
+    EntityEventPayload, EntityEventRecord, EventAudience, EventRecord, GiveRejectReason,
+    HealthRegenCensus, InputReceipt, ItemPickupRecord, KillcamHud, LinkedWeaponView, LoadoutSpec,
+    LocationSelection, MENU_COMMAND_TAIL, MatchDataDecl, MatchDataError, MatchDataField,
+    MatchDataValue, MatchEndReason, MatchPlayerData, MenuCommand, MenuCommandKind, PelletFxRecord,
+    PersonalClass, RadarMode, RemoteMissile, RngDebugMeta, SIM_EVENT_ROSTER, ScriptBlur,
+    ScriptControls, ScriptDepthOfField, ScriptDvars, ScriptSeat, SimEvent, SimEventRow,
+    SnapshotMeta, TargetBoxDvar, UNRELIABLE_SIM_EVENT_COUNT, ViewEffects, VisionChange,
+    is_postfx_dvar, sim_event_is_reliable,
 };
 pub use player_anim_script::{
     AnimConditions, AnimScriptCommand, AnimScriptCondition, AnimScriptItem, PlayerAnimScript,
@@ -141,8 +142,8 @@ pub use sound_alias_cs::{
 };
 pub use spawn::{
     AuthoredSpawnPoint, HostCheats, HostGameModeSelection, MatchBootstrap, SPAWN_BAD_DIST,
-    SPAWN_IDEAL_DIST, SpawnAttemptReport, SpawnDecision, SpawnReject, host_game_mode_kind,
-    pick_ffa_spawn, spawn_candidate_indices, spawn_candidate_indices_for,
+    SPAWN_IDEAL_DIST, SpawnAttemptReport, SpawnDecision, SpawnReject, SurvivalTeams,
+    host_game_mode_kind, pick_ffa_spawn, spawn_candidate_indices, spawn_candidate_indices_for,
 };
 pub use step::phase_materialize_entity_dobjs;
 

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fastfile_iw4::{
@@ -6,7 +6,9 @@ use fastfile_iw4::{
     load_zone,
 };
 
-use crate::discover::{GamesRoot, find_runtime_zone, find_zone_file, find_zone_file_version};
+use crate::discover::{
+    GamesRoot, ModeZones, RuntimeProfile, find_zone_file, find_zone_file_version,
+};
 use crate::sound_catalog::SoundCatalog;
 use crate::zone::{ZoneMemory, open_zone_shared};
 use crate::zone_sound::{ZoneSoundOrigin, ensure_zone_sound};
@@ -167,34 +169,66 @@ enum Absent {
 
 struct SoundSource {
     namespace: AssetNamespace,
-    name: &'static str,
-    found: Result<std::path::PathBuf, String>,
+    name: String,
+    found: Result<PathBuf, String>,
     merge: Merge,
     absent: Absent,
 }
 
-fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundSource>) {
+fn sound_sources(
+    profile: RuntimeProfile,
+    games: &GamesRoot,
+    map: &Path,
+    mode: Result<&[PathBuf], String>,
+) -> (Vec<SoundSource>, Vec<SoundSource>) {
+    let runtime_namespace = namespace_of_game(profile.game());
     let runtime = |name: &'static str, merge, absent| SoundSource {
-        namespace: AssetNamespace::Iw4,
-        name,
-        found: find_runtime_zone(games, map, name).map(|zone| zone.path),
+        namespace: runtime_namespace,
+        name: name.to_owned(),
+        found: profile
+            .find_runtime_zone(games, map, name)
+            .map(|zone| zone.path),
         merge,
         absent,
     };
     let donor = |namespace, name: &'static str, version| SoundSource {
         namespace,
-        name,
+        name: name.to_owned(),
         found: find_zone_file_version(games, name, version).map(|zone| zone.path),
         merge: Merge::Missing,
         absent: Absent::Skip,
     };
-    let before_map = vec![
+    let mut before_map = vec![
         runtime("code_post_gfx_mp", Merge::Override, Absent::Skip),
         runtime("localized_code_post_gfx_mp", Merge::Override, Absent::Skip),
         runtime("patch_mp", Merge::Override, Absent::Skip),
         runtime("common_mp", Merge::Override, Absent::Gap),
         runtime("localized_common_mp", Merge::Override, Absent::Gap),
     ];
+    // The launch mode's zones load after the runtime's, in their own order,
+    // so an alias one of them carries replaces the runtime's.
+    match mode {
+        Ok(zones) => before_map.extend(zones.iter().map(|path| {
+            SoundSource {
+                namespace: runtime_namespace,
+                name: path
+                    .file_stem()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
+                found: Ok(path.clone()),
+                merge: Merge::Override,
+                absent: Absent::Gap,
+            }
+        })),
+        Err(error) => before_map.push(SoundSource {
+            namespace: runtime_namespace,
+            name: "mode zones".to_owned(),
+            found: Err(error),
+            merge: Merge::Override,
+            absent: Absent::Gap,
+        }),
+    }
     let after_map = vec![
         donor(
             AssetNamespace::Iw5,
@@ -232,10 +266,15 @@ fn sound_sources(games: &GamesRoot, map: &Path) -> (Vec<SoundSource>, Vec<SoundS
             fastfile_t6::ZONE_VERSION_PC,
         ),
     ];
+    let after_map = after_map
+        .into_iter()
+        .filter(|source| source.namespace != runtime_namespace)
+        .collect();
     (before_map, after_map)
 }
 
 pub struct SoundSources {
+    runtime_namespace: AssetNamespace,
     before_map: SoundCatalog,
     after_map: Vec<(SoundSource, Arc<SoundCatalog>)>,
     gaps: Vec<SoundZoneGap>,
@@ -248,9 +287,23 @@ fn origin_label(origin: ZoneSoundOrigin) -> String {
     }
 }
 
-pub fn gather_sound_sources(games: &GamesRoot, map: &Path) -> SoundSources {
-    let (before, after) = sound_sources(games, map);
+/// `mode` is the launch mode's zones, found beside the runtime's `common_mp`
+/// and in their load order.
+pub fn gather_sound_sources(
+    profile: RuntimeProfile,
+    games: &GamesRoot,
+    map: &Path,
+    mode: &[PathBuf],
+) -> SoundSources {
+    gather_sources(sound_sources(profile, games, map, Ok(mode)), profile)
+}
+
+fn gather_sources(
+    (before, after): (Vec<SoundSource>, Vec<SoundSource>),
+    profile: RuntimeProfile,
+) -> SoundSources {
     let mut sources = SoundSources {
+        runtime_namespace: namespace_of_game(profile.game()),
         before_map: SoundCatalog::default(),
         after_map: Vec::new(),
         gaps: Vec::new(),
@@ -280,7 +333,7 @@ impl SoundSources {
                         source.namespace.as_str(),
                         source.name
                     ),
-                    Absent::Gap => self.gap(source.namespace, source.name, error.clone()),
+                    Absent::Gap => self.gap(source.namespace, &source.name, error.clone()),
                 }
                 return None;
             }
@@ -300,7 +353,7 @@ impl SoundSources {
                 Some(catalog)
             }
             Err(error) => {
-                self.gap(source.namespace, source.name, error);
+                self.gap(source.namespace, &source.name, error);
                 None
             }
         }
@@ -322,6 +375,7 @@ pub fn compose_sound_bank(
     map: Result<SoundCatalog, String>,
 ) -> LoadedSoundBank {
     let SoundSources {
+        runtime_namespace,
         before_map,
         after_map,
         gaps,
@@ -339,9 +393,12 @@ pub fn compose_sound_bank(
                 map.rawfiles.len(),
                 map.sounds.len()
             );
-            match namespace {
-                AssetNamespace::Iw4 => bank.catalog.absorb_unresolved(map),
-                _ => bank.catalog.absorb_missing_aliases_unresolved(map),
+            // A map of the runtime game overrides its base zones; a map
+            // from another game only fills what they lack.
+            if namespace == runtime_namespace {
+                bank.catalog.absorb_unresolved(map);
+            } else {
+                bank.catalog.absorb_missing_aliases_unresolved(map);
             }
         }
         Err(error) => bank.gap(namespace, zone, error),
@@ -366,9 +423,23 @@ pub fn compose_sound_bank(
     bank
 }
 
-pub fn load_mp_sound_bank(games: &GamesRoot, zone: &str) -> Result<LoadedSoundBank, String> {
+pub fn load_mp_sound_bank(
+    profile: RuntimeProfile,
+    games: &GamesRoot,
+    zone: &str,
+    mode: &ModeZones,
+) -> Result<LoadedSoundBank, String> {
     let zone_ff = find_zone_file(games, zone)?;
-    let sources = gather_sound_sources(games, &zone_ff.path);
+    let mode = profile.find_mode_zones(games, &zone_ff.path, mode);
+    let sources = gather_sources(
+        sound_sources(
+            profile,
+            games,
+            &zone_ff.path,
+            mode.as_deref().map_err(Clone::clone),
+        ),
+        profile,
+    );
     let namespace =
         crate::zone_game_for_path(&zone_ff.path).map_or(AssetNamespace::Iw4, namespace_of_game);
     let (map, _) = ensure_zone_sound(&zone_ff.path);

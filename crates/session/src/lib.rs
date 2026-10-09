@@ -25,7 +25,8 @@ pub use lifecycle::{
     SessionSwapTarget, TeardownGaps, TeardownRequest,
 };
 pub use loadout::{
-    AuthoritativeClassProjection, ClassRow, perk_catalog_id, project_class, resolve_class_weapon,
+    AuthoritativeClassProjection, ClassRow, authored_class_slot, class_catalog, project_class,
+    resolve_class_weapon, weapon_loadout_rules,
 };
 pub use local_arm::{
     arm_local_from_presented, join_local_on_class_select, sync_prediction_metrics_to_probe,

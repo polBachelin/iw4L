@@ -30,6 +30,7 @@ pub fn load_match_material_seed(
 }
 
 pub fn apply_match_material_map(
+    profile: asset_transport::RuntimeProfile,
     seed: &MatchMaterialSeed,
     zone_ff: &Path,
     progress: &LoadProgress,
@@ -37,7 +38,7 @@ pub fn apply_match_material_map(
     let mut report = Vec::new();
     let runtime = games_root_from_env()
         .ok()
-        .and_then(|root| find_runtime_common_mp(&root, zone_ff).ok());
+        .and_then(|root| profile.find_common_mp(&root, zone_ff).ok());
     let (foreign, foreign_report) = walk_foreign_material_population(
         Some(zone_ff),
         runtime.as_ref().map(|found| found.path.as_path()),
@@ -62,11 +63,12 @@ pub fn apply_match_material_map(
 }
 
 pub fn load_match_material_catalog(
+    profile: asset_transport::RuntimeProfile,
     zone_ff: &Path,
     progress: &LoadProgress,
 ) -> Result<(MaterialCatalog, Vec<String>), String> {
     let (seed, mut report) = load_match_material_seed(progress)?;
-    let (catalog, map_report) = apply_match_material_map(&seed, zone_ff, progress);
+    let (catalog, map_report) = apply_match_material_map(profile, &seed, zone_ff, progress);
     report.extend(map_report);
     Ok((catalog, report))
 }
@@ -959,19 +961,14 @@ pub(super) async fn walk_startup_material_zones(
             crate::ScriptSources::default(),
         );
     };
-    let games = games_root_from_env().ok();
-
+    // The anchor is the runtime common_mp, so its tree is the runtime profile:
+    // the startup zones are the ones beside it.
     let opened = STARTUP_ZONES
         .map(|zone| {
-            let games = games.clone();
             let map_path = map_path.clone();
             let progress = progress.clone();
             load_pool().spawn(async move {
-                let found = match &games {
-                    Some(root) => find_runtime_zone(root, &map_path, zone),
-                    None => find_zone_for_tree(&map_path, zone),
-                };
-                found.and_then(|found| {
+                find_zone_for_tree(&map_path, zone).and_then(|found| {
                     let stage = progress.begin_scoped(StageId::CommonAssets, zone, None);
                     let image = open_zone_shared(&found.path)
                         .map(|image| (found.path, image))
@@ -1037,7 +1034,9 @@ pub(super) async fn walk_startup_material_zones(
 }
 
 pub(super) fn load_localized_strings_beside(
+    profile: asset_transport::RuntimeProfile,
     zone_ff: &std::path::Path,
+    mode: &[PathBuf],
     report: &mut Vec<String>,
     stage: &asset_transport::progress::StageHandle,
 ) -> LocalizeCatalog {
@@ -1049,7 +1048,7 @@ pub(super) fn load_localized_strings_beside(
             return catalog;
         }
     };
-    let lanes: [(asset_core::AssetNamespace, u32, &[&str]); 4] = [
+    let mut lanes: [(asset_core::AssetNamespace, u32, &[&str]); 4] = [
         (
             asset_core::AssetNamespace::Iw4,
             fastfile_iw4::ZONE_VERSION_PC,
@@ -1071,11 +1070,35 @@ pub(super) fn load_localized_strings_beside(
             &[],
         ),
     ];
-    let runtime_language = find_runtime_common_mp(&root, zone_ff)
+    // The runtime game's strings are absorbed first, so its text wins a key
+    // every other lane also carries.
+    let runtime_namespace = asset_core::AssetNamespace::from_zone_game(profile.game());
+    lanes.sort_by_key(|(namespace, _, _)| *namespace != runtime_namespace);
+    let runtime_language = profile
+        .find_common_mp(&root, zone_ff)
         .ok()
         .and_then(|zone| zone.path.parent()?.file_name()?.to_str().map(str::to_owned));
     let mut plan = Vec::new();
     for (namespace, version, names) in lanes {
+        // A key keeps the text of the first zone that carries it, and the
+        // mode's zones load after the runtime's, last one winning: so they
+        // are read first, last one first.
+        if namespace == runtime_namespace {
+            plan.extend(mode.iter().rev().map(|path| {
+                (
+                    namespace,
+                    asset_transport::ZoneFile {
+                        path: path.clone(),
+                        zone_name: path
+                            .file_stem()
+                            .unwrap_or(path.as_os_str())
+                            .to_string_lossy()
+                            .into_owned(),
+                        alias_note: None,
+                    },
+                )
+            }));
+        }
         let found: Vec<_> = if matches!(
             namespace,
             asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6
@@ -1098,8 +1121,8 @@ pub(super) fn load_localized_strings_beside(
             names
                 .iter()
                 .filter_map(|name| {
-                    if namespace == asset_core::AssetNamespace::Iw4 {
-                        find_runtime_zone(&root, zone_ff, name)
+                    if namespace == runtime_namespace {
+                        profile.find_runtime_zone(&root, zone_ff, name)
                     } else {
                         find_zone_file_version(&root, name, version)
                     }

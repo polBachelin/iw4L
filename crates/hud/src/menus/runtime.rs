@@ -7,6 +7,9 @@ use super::state::{EditState, ItemState, OpenMenu, ScriptMenus};
 use super::{DVAR_FOCUS, MAX_SCRIPT_DEPTH, choice_index, is_focusable, item_rect};
 use crate::expr_cache::MenuExprCache;
 use crate::playercard::UiLocalVars;
+/// The key code `uiscript simulateKeyPress` names escape by.
+const KEY_ESCAPE: i32 = 27;
+
 pub(crate) struct Runner<'a, 'w> {
     pub(crate) catalog: &'a MenuCatalog,
     pub(crate) world: &'a MenuWorld<'w>,
@@ -24,7 +27,28 @@ impl Runner<'_, '_> {
     }
 
     pub(crate) fn eval(&mut self, menu: &str, dump: &str) -> Option<hud_iw4::Operand> {
-        let def = self.catalog.get(menu)?;
+        match self.try_eval(menu, dump) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.report_failure(menu, &err);
+                None
+            }
+        }
+    }
+
+    /// An expression of `menu` that fails takes its false branch or leaves
+    /// its value unset: said once per menu and failure, not every frame.
+    fn report_failure(&mut self, menu: &str, err: &hud_iw4::ExprError) {
+        if self.menus.reported.insert(format!("expr {menu} {err:?}")) {
+            diag::warn!(Ui, "menu {menu}: expression failed {err:?}");
+        }
+    }
+
+    fn try_eval(&mut self, menu: &str, dump: &str) -> Result<hud_iw4::Operand, hud_iw4::ExprError> {
+        let def = self
+            .catalog
+            .get(menu)
+            .ok_or(hud_iw4::ExprError::Host("menu not loaded"))?;
         let open = self.menus.open_names();
         let focus_rect = self
             .menus
@@ -42,12 +66,24 @@ impl Runner<'_, '_> {
             open: &open,
             focus_rect,
         };
-        match self.exprs.evaluate(dump, &host) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                diag::debug!(Ui, "menu {menu}: expression failed {err:?}");
-                None
-            }
+        self.exprs.evaluate(dump, &host)
+    }
+
+    /// A command argument's value: an inline call is evaluated now. A call
+    /// that fails leaves the command unrun, and says so.
+    fn value(&mut self, menu: &str, arg: script::Arg) -> Option<String> {
+        match arg {
+            script::Arg::Text(text) => Some(text),
+            script::Arg::Call(dump) => match self.try_eval(menu, &dump) {
+                Ok(value) => Some(hud_iw4::expr::source_str(&value)),
+                Err(err) => {
+                    diag::warn!(
+                        Ui,
+                        "menu {menu}: argument `{dump}` failed {err:?}, command not run"
+                    );
+                    None
+                }
+            },
         }
     }
 
@@ -114,6 +150,9 @@ impl Runner<'_, '_> {
             Command::Close(name) => self.close(&target(&name)),
             Command::Escape(name) => self.escape(&target(&name)),
             Command::SetFocus(name) => {
+                let Some(name) = self.value(menu, name) else {
+                    return;
+                };
                 let Some(def) = self.def(menu) else {
                     return;
                 };
@@ -141,14 +180,28 @@ impl Runner<'_, '_> {
             Command::Hide(name) => self.each_item(menu, item, &name, |state| state.hidden = true),
             Command::Play(alias) => self.menus.sounds.push(alias),
             Command::ScriptMenuResponse(response) => {
-                self.menus.responses.push((menu.to_owned(), response));
+                if let Some(response) = self.value(menu, response) {
+                    self.menus.responses.push((menu.to_owned(), response));
+                }
             }
             Command::Exec(text) => self.exec(text),
             Command::CopyDvar(name, source) => {
                 let value = self.dvar(&source).unwrap_or_default().to_owned();
                 self.dvars.set(&name, value);
             }
-            Command::SetDvar(name, value) => self.set_dvar(&name, &value),
+            Command::SetDvar(name, value) => {
+                if let Some(value) = self.value(menu, value) {
+                    self.set_dvar(&name, &value);
+                }
+            }
+            Command::SimulateKeyPress(KEY_ESCAPE) => {
+                if let Some(top) = self.menus.input_menu().map(|m| m.name.clone()) {
+                    self.escape(&top);
+                }
+            }
+            Command::SimulateKeyPress(key) => {
+                diag::debug!(Ui, "menu {menu}: simulated key {key} not run");
+            }
             Command::ExecOnDvarIntValue {
                 dvar,
                 value,
@@ -212,6 +265,9 @@ impl Runner<'_, '_> {
                         self.close(&target(&target_menu));
                     }
                 }
+            }
+            Command::BadCall(problem) => {
+                diag::warn!(Ui, "menu {menu}: script command not run, {problem}");
             }
             Command::Unhandled(name) => {
                 diag::debug!(Ui, "menu {menu}: script command `{name}` not run");
@@ -367,6 +423,15 @@ impl Runner<'_, '_> {
         {
             self.focus_step(&name, 1, true);
         }
+    }
+
+    pub(crate) fn open_root(&mut self) {
+        let catalog = self.catalog;
+        if catalog.root_menu.is_empty() {
+            diag::warn!(Ui, "menu open: no frontend installed a root menu");
+            return;
+        }
+        self.open(&catalog.root_menu);
     }
 
     pub(crate) fn close(&mut self, name: &str) {
@@ -583,14 +648,46 @@ impl Runner<'_, '_> {
             focus_rect: None,
         };
         let mut out = Vec::new();
+        let mut failures = Vec::new();
+        let mut gated = Vec::new();
         for (index, item) in def.items.iter().enumerate() {
             if hidden.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            let enabled = item.disabled_exp.is_empty()
-                || matches!(self.exprs.is_true(&item.disabled_exp, &host), Ok(false));
-            if enabled && matches!(self.exprs.is_true(&item.vis_exp, &host), Ok(true)) {
+            let disabled = if item.disabled_exp.is_empty() {
+                Ok(false)
+            } else {
+                self.exprs.is_true(&item.disabled_exp, &host)
+            };
+            if let Err(err) = &disabled {
+                failures.push(err.clone());
+            }
+            if !item.disabled_exp.is_empty() {
+                gated.push((index, disabled.as_ref().map_or(true, |d| *d)));
+            }
+            if matches!(disabled, Ok(false))
+                && matches!(self.exprs.is_true(&item.vis_exp, &host), Ok(true))
+            {
                 out.push(index);
+            }
+        }
+        for err in failures {
+            self.report_failure(menu, &err);
+        }
+        if let Some(open) = self.menus.get_mut(menu) {
+            for (index, disabled) in gated {
+                let Some(state) = open.items.get_mut(index) else {
+                    continue;
+                };
+                if state.disabled != Some(disabled) {
+                    state.disabled = Some(disabled);
+                    diag::info!(
+                        Ui,
+                        "menu {menu}: item {index} `{}` {}",
+                        def.items[index].name,
+                        if disabled { "disabled" } else { "enabled" }
+                    );
+                }
             }
         }
         out

@@ -184,6 +184,7 @@ fn present_tracker_light(
     mut host: ResMut<HostFxSystem>,
     fx_world: FxSceneAccess,
     mut light: Local<TrackerLight>,
+    host_namespace: assets::HostNamespace,
 ) {
     const EFFECT: &str = "misc/light_motion_tracker";
     let owner = presented.snapshot().and_then(|snapshot| {
@@ -215,7 +216,7 @@ fn present_tracker_light(
         &mut host.0,
         &catalog.0,
         &elem_infos.0,
-        asset_game::FxName::engine(EFFECT),
+        asset_game::FxName::new(host_namespace.get(), EFFECT),
         target,
         fx_world.view().as_ref().map(|scene| scene as &dyn FxScene),
     )
@@ -329,6 +330,7 @@ fn tick_fx_non_dependent_update(
     fx_world: FxSceneAccess,
     mut post_lights: ResMut<HostFxPostLights>,
     mut aliases: MessageWriter<audio::AliasCommand>,
+    host_namespace: assets::HostNamespace,
 ) {
     let msec = host.0.msec_now;
     let clip_world = prediction
@@ -362,7 +364,7 @@ fn tick_fx_non_dependent_update(
         };
         aliases.write(audio::AliasCommand::Play(audio::PlayAlias {
             event: None,
-            namespace: asset_core::AssetNamespace::Iw4,
+            namespace: host_namespace.get(),
             alias: alias.to_owned(),
             fallback: Some(fallback.to_owned()),
             origin_inches: Some(ev.origin),
@@ -394,7 +396,7 @@ fn tick_fx_non_dependent_update(
                 &mut host.0,
                 &catalog.0,
                 &elem_infos.0,
-                asset_game::FxName::engine(name),
+                asset_game::FxName::new(host_namespace.get(), name),
                 ev.origin,
                 axis,
                 scene,
@@ -406,7 +408,7 @@ fn tick_fx_non_dependent_update(
                     &mut host.0,
                     &catalog.0,
                     &elem_infos.0,
-                    asset_game::FxName::engine(fallback),
+                    asset_game::FxName::new(host_namespace.get(), fallback),
                     ev.origin,
                     axis,
                     scene,
@@ -3295,6 +3297,7 @@ fn melee_blood(
     mut host: ResMut<HostFxSystem>,
     mut cursor: ResMut<FxJournalCursor>,
     fx_world: FxSceneAccess,
+    host_namespace: assets::HostNamespace,
 ) {
     let (view, settings) = view_settings;
     let payload = hit.event.payload;
@@ -3338,7 +3341,10 @@ fn melee_blood(
         &mut host.0,
         &catalog.0,
         &mut elem_infos.0,
-        Some(asset_game::FxName::engine("impacts/flesh_hit_knife")),
+        Some(asset_game::FxName::new(
+            host_namespace.get(),
+            "impacts/flesh_hit_knife",
+        )),
         target,
         &mut played,
         fx_world.view().as_ref().map(|s| s as &dyn FxScene),

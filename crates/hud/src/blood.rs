@@ -65,7 +65,9 @@ pub(crate) fn update_blood_overlay(
     mut started: MessageReader<LifeStarted>,
     view: Res<ViewSubject>,
     ui_draw: Option<Res<UiDraw>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     *job = BloodGpuJob::Idle;
     for ev in started.read() {
         if ev.client == local.0.0 {
@@ -144,7 +146,7 @@ pub(crate) fn update_blood_overlay(
     };
 
     let Some(color) = hud_images.get_sampled_with_sampler(
-        crate::images::HUD_CHROME_NAMESPACE,
+        chrome,
         BLOOD_OVERLAY_COLOR,
         HudSampling::Data,
         Some(binding.color_sampler),
@@ -158,7 +160,7 @@ pub(crate) fn update_blood_overlay(
         return;
     };
     let Some(mask) = hud_images.get_sampled_with_sampler(
-        crate::images::HUD_CHROME_NAMESPACE,
+        chrome,
         BLOOD_OVERLAY_MASK,
         HudSampling::Data,
         Some(binding.mask_sampler),
@@ -175,7 +177,7 @@ pub(crate) fn update_blood_overlay(
     gaps.clear(HudGap::BloodOverlay);
     let list = Draw2dList {
         cmds: vec![Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: 0.0,
             y: 0.0,
             w: win_w,

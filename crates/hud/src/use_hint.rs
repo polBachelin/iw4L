@@ -36,7 +36,9 @@ pub(crate) fn update(
     time: Res<Time>,
     mut memory: Local<HintMemory>,
     view: Option<Res<frame::ViewSubject>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     pass.use_hint = TessJob::Hide;
     if !surface.is_ready()
         || input.script_menu_open
@@ -221,7 +223,7 @@ pub(crate) fn update(
     let mut color = item.fore_color;
     color[3] *= alpha;
     let mut cmds = vec![Draw2dCmd {
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+        material_namespace: chrome,
         x: rect.x,
         y: rect.y,
         w: rect.w,

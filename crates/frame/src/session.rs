@@ -315,7 +315,9 @@ impl ViewSubject {
     }
 }
 
-#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+/// The classes the host offers. Empty until the class store publishes them;
+/// the match then falls back to the game's authored defaults.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostClassLoadouts {
     pub slots: Vec<HostClassSlot>,
 }
@@ -333,18 +335,8 @@ pub struct HostClassSlot {
 
     pub deathstreak: String,
     pub camos: [String; 2],
-}
-
-impl Default for HostClassLoadouts {
-    fn default() -> Self {
-        Self {
-            slots: crate::showcase_classes()
-                .iter()
-                .take(5)
-                .map(HostClassSlot::from)
-                .collect(),
-        }
-    }
+    /// Primary and secondary weapon buff (MW3 proficiency), empty for none.
+    pub weapon_buffs: [String; 2],
 }
 
 #[derive(Resource, Clone, Debug, Default)]

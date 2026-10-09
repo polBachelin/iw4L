@@ -21,6 +21,14 @@ The host burst cooldown remains 200 ms across sources. Presentation facts carry
 camera, alternate, dual, shield, overlay and event policies without reinterpreting
 capture classifications. Loadout labels/archive hints are prepared by asset_game.
 
+A row's identity is its asset name less `_mp`, so an asset and its `_mp`
+spelling merge (first capture wins, a later zone's row replaces the whole row).
+Its script name, what GSC and the sim call it by, is the captured asset's own
+spelling: `iw5_ak47_mp`, but `sentry_minigun_so` or `remote_missile_detonator`.
+A row with no captured asset (a configuration) falls back to the `_mp`
+spelling of its bare name. The spelling a merge drops (survival's `claymore`
+under MP's `claymore_mp`) does not resolve.
+
 `BoundWeapon::preparation` retains source keys and per-component targets/refusals.
 T6 models, clips, cues and materials retain T6 source and storage identity.
 Missing native dependencies refuse their dependent capabilities; source weapon

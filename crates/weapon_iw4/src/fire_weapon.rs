@@ -3,6 +3,9 @@ pub const WEAPTYPE_GRENADE: i32 = 1;
 pub const WEAPTYPE_PROJECTILE: i32 = 2;
 pub const WEAPTYPE_SHIELD: i32 = 3;
 
+pub const WEAPCLASS_SNIPER: i32 = 1;
+pub const WEAPCLASS_MG: i32 = 2;
+pub const WEAPCLASS_SMG: i32 = 3;
 pub const WEAPCLASS_GRENADE: i32 = 6;
 pub const WEAPCLASS_SPREAD: i32 = 4;
 pub const WEAPCLASS_TURRET: i32 = 8;
@@ -32,6 +35,33 @@ pub const HITLOC_NAMES: [&str; HITLOC_COUNT] = [
     "left_foot",
     "gun",
     "shield",
+];
+
+/// The means of death scripts name damage by (`MOD_*`).
+pub const MEANS_OF_DEATH: [&str; 23] = [
+    "MOD_UNKNOWN",
+    "MOD_PISTOL_BULLET",
+    "MOD_RIFLE_BULLET",
+    "MOD_EXPLOSIVE_BULLET",
+    "MOD_GRENADE",
+    "MOD_GRENADE_SPLASH",
+    "MOD_PROJECTILE",
+    "MOD_PROJECTILE_SPLASH",
+    "MOD_MELEE",
+    "MOD_HEAD_SHOT",
+    "MOD_CRUSH",
+    "MOD_FALLING",
+    "MOD_SUICIDE",
+    "MOD_TRIGGER_HURT",
+    "MOD_EXPLOSIVE",
+    "MOD_IMPACT",
+    "MOD_BURNED",
+    "MOD_GAS",
+    "MOD_HIT_BY_OBJECT",
+    "MOD_BAYONET",
+    "MOD_TELEFRAG",
+    "MOD_ARTILLERY",
+    "MOD_DOGS",
 ];
 
 pub const WEAPCLASS_PISTOL: i32 = 5;

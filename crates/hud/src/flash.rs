@@ -59,7 +59,9 @@ pub(crate) fn update_flash_whiteout(
     generation: Option<Res<frame::WorldGeneration>>,
     effects: Res<frame::ScreenEffectsView>,
     mut gpu_frame: ResMut<crate::gpu_list::HudTessGpuFrame>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     *job = FlashGpuJob::Idle;
     for ev in started.read() {
         if ev.client == local.0.0 {
@@ -129,11 +131,7 @@ pub(crate) fn update_flash_whiteout(
     }
     let win_w = surface.width();
     let win_h = surface.height();
-    let Some(color) = hud_images.get(
-        crate::images::HUD_CHROME_NAMESPACE,
-        FLASH_WHITE_IMAGE,
-        &mut images,
-    ) else {
+    let Some(color) = hud_images.get(chrome, FLASH_WHITE_IMAGE, &mut images) else {
         gaps.raise(GapCause::FlashWhiteoutImageMissing {
             name: FLASH_WHITE_IMAGE.to_owned(),
             miss: hud_images.miss_reason(),
@@ -147,7 +145,7 @@ pub(crate) fn update_flash_whiteout(
     }
     let full_screen = |alpha: f32, site: &'static str| Draw2dList {
         cmds: vec![Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: 0.0,
             y: 0.0,
             w: win_w,

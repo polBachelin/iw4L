@@ -425,8 +425,20 @@ impl WeaponRegistry {
             row.facts.reload_add_time_ms = reload.reload_add_time_ms;
             row.facts.reload_start_add_time_ms = reload.reload_start_add_time_ms;
         }
+        // An attachment's map names only the notes its own clips add (the m203
+        // reload still fires the base `weap_m4carbine_clipout_plr`), so the base
+        // map answers every note the override leaves out.
         if let Some(notetracks) = self.select_iw5_notetrack_override(base_id, native) {
+            let base = std::mem::take(&mut row.sounds.notetrack_sound_map);
             row.sounds.notetrack_sound_map = notetracks.sound_map.clone();
+            row.sounds
+                .notetrack_sound_map
+                .extend(base.into_iter().filter(|(note, _)| {
+                    !notetracks
+                        .sound_map
+                        .iter()
+                        .any(|(own, _)| own.eq_ignore_ascii_case(note))
+                }));
         }
         Some(row)
     }

@@ -19,6 +19,7 @@ pub enum ClientLifecycle {
 mod client_view;
 mod events;
 mod loadout;
+mod player_data;
 mod snapshot_meta;
 
 pub use client_view::{
@@ -31,16 +32,14 @@ pub use events::{
     SIM_EVENT_ROSTER, SimEvent, SimEventRow, UNRELIABLE_SIM_EVENT_COUNT, sim_event_is_reliable,
 };
 pub use loadout::{
-    CLASS_CATALOG_DEATHSTREAKS, CLASS_CATALOG_PERKS, ClassDef, ClassRejectReason,
-    ConfigurationChangeRejectReason, GiveRejectReason, IW4_CAMOS, LoadoutSpec,
-    PERSONAL_CLASS_SLOTS, PersonalClass, iw4_camo_index,
+    ClassCatalog, ClassCatalogEntry, ClassCatalogSlot, ClassDef, ClassRejectReason,
+    ConfigurationChangeRejectReason, GiveRejectReason, LoadoutSpec, PERSONAL_CLASS_SLOTS,
+    PersonalClass, weapon_attachment_limit,
 };
-pub fn class_catalog_perk_name(id: u32) -> Option<&'static str> {
-    CLASS_CATALOG_PERKS
-        .get(id.checked_sub(1)? as usize)
-        .copied()
-}
 
+pub use player_data::{
+    MatchDataDecl, MatchDataError, MatchDataField, MatchDataValue, MatchPlayerData,
+};
 pub use snapshot_meta::{
     ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
     TargetBoxDvar,
@@ -139,6 +138,7 @@ pub struct ClientMatchState {
     pub(crate) player_card_title: u32,
     pub(crate) player_card_nameplate: u32,
     pub(crate) client_dvars: Vec<(String, String)>,
+    pub(crate) player_data: MatchPlayerData,
     pub(crate) shellshock: Option<hud_iw4::ShockParams>,
     pub(crate) view_effects: ViewEffects,
     pub(crate) menu_commands: Vec<MenuCommand>,
@@ -255,6 +255,7 @@ impl ClientMatchState {
             player_card_title: self.player_card_title,
             player_card_nameplate: self.player_card_nameplate,
             client_dvars: self.client_dvars.clone(),
+            player_data: self.player_data.clone(),
             shellshock: self.shellshock.clone(),
             view_effects: self.view_effects.clone(),
             menu_commands: self.menu_commands.clone(),
@@ -312,40 +313,10 @@ impl ClientMatchState {
         self.player_card_title = meta.player_card_title;
         self.player_card_nameplate = meta.player_card_nameplate;
         self.client_dvars = meta.client_dvars.clone();
+        self.player_data = meta.player_data.clone();
         self.shellshock = meta.shellshock.clone();
         self.view_effects = meta.view_effects.clone();
         self.menu_commands = meta.menu_commands.clone();
         self.location_selection = meta.location_selection.clone();
-    }
-}
-
-pub fn perk_table_code_from_class_catalog(id: u32) -> u32 {
-    match id {
-        1 => 6,
-        2 => 2,
-        3 => 9,
-        4 => 7,
-        5 => 3,
-        6 => 8,
-        7 => 14,
-        8 => 1,
-        9 => 10,
-        10 => 11,
-        11 => 12,
-        12 => 5,
-        13 => 4,
-        14 => 13,
-        15 => 15,
-        16 => 16,
-        _ => 0,
-    }
-}
-
-pub fn perk_slot_from_class_catalog(id: u32) -> Option<usize> {
-    match id {
-        2 | 5 | 8 | 12 | 13 => Some(0),
-        1 | 3 | 4 | 6 | 9 => Some(1),
-        7 | 10 | 11 | 14 | 15 | 16 => Some(2),
-        _ => None,
     }
 }

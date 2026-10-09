@@ -1,0 +1,12 @@
+precision_airstrike,airstrike,,,
+remote_missile,predator,,,
+sentry,sentry,sentry_minigun,,
+sentry_gl,sentry,sentry_grenade_launcher,,
+ammo,ammo,,,
+fraggrenade,grenade,,,
+flash_grenade,grenade,,,
+claymore,explosive,,5,1
+c4,explosive,,5,2
+rpg_survival,launcher,,2,
+armor,armor,,,
+laststand,laststand,,1,

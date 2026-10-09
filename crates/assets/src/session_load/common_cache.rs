@@ -4,19 +4,27 @@ static NEXT_COMMON_PROFILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic:
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommonKey {
+    pub(super) profile: asset_transport::RuntimeProfile,
     pub(super) runtime: Option<PathBuf>,
     pub(super) foreign: Option<PathBuf>,
+    /// The launch mode's zones, walked after `common_mp` in this order: a set
+    /// prepared for one mode is never the set of another.
+    pub(super) mode: Vec<PathBuf>,
 }
 
 impl CommonKey {
     pub(super) fn for_match(
+        profile: asset_transport::RuntimeProfile,
         zone_ff: Option<&Path>,
         runtime: Option<&Path>,
+        mode: &[PathBuf],
         report: &mut Vec<String>,
     ) -> Self {
         Self {
+            profile,
             runtime: runtime.map(Path::to_path_buf),
             foreign: resolve_foreign_material_donor(zone_ff, runtime, report),
+            mode: mode.to_vec(),
         }
     }
 
@@ -29,8 +37,10 @@ impl CommonKey {
             }
         };
         Self {
+            profile: asset_transport::RuntimeProfile::Iw4,
             runtime,
             foreign: None,
+            mode: Vec::new(),
         }
     }
 }
@@ -43,6 +53,10 @@ impl std::fmt::Display for CommonKey {
         }
         if let Some(foreign) = &self.foreign {
             write!(f, " + {}", foreign.display())?;
+        }
+        if !self.mode.is_empty() {
+            let stems: Vec<_> = self.mode.iter().map(|zone| zone_stem(zone)).collect();
+            write!(f, " + mode [{}]", stems.join(" "))?;
         }
         Ok(())
     }
@@ -63,6 +77,7 @@ pub(super) struct CommonCounts {
 
 #[derive(Clone)]
 pub(super) struct CommonProducts {
+    pub(super) runtime_namespace: Option<asset_core::AssetNamespace>,
     pub(super) scripts: crate::ScriptSources,
     pub(super) t5_scene_models: asset_world::MapXModelSceneCatalog,
     pub(super) material_seed: MaterialCatalog,
@@ -348,6 +363,24 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         })
     };
 
+    // The launch mode's zones open beside common_mp and are walked after it,
+    // in their order, each laid over what the zones before it left.
+    let mode_open: Vec<_> = key
+        .mode
+        .iter()
+        .cloned()
+        .map(|path| {
+            let progress = progress.clone();
+            pool.spawn(async move {
+                let zone = zone_stem(&path);
+                let stage = progress.begin_scoped(StageId::CommonAssets, zone.clone(), None);
+                let opened = open_zone_shared(&path);
+                finish_zone_open(stage, &opened);
+                (zone, path, opened)
+            })
+        })
+        .collect();
+
     let t5_common_prep = {
         let anchor = anchor.clone();
         let progress = progress.clone();
@@ -359,13 +392,16 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     };
     let localize_walk = {
         let anchor = anchor.clone();
+        let profile = key.profile;
+        let mode = key.mode.clone();
         let progress = progress.clone();
         pool.spawn(async move {
             let mut report = Vec::new();
             let strings = match &anchor {
                 Some(path) => {
                     let stage = progress.begin(StageId::Localization, None);
-                    let catalog = load_localized_strings_beside(path, &mut report, &stage);
+                    let catalog =
+                        load_localized_strings_beside(profile, path, &mode, &mut report, &stage);
                     stage.done();
                     catalog
                 }
@@ -479,6 +515,32 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         Some((path, Ok(image))) => {
             let mut census =
                 lane(image.game).load_common_mp(&path, &image, &progress, true, material_seed);
+            // patch_mp loads after common_mp, so its scripts win.
+            census.scripts.overlay(std::mem::take(&mut scripts));
+            for task in mode_open {
+                let (zone, mode_path, opened) = task.await;
+                let gap = match opened {
+                    Ok(mode_image) if mode_image.game == asset_core::ZoneGame::Iw5 => {
+                        let seed = std::mem::take(&mut census.material_population);
+                        let later =
+                            crate::lane::load_mode_zone(&mode_path, &mode_image, &progress, seed);
+                        let line = census.overlay(&zone, later);
+                        census.report.push(line);
+                        continue;
+                    }
+                    Ok(mode_image) => format!(
+                        "mode zone gap: {zone} at {} is {}; only IW5 mode zones are walked",
+                        mode_path.display(),
+                        mode_image.game.prefix()
+                    ),
+                    Err(error) => format!(
+                        "mode zone gap: {zone}: open {}: {error}",
+                        mode_path.display()
+                    ),
+                };
+                diag::warn!(World, "{gap}");
+                census.report.push(gap);
+            }
             fpv_plan = census.pending_images.take().filter(|plan| !plan.is_empty());
             shared_surfaces = census.shared_surfaces;
             common_scene_models = census.scene_models;
@@ -491,12 +553,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             s1_common_bytes = census.s1_common_bytes;
             teamsets.extend(census.teamsets);
             common_film_visions = census.film_visions;
-            // patch_mp loads after common_mp, so its scripts win.
-            scripts = {
-                let mut ordered = census.scripts;
-                ordered.overlay(std::mem::take(&mut scripts));
-                ordered
-            };
+            scripts = census.scripts;
             iw4_census_stats = census.cac_tables;
             (
                 census.weapons,
@@ -523,7 +580,10 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             asset_game::FxModelCatalog::default(),
             None,
             material_seed,
-            vec![format!("common_mp models: open zone: {error}")],
+            [format!("common_mp models: open zone: {error}")]
+                .into_iter()
+                .chain(mode_zones_unwalked(&key.mode))
+                .collect(),
         ),
         None => (
             asset_game::WeaponBuild::default(),
@@ -536,7 +596,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             asset_game::FxModelCatalog::default(),
             None,
             material_seed,
-            Vec::new(),
+            mode_zones_unwalked(&key.mode).into_iter().collect(),
         ),
     };
     common_report.append(&mut common_walk_report);
@@ -550,6 +610,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     player_anim_sources.compile();
     common_report.push(player_anim_sources.compile_report_line());
     common_report.push(player_anim_sources.parse_report_line());
+    common_report.push(player_anim_sources.types_report_line());
 
     let (bundle, bundle_images, mut iw5_report) = match (iw5_weapon_walk.take(), shared_bundle) {
         (Some(task), _) => task.await,
@@ -778,6 +839,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         id: NEXT_COMMON_PROFILE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         key,
         products: CommonProducts {
+            runtime_namespace,
             scripts,
             t5_scene_models,
             material_seed,
@@ -865,6 +927,25 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         })
         .detach();
     set
+}
+
+/// The mode's zones lay over common_mp's census; with no common_mp walked
+/// there is nothing to lay them over, and the report says so.
+fn mode_zones_unwalked(mode: &[PathBuf]) -> Option<String> {
+    (!mode.is_empty()).then(|| {
+        let stems: Vec<_> = mode.iter().map(|zone| zone_stem(zone)).collect();
+        format!(
+            "mode zone gap: [{}] not walked: no common_mp census to lay them over",
+            stems.join(" ")
+        )
+    })
+}
+
+fn zone_stem(path: &Path) -> String {
+    path.file_stem()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn walk_iw5_startup(donor: &Path, progress: &LoadProgress) -> crate::lane::MaterialPopulation {

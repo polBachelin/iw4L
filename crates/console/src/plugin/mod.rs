@@ -249,12 +249,31 @@ fn drain_startup_queue(
     }
 }
 
+/// The clock console and menu `wait`s count: the game's, so a wait under slow
+/// motion lasts that much game time. A paused game has no time to count, so
+/// while it is paused they count wall time and the console keeps running.
+#[derive(bevy::ecs::system::SystemParam)]
+struct WaitClock<'w> {
+    game: Res<'w, Time<Virtual>>,
+    real: Res<'w, Time<Real>>,
+}
+
+impl WaitClock<'_> {
+    fn delta_secs(&self) -> f32 {
+        if self.game.is_paused() {
+            self.real.delta_secs()
+        } else {
+            self.game.delta_secs()
+        }
+    }
+}
+
 fn dispatch_menu_commands(
     mut incoming: MessageReader<frame::UiExecCommand>,
     mut pending: Local<std::collections::VecDeque<ConsoleCommand>>,
     mut submitted: MessageWriter<ConsoleCommand>,
     registry: Res<ConsoleRegistry>,
-    time: Res<Time>,
+    time: WaitClock,
     mut delay: Local<f32>,
     mut reported: Local<std::collections::HashSet<String>>,
 ) {
@@ -274,12 +293,18 @@ fn dispatch_menu_commands(
                 .unwrap_or(0.0);
             break;
         }
-        if registry.resolve(&command.name).is_none() {
+        // The engine reads a menu's command names in any case, and a menu
+        // may name a verb by an alias: it runs as the verb itself.
+        let Some(spec) = registry
+            .resolve(&command.name)
+            .or_else(|| registry.resolve(&command.name.to_ascii_lowercase()))
+        else {
             if reported.insert(command.name.clone()) {
                 diag::warn!(Ui, "menu: unsupported engine command `{}`", command.name);
             }
             continue;
-        }
+        };
+        command.name = spec.name.clone();
         command.interactive = true;
         command.background = true;
         submitted.write(command);
@@ -1803,7 +1828,7 @@ fn abort_script_on_wait_timeout(
 }
 
 fn dispatch_console_command(
-    time: Res<Time>,
+    time: WaitClock,
     registry: Res<ConsoleRegistry>,
     mut dispatch: ResMut<ConsoleDispatch>,
     mut queue: ResMut<ConsoleCommandQueue>,

@@ -46,10 +46,11 @@ pub(crate) enum ChromeGapKind {
     TextExp,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct ChromeAssets<'a> {
     pub catalog: Option<&'a MenuCatalog>,
     pub localize: Option<&'a LocalizeCatalog>,
+    pub host: asset_core::AssetNamespace,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -327,7 +328,7 @@ fn paint_item(
                 &style,
                 material,
                 surface,
-                assets.catalog,
+                assets,
                 host.milliseconds(),
                 anim,
                 &mut frame.list,
@@ -445,7 +446,7 @@ fn paint_text(
             rect.vert_align as i32,
         );
         frame.list.cmds.push(Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: assets.host,
             x: (applied.x + 0.5).floor(),
             y: (applied.y + 0.5).floor(),
             w: applied.w,
@@ -606,7 +607,7 @@ fn push_owner_text_run(
         args.rect.vert_align as i32,
     );
     frame.list.cmds.push(Draw2dCmd {
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+        material_namespace: args.assets.host,
         x: (applied.x + 0.5).floor(),
         y: (applied.y + 0.5).floor(),
         w: applied.w,
@@ -915,7 +916,7 @@ fn push_stretch(
     style: &EvaluatedItemStyle,
     material: String,
     surface: &crate::surface::Hud2dSurface,
-    catalog: Option<&MenuCatalog>,
+    assets: ChromeAssets<'_>,
     time_ms: i32,
     anim: ChromeMenuAnim,
     list: &mut Draw2dList,
@@ -933,9 +934,9 @@ fn push_stretch(
     let color = style.fill_color(item);
     let (material_namespace, material) = match asset_core::AssetKey::parse(&material) {
         Ok(key) if key.kind == asset_core::AssetKind::Material => (key.namespace, key.name),
-        _ => (crate::images::HUD_CHROME_NAMESPACE, material),
+        _ => (assets.host, material),
     };
-    let [s0, t0, s1, t1] = atlas_frame_st(catalog, &material, time_ms);
+    let [s0, t0, s1, t1] = atlas_frame_st(assets.catalog, &material, time_ms);
     list.cmds.push(Draw2dCmd {
         material_namespace,
         x: applied.x,

@@ -22,7 +22,9 @@ pub(crate) fn update(
     mut pass: ResMut<HudTessPass>,
     mut hud_images: ResMut<HudImages>,
     mut images: ResMut<Assets<Image>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     pass.emp_static = TessJob::Hide;
     if !surface.is_ready() || view.as_ref().is_some_and(|v| v.in_killcam()) {
         return;
@@ -51,18 +53,14 @@ pub(crate) fn update(
         i32::from(item.rect.vert_align),
     );
     if hud_images
-        .get(
-            crate::images::HUD_CHROME_NAMESPACE,
-            &item.background,
-            &mut images,
-        )
+        .get(chrome, &item.background, &mut images)
         .is_none()
     {
         return;
     }
     let list = Draw2dList {
         cmds: vec![Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: rect.x,
             y: rect.y,
             w: rect.w,

@@ -27,6 +27,7 @@ impl From<&ClassPreset> for HostClassSlot {
             perks: preset.perks.map(str::to_owned),
             deathstreak: preset.deathstreak.to_owned(),
             camos: Default::default(),
+            weapon_buffs: Default::default(),
         }
     }
 }

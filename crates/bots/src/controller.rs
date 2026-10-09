@@ -10,6 +10,7 @@ use crate::observation::{
 };
 use crate::query::{QueryResult, QuerySubsystem, SightSample, WalkSample, WorldQuery};
 use crate::task::{ActionStage, Decision, SwitchReason, Task, TaskKind};
+use crate::tuning::BotTuning;
 use crate::weapon::WeaponSkill;
 
 const THINK_PERIOD_TICKS: u32 = 2;
@@ -35,9 +36,19 @@ const FIGHT_SCAN_MAX_AGE_TICKS: u32 = 8;
 const FIGHT_COMMIT_MAX_AGE_TICKS: u32 = 60;
 /// Commanded movement without displacement for this long is a stuck bot.
 const STUCK_TICKS: u32 = 40;
+/// How far the hunted client may move before the hunt's destination follows
+/// it. A route is replanned whenever its destination changes, so a hunt that
+/// followed every step would restart A* on every think.
+const HUNT_COMMIT_MOVE: f32 = 128.0;
+/// How much nearer another client must be before a hunt changes target, so two
+/// players at much the same distance do not swap the destination every think.
+const HUNT_SWITCH_IN: f32 = 256.0;
+/// A hunt reports its distance each time it closes by this much.
+const HUNT_LOG_BAND_IN: f32 = 512.0;
 
 #[derive(Clone, Debug)]
 pub struct HostController {
+    tuning: BotTuning,
     aggression: f32,
     self_preserve: f32,
     memory: Memory,
@@ -58,6 +69,10 @@ pub struct HostController {
     nav_key: Option<(u64, u64, u32, u32)>,
     roam: Option<[f32; 3]>,
     roam_gen: u32,
+    hunt: Option<Hunt>,
+    /// The mode told the bot whom to hunt and nobody was alive; reported once
+    /// per such stretch.
+    hunting_nobody: bool,
     decision: Decision,
     prev_seen: Vec<ClientId>,
     was_touching: bool,
@@ -70,16 +85,17 @@ pub struct HostController {
 }
 
 impl HostController {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, tuning: BotTuning) -> Self {
         let aggression = ((seed & 0xff) as f32) / 255.0;
         let self_preserve = (((seed >> 8) & 0xff) as f32) / 255.0;
         Self {
+            tuning,
             aggression,
             self_preserve,
             memory: Memory::default(),
             task: Task::default(),
             intent: BotIntent::default(),
-            motor: Motor::new(seed),
+            motor: Motor::new(seed, tuning),
             last_think_tick: None,
             reaction_until: 0,
             last_target: None,
@@ -92,6 +108,8 @@ impl HostController {
             nav_key: None,
             roam: None,
             roam_gen: 0,
+            hunt: None,
+            hunting_nobody: false,
             decision: Decision::default(),
             prev_seen: Vec::new(),
             was_touching: false,
@@ -113,6 +131,10 @@ impl HostController {
 
     pub fn decision(&self) -> Decision {
         self.decision
+    }
+
+    pub fn tuning(&self) -> &BotTuning {
+        &self.tuning
     }
 
     pub fn route_stats(&self) -> nav::RouteStats {
@@ -186,6 +208,8 @@ impl HostController {
             self.cancel_navigation();
             self.weapon.reset();
             self.roam = None;
+            self.hunt = None;
+            self.hunting_nobody = false;
             self.memory = Memory::default();
             self.prev_seen.clear();
             self.was_touching = false;
@@ -460,9 +484,19 @@ impl HostController {
                 .next()
                 .or_else(|| self.memory.last_seen().next())
                 .map(|c| c.source);
+            let hunting = self
+                .hunt
+                .filter(|_| self.task.kind == TaskKind::Hunt)
+                .map_or(String::new(), |hunt| {
+                    format!(
+                        " hunt=client{} dist={:.0}",
+                        hunt.target.0,
+                        dist2(obs.self_state.origin, hunt.seen).sqrt()
+                    )
+                });
             diag::info!(
                 Sim,
-                "bots: id={} tick={} task={:?} reason={:?} path={:?} know={know:?} origin=({:.0},{:.0},{:.0}) left={left:.0} events={events:?} decision={:?} weapon={weapon_act:?} think_us={} report={:?}",
+                "bots: id={} tick={} task={:?} reason={:?}{hunting} path={:?} know={know:?} origin=({:.0},{:.0},{:.0}) left={left:.0} events={events:?} decision={:?} weapon={weapon_act:?} think_us={} report={:?}",
                 obs.self_state.id.0,
                 obs.tick,
                 self.task.kind,
@@ -677,6 +711,21 @@ impl HostController {
         nav: Option<&NavGraph>,
         astar_budget: &mut u32,
     ) -> BotIntent {
+        if let Some(live) = obs.quarry.as_deref() {
+            if let Some(target) = self.choose_quarry(obs, live) {
+                self.hunting_nobody = false;
+                return self.hunt_quarry(obs, world, nav, astar_budget, target);
+            }
+            self.hunt = None;
+            if !std::mem::replace(&mut self.hunting_nobody, true) {
+                diag::info!(
+                    Sim,
+                    "bots: id={} tick={} hunts nobody — no client it hunts is alive, roaming",
+                    obs.self_state.id.0,
+                    obs.tick,
+                );
+            }
+        }
         let Some(goal) = self.ensure_roam(obs, nav) else {
             return BotIntent::default();
         };
@@ -693,6 +742,135 @@ impl HostController {
         }
         BotIntent {
             look_at: Some([goal[0], goal[1], obs.eye()[2]]),
+            move_goal,
+            desired_range: None,
+            move_mode,
+            path,
+            ..BotIntent::default()
+        }
+    }
+
+    /// The nearest live client the mode says to hunt. The current target is
+    /// kept while it lives unless another is nearer by `HUNT_SWITCH_IN`.
+    fn choose_quarry(&self, obs: &BotObservation, live: &[Contact]) -> Option<Contact> {
+        let here = obs.self_state.origin;
+        let range = |contact: &Contact| dist2(here, contact.origin).sqrt();
+        let nearest = live
+            .iter()
+            .min_by(|a, b| range(a).total_cmp(&range(b)).then(a.id.0.cmp(&b.id.0)))?;
+        let current = self
+            .hunt
+            .and_then(|hunt| live.iter().find(|contact| contact.id == hunt.target));
+        Some(match current {
+            Some(current) if range(current) <= range(nearest) + HUNT_SWITCH_IN => *current,
+            _ => *nearest,
+        })
+    }
+
+    /// Walks the navigation graph to the hunted client. The destination is a
+    /// copy of where the client stands, re-taken when it has moved
+    /// `HUNT_COMMIT_MOVE` or the bot got there; when that spot has no route,
+    /// the graph's nearest support to the client is tried before giving up.
+    fn hunt_quarry(
+        &mut self,
+        obs: &BotObservation,
+        world: &mut impl WorldQuery,
+        nav: Option<&NavGraph>,
+        astar_budget: &mut u32,
+        target: Contact,
+    ) -> BotIntent {
+        let here = obs.self_state.origin;
+        let range = dist2(here, target.origin).sqrt();
+        let mut hunt = match self.hunt {
+            Some(hunt) if hunt.target == target.id => hunt,
+            previous => {
+                diag::info!(
+                    Sim,
+                    "bots: id={} tick={} hunt=client{} dist={range:.0} target=({:.0},{:.0},{:.0}){}",
+                    obs.self_state.id.0,
+                    obs.tick,
+                    target.id.0,
+                    target.origin[0],
+                    target.origin[1],
+                    target.origin[2],
+                    previous.map_or(String::new(), |was| format!(" was=client{}", was.target.0)),
+                );
+                Hunt {
+                    target: target.id,
+                    seen: target.origin,
+                    goal: target.origin,
+                    snapped: false,
+                    band: (range / HUNT_LOG_BAND_IN) as u32,
+                    unreachable_logged: false,
+                }
+            }
+        };
+        hunt.seen = target.origin;
+        if dist2(hunt.goal, target.origin) > HUNT_COMMIT_MOVE * HUNT_COMMIT_MOVE
+            || dist2(here, hunt.goal) <= WAYPOINT_IN * WAYPOINT_IN
+        {
+            hunt.goal = target.origin;
+            hunt.snapped = false;
+        }
+        let band = (range / HUNT_LOG_BAND_IN) as u32;
+        if band < hunt.band {
+            hunt.band = band;
+            diag::info!(
+                Sim,
+                "bots: id={} tick={} hunt=client{} dist={range:.0} origin=({:.0},{:.0},{:.0})",
+                obs.self_state.id.0,
+                obs.tick,
+                target.id.0,
+                here[0],
+                here[1],
+                here[2],
+            );
+        }
+        let (mut move_mode, mut path, mut move_goal) =
+            self.route(here, hunt.goal, world, nav, astar_budget);
+        if matches!(
+            path,
+            PathOutcome::Blocked | PathOutcome::Unreachable | PathOutcome::IncompleteGraph
+        ) {
+            let support = nav
+                .filter(|graph| !graph.is_empty())
+                .and_then(|graph| nav::nearest_within(graph, target.origin, nav::SNAP_IN))
+                .zip(nav)
+                .map(|(node, graph)| graph.nodes[node as usize]);
+            match support {
+                Some(support) if !hunt.snapped && support != hunt.goal => {
+                    hunt.goal = support;
+                    hunt.snapped = true;
+                    self.committed.clear();
+                    (move_mode, path, move_goal) =
+                        self.route(here, hunt.goal, world, nav, astar_budget);
+                }
+                _ => {
+                    if !std::mem::replace(&mut hunt.unreachable_logged, true) {
+                        diag::info!(
+                            Sim,
+                            "bots: id={} tick={} hunt=client{} unreachable path={path:?} from=({:.0},{:.0},{:.0}) to=({:.0},{:.0},{:.0})",
+                            obs.self_state.id.0,
+                            obs.tick,
+                            target.id.0,
+                            here[0],
+                            here[1],
+                            here[2],
+                            hunt.goal[0],
+                            hunt.goal[1],
+                            hunt.goal[2],
+                        );
+                    }
+                    // The client's next position is the next attempt.
+                    hunt.goal = target.origin;
+                    hunt.snapped = false;
+                    self.committed.clear();
+                }
+            }
+        }
+        self.hunt = Some(hunt);
+        BotIntent {
+            look_at: Some([target.origin[0], target.origin[1], obs.eye()[2]]),
             move_goal,
             desired_range: None,
             move_mode,
@@ -782,14 +960,19 @@ impl HostController {
                 }
             }
         }
+        let range = dist2(obs.self_state.origin, target.origin).sqrt();
+        // A shield has no magazine: it bashes once the target is in reach.
+        let armed = match obs.self_state.weapon_class.melees() {
+            true => range <= crate::observation::MELEE_REACH,
+            false => obs.self_state.ammo_clip != 0,
+        };
         let fire = self.authorize_fire(
             obs.tick >= self.reaction_until
-                && obs.self_state.ammo_clip != 0
+                && armed
                 && fresh_contact(obs, target)
                 && shot_allowed(shot, target.id),
             target,
         );
-        let range = dist2(obs.self_state.origin, target.origin).sqrt();
         let hold = self.hold_range(obs);
         let (move_mode, path, move_goal) = self.fight_position(
             obs,
@@ -1276,6 +1459,21 @@ impl HostController {
             ),
         }
     }
+}
+
+/// One survival bot's pursuit of the client the mode told it to hunt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Hunt {
+    target: ClientId,
+    /// Where the client stood on the last think.
+    seen: [f32; 3],
+    /// The committed destination: a copy of an earlier `seen`, or the graph
+    /// support nearest to it.
+    goal: [f32; 3],
+    snapped: bool,
+    /// `HUNT_LOG_BAND_IN` bands of distance at the last report.
+    band: u32,
+    unreachable_logged: bool,
 }
 
 /// The engagement a firing position was chosen for: a different threat or a

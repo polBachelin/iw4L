@@ -125,7 +125,7 @@ impl MaterialProgramAdmit {
             Ok(programs) => {
                 diag::info!(
                     World,
-                    "drawsurf production exact ports: READY count={} world={} packed={} pos_tex={} postfx={} refused_world={} refused_packed={} refused_pos_tex={} refused_postfx={} causes_world={:?} causes_packed={:?} causes_pos_tex={:?} causes_postfx={:?}",
+                    "drawsurf production exact ports: READY count={} world={} packed={} pos_tex={} postfx={} refused_world={} refused_packed={} refused_pos_tex={} refused_postfx={} no_decl_world={} no_decl_packed={} no_decl_pos_tex={} no_decl_postfx={} causes_world={:?} causes_packed={:?} causes_pos_tex={:?} causes_postfx={:?}",
                     programs.ports().len(),
                     world_port_count,
                     packed_port_count,
@@ -135,6 +135,10 @@ impl MaterialProgramAdmit {
                     compile.refused_packed,
                     compile.refused_pos_tex,
                     compile.refused_postfx,
+                    compile.no_decl_world,
+                    compile.no_decl_packed,
+                    compile.no_decl_pos_tex,
+                    compile.no_decl_postfx,
                     compile.world_causes,
                     compile.packed_causes,
                     compile.pos_tex_causes,

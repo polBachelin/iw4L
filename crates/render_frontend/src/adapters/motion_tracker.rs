@@ -52,6 +52,7 @@ pub(crate) fn draw_motion_tracker(
     local: Res<LocalPresentClient>,
     clock: Res<FrameClock>,
     mut sound: MessageWriter<audio::AliasCommand>,
+    host: assets::HostNamespace,
     prepared: Res<PreparedFpv>,
     bolts: Res<FpvBoltTargets>,
     colors: Res<FxWorldColorImages>,
@@ -102,11 +103,12 @@ pub(crate) fn draw_motion_tracker(
             tracker.previous_origin = origin;
         }
     }
+    let host = host.get();
     let mut play = |alias: &str, pitch: f32| {
         sound.write(audio::AliasCommand::PlayPitched {
             sound: audio::PlayAlias {
                 event: None,
-                namespace: asset_core::AssetNamespace::Iw4,
+                namespace: host,
                 alias: alias.to_owned(),
                 fallback: None,
                 origin_inches: None,

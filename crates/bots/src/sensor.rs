@@ -1,3 +1,4 @@
+use gamemode_iw4::GameModeKind;
 use math_iw4::angle_vectors;
 use sim::{ClientId, ClientLifecycle, Snapshot};
 
@@ -6,9 +7,8 @@ use crate::observation::{
     Visibility, WeaponAction, WeaponSlot,
 };
 use crate::query::{QuerySubsystem, SightSample, WorldQuery};
+use crate::tuning::BotTuning;
 
-pub const SIGHT_RANGE_IN: f32 = 5906.0;
-pub const SIGHT_FOV_DEG: f32 = 90.0;
 const PROBE_CHEST_Z: f32 = 48.0;
 const PROBE_HEAD_Z: f32 = 64.0;
 const PROBE_FEET_Z: f32 = 8.0;
@@ -20,17 +20,23 @@ pub fn observe(
     bot: ClientId,
     world: &mut impl WorldQuery,
 ) -> Option<BotObservation> {
-    observe_focused(snapshot, bot, world, None)
+    observe_focused(snapshot, bot, world, None, &BotTuning::default(), None)
 }
 
 /// `focus` is the client the bot has already committed to. It is probed before
 /// the rotation spends the same allowance on acquisition candidates, so a
 /// committed target is the last thing perception gives up, not the first.
+///
+/// `survival` is the survival match's sides when the host runs one. A bot on
+/// its enemy team is told where every live client of the human team is, as
+/// MW3's survival AI always knows where the players are; nothing else is.
 pub fn observe_focused(
     snapshot: &Snapshot,
     bot: ClientId,
     world: &mut impl WorldQuery,
     focus: Option<ClientId>,
+    tuning: &BotTuning,
+    survival: Option<gamemode_iw4::survival::TeamRules>,
 ) -> Option<BotObservation> {
     let meta = snapshot.meta.for_client(bot)?;
     let ps = snapshot
@@ -82,7 +88,7 @@ pub fn observe_focused(
                 },
         ];
         let (forward, _, _) = angle_vectors(ps.viewangles);
-        let half = (SIGHT_FOV_DEG * 0.5).to_radians().cos();
+        let half = (tuning.sight_fov_deg * 0.5).to_radians().cos();
         // Rotate probes so occluded clients at the front of the snapshot cannot
         // monopolize perception.
         let mut probes = SIGHT_PROBES;
@@ -104,7 +110,13 @@ pub fn observe_focused(
             }
             // Out of range or outside the cone is a complete answer on its own;
             // only a client that needed a probe it did not get is unsensed.
-            if !in_range_and_fov(ps.origin, other.origin, forward, half) {
+            if !in_range_and_fov(
+                ps.origin,
+                other.origin,
+                forward,
+                half,
+                tuning.sight_range_in,
+            ) {
                 continue;
             }
             if probes == 0 {
@@ -125,6 +137,7 @@ pub fn observe_focused(
         }
     }
     let objectives = public_objectives(snapshot, bot, team);
+    let quarry = survival_quarry(snapshot, bot, team, survival);
     Some(BotObservation {
         tick: snapshot.tick.0,
         time_ms: snapshot.tick.0 as i32 * 50,
@@ -138,13 +151,54 @@ pub fn observe_focused(
             .copied()
             .min_by(|a, b| dist2(ps.origin, a.origin).total_cmp(&dist2(ps.origin, b.origin))),
         objectives,
+        quarry,
     })
 }
 
-fn in_range_and_fov(from: [f32; 3], to: [f32; 3], forward: [f32; 3], min_dot: f32) -> bool {
+/// The live clients a survival enemy hunts, from the snapshot's positions:
+/// `None` outside survival or for a bot that is not on the enemy team.
+fn survival_quarry(
+    snapshot: &Snapshot,
+    bot: ClientId,
+    team: i32,
+    survival: Option<gamemode_iw4::survival::TeamRules>,
+) -> Option<Vec<Contact>> {
+    let rules = survival.filter(|_| snapshot.meta.kind == GameModeKind::Survival)?;
+    if team != rules.enemy.team() as i32 {
+        return None;
+    }
+    let human = rules.human.team() as i32;
+    Some(
+        snapshot
+            .players
+            .iter()
+            .filter(|(id, _)| *id != bot)
+            .filter(|(id, _)| {
+                snapshot.meta.for_client(*id).is_some_and(|meta| {
+                    meta.lifecycle == ClientLifecycle::Alive && meta.client_state_team == human
+                })
+            })
+            .map(|(id, ps)| Contact {
+                id: *id,
+                origin: ps.origin,
+                source: KnowledgeSource::PublicMode,
+                seen_tick: snapshot.tick.0,
+                confidence: 1.0,
+            })
+            .collect(),
+    )
+}
+
+fn in_range_and_fov(
+    from: [f32; 3],
+    to: [f32; 3],
+    forward: [f32; 3],
+    min_dot: f32,
+    range: f32,
+) -> bool {
     let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
     let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-    if len2 > SIGHT_RANGE_IN * SIGHT_RANGE_IN || len2 <= 0.0001 {
+    if len2 > range * range || len2 <= 0.0001 {
         return false;
     }
     let len = len2.sqrt();

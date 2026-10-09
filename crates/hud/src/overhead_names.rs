@@ -172,7 +172,7 @@ fn update_overhead_names(
     players: Query<(&CEntity, &CEntityRuntime)>,
     cg_clock: Res<FrameClock>,
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, host_namespace): (Option<Res<MenuCatalog>>, assets::HostNamespace),
     cameras: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     prediction: Option<Res<net::ClientPredictionState>>,
     view: Res<frame::ViewSubject>,
@@ -182,6 +182,7 @@ fn update_overhead_names(
     mut target_settings: Local<TargetBoxSettings>,
     mut gaps: ResMut<HudPresentationGaps>,
 ) {
+    let chrome = host_namespace.get();
     pass.overhead_names = TessJob::Hide;
     gaps.clear(HudGap::OverheadNames);
     let now = cg_clock.time();
@@ -224,6 +225,7 @@ fn update_overhead_names(
             (camera, transform),
             &players,
             &target_settings,
+            chrome,
         );
         quads.extend(vehicle_target_quads(
             snapshot,
@@ -233,6 +235,7 @@ fn update_overhead_names(
             &players,
             &posed_models,
             &target_settings,
+            chrome,
         ));
         if !quads.is_empty() {
             pass.overhead_names = TessJob::Quads(quads);
@@ -435,7 +438,7 @@ fn update_overhead_names(
                 t1: 1.0,
                 color: [1.0, 1.0, 1.0, alpha],
                 material: icon.to_owned(),
-                material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+                material_namespace: chrome,
                 op: Draw2dOp::StretchPic,
                 provenance: Draw2dProvenance::CgDraw {
                     site: "overhead_names",
@@ -464,7 +467,7 @@ fn update_overhead_names(
                 t1: 1.0,
                 color,
                 material: asset_core::AssetRef::bare_name(&font.material).to_owned(),
-                material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+                material_namespace: chrome,
                 op: Draw2dOp::TextRun {
                     font: font_name.to_owned(),
                     scale,
@@ -514,6 +517,7 @@ fn thermal_target_quads(
     view: (&Camera, &GlobalTransform),
     players: &Query<(&CEntity, &CEntityRuntime)>,
     settings: &TargetBoxSettings,
+    chrome: asset_core::AssetNamespace,
 ) -> Vec<crate::draw2d::Draw2dQuad> {
     let Some(local_meta) = snapshot.meta.for_client(local) else {
         return Vec::new();
@@ -595,7 +599,7 @@ fn thermal_target_quads(
                 "hud_fofbox_hostile"
             }
             .into(),
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             provenance: Draw2dProvenance::CgDraw {
                 site: "thermal_targets",
             },
@@ -614,6 +618,7 @@ fn vehicle_target_quads(
     entities: &Query<(&CEntity, &CEntityRuntime)>,
     posed: &OverheadPosedModelFrame,
     settings: &TargetBoxSettings,
+    chrome: asset_core::AssetNamespace,
 ) -> Vec<crate::draw2d::Draw2dQuad> {
     let Some(local_meta) = snapshot.meta.for_client(local) else {
         return Vec::new();
@@ -670,7 +675,7 @@ fn vehicle_target_quads(
             st: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             color: [1.0; 4],
             material: "hud_fofbox_hostile".into(),
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             provenance: Draw2dProvenance::CgDraw {
                 site: "thermal_vehicle_targets",
             },

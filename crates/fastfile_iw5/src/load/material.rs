@@ -324,6 +324,7 @@ pub(super) fn load_material(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
         draw_surf: u64::from(s.u32_at(p, s.layout(8, 16))?)
             | (u64::from(s.u32_at(p, s.layout(12, 20))?) << 32),
         sort_key: s.u8_at(p, s.layout(5, 9))?,
+        texture_atlas: [s.u8_at(p, s.layout(6, 10))?, s.u8_at(p, s.layout(7, 11))?],
         state_bits,
         state_bits_count,
         state_bits_entry: Some(state_bits_entry),

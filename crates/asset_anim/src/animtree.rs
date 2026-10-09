@@ -79,6 +79,49 @@ impl PlayerAnimSources {
         *target = Some(bytes);
     }
 
+    /// Lays the sources of a zone loaded after these over them: each source
+    /// the later zone carries replaces this one's, the rest stay. Nothing is
+    /// compiled yet, so the compile that follows reads the merged sources.
+    /// Returns the paths the later zone replaced.
+    pub fn overlay(&mut self, later: Self) -> Vec<&'static str> {
+        if let (Some(owner), Some(family)) = (self.family, later.family)
+            && owner != family
+        {
+            self.decode_errors
+                .push("character animation source family mismatch");
+            return Vec::new();
+        }
+        self.family = self.family.or(later.family);
+        let mut replaced = Vec::new();
+        for (target, source, path) in [
+            (
+                &mut self.multiplayer_atr,
+                later.multiplayer_atr,
+                MULTIPLAYER_ANIMTREE_PATH,
+            ),
+            (
+                &mut self.playeranim_script,
+                later.playeranim_script,
+                PLAYERANIM_SCRIPT_PATH,
+            ),
+            (
+                &mut self.playeranim_types,
+                later.playeranim_types,
+                PLAYERANIM_TYPES_PATH,
+            ),
+        ] {
+            if source.is_some() {
+                *target = source;
+                replaced.push(path);
+            }
+        }
+        self.decode_errors.extend(later.decode_errors);
+        self.compiled = None;
+        self.parsed_script = None;
+        self.leaf_binds = None;
+        replaced
+    }
+
     pub fn multiplayer_atr(&self) -> Option<&[u8]> {
         self.multiplayer_atr.as_deref()
     }
@@ -150,6 +193,34 @@ impl PlayerAnimSources {
             ),
             Some(Err(error)) => format!("multiplayer.atr compile failed: {error}"),
             None => "multiplayer.atr not compiled (ATR or script absent)".into(),
+        }
+    }
+
+    /// The script's `playerAnimType` values resolve against the engine's
+    /// condition table, so the zone's type list must name the same types in
+    /// the same order; weapons store their type as an index into it.
+    pub fn types_report_line(&self) -> String {
+        let Some(bytes) = self.playeranim_types.as_deref() else {
+            return format!("{PLAYERANIM_TYPES_PATH} absent");
+        };
+        let text = String::from_utf8_lossy(bytes);
+        let types: Vec<&str> = text.split_whitespace().collect();
+        let table = anim_iw4::ANIM_PLAYERANIMTYPE_NAMES;
+        let first_difference = (0..types.len().max(table.len())).find(|&i| {
+            !matches!((types.get(i), table.get(i)), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
+        });
+        match first_difference {
+            None => format!(
+                "{PLAYERANIM_TYPES_PATH}: {} types match the condition table",
+                types.len()
+            ),
+            Some(i) => format!(
+                "{PLAYERANIM_TYPES_PATH} gap: {} types, condition table has {}; first difference at {i} (zone `{}`, table `{}`)",
+                types.len(),
+                table.len(),
+                types.get(i).copied().unwrap_or("<none>"),
+                table.get(i).copied().unwrap_or("<none>"),
+            ),
         }
     }
 

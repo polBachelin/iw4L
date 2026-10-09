@@ -13,8 +13,12 @@ pub struct SessionClassStore {
 }
 
 impl SessionClassStore {
-    pub fn from_showcase(seed: u64, registry: &asset_game::WeaponRegistry) -> Self {
-        let admission = session::ClassWeaponAdmission::prepare(registry);
+    pub fn from_showcase(
+        seed: u64,
+        registry: &asset_game::WeaponRegistry,
+        catalog: &sim::ClassCatalog,
+    ) -> Self {
+        let admission = session::ClassWeaponAdmission::prepare(registry, catalog);
         let available = |slot: &HostClassSlot| {
             let row = session::ClassRow::from(slot);
             admission.allows(&row)
@@ -27,32 +31,22 @@ impl SessionClassStore {
                 .take(PERSONAL_CLASS_SLOTS)
                 .collect();
         if slots.len() < PERSONAL_CLASS_SLOTS {
-            for primary in [
-                "iw4:weapon/m4_mp",
-                "iw4:weapon/mp5k_mp",
-                "iw4:weapon/m16_mp",
-                "iw4:weapon/ak47_mp",
-                "iw4:weapon/rpd_mp",
-            ] {
-                let slot = HostClassSlot {
-                    name: format!("custom_{}", slots.len() + 1),
-                    primary: primary.into(),
-                    primary_attachments: Vec::new(),
-                    secondary: "iw4:weapon/usp_mp".into(),
-                    secondary_attachments: Vec::new(),
-                    lethal: "iw4:weapon/frag_grenade_mp".into(),
-                    tactical: "iw4:weapon/flash_grenade_mp".into(),
-                    perks: [
-                        "specialty_fastreload".into(),
-                        "specialty_bulletdamage".into(),
-                        "specialty_bulletaccuracy".into(),
-                    ],
-                    deathstreak: "specialty_copycat".into(),
-                    camos: Default::default(),
-                };
-                if available(&slot) {
-                    slots.push(slot);
+            for class in registry.weapon_families().authored_classes() {
+                let (mut slot, gaps) = session::authored_class_slot(class, catalog);
+                slot.name = format!("custom_{}", slots.len() + 1);
+                if !available(&slot) {
+                    continue;
                 }
+                if !gaps.is_empty() {
+                    diag::info!(
+                        Ui,
+                        "classes: {} default {} gap: not in the class catalog, left empty: {}",
+                        class.namespace.as_str(),
+                        class.name,
+                        gaps.join(" ")
+                    );
+                }
+                slots.push(slot);
                 if slots.len() == PERSONAL_CLASS_SLOTS {
                     break;
                 }
@@ -75,6 +69,7 @@ impl SessionClassStore {
                     perks: Default::default(),
                     deathstreak: String::new(),
                     camos: Default::default(),
+                    weapon_buffs: Default::default(),
                 };
                 if !available(&slot) {
                     continue;
@@ -144,6 +139,7 @@ impl From<&ClassSlotState> for HostClassSlot {
             perks: [slot.perk1.clone(), slot.perk2.clone(), slot.perk3.clone()],
             deathstreak: slot.deathstreak.clone(),
             camos: slot.camos.clone(),
+            weapon_buffs: slot.weapon_buffs.clone(),
         }
     }
 }
@@ -196,10 +192,17 @@ fn encode_slots(slots: &[ClassSlotState]) -> String {
             clean_field(&slot.deathstreak),
         ];
         out.push_str(&fields.join("\t"));
-        if slot.camos.iter().any(|camo| !camo.is_empty()) {
+        let buffs = slot.weapon_buffs.iter().any(|buff| !buff.is_empty());
+        if buffs || slot.camos.iter().any(|camo| !camo.is_empty()) {
             for camo in &slot.camos {
                 out.push('\t');
                 out.push_str(&clean_field(camo));
+            }
+        }
+        if buffs {
+            for buff in &slot.weapon_buffs {
+                out.push('\t');
+                out.push_str(&clean_field(buff));
             }
         }
         out.push('\n');
@@ -222,6 +225,14 @@ fn decode_slots(text: &str) -> Option<Vec<ClassSlotState>> {
     let mut slots = Vec::new();
     for line in lines.filter(|line| !line.is_empty()) {
         let mut fields: Vec<&str> = line.split('\t').collect();
+        let weapon_buffs = match fields.as_slice() {
+            [.., primary, secondary] if fields.len() == 15 => {
+                let buffs = [(*primary).to_owned(), (*secondary).to_owned()];
+                fields.truncate(13);
+                buffs
+            }
+            _ => Default::default(),
+        };
         let camos = match fields.as_slice() {
             [.., primary, secondary] if fields.len() == 13 => {
                 let camos = [(*primary).to_owned(), (*secondary).to_owned()];
@@ -262,6 +273,7 @@ fn decode_slots(text: &str) -> Option<Vec<ClassSlotState>> {
             perk3: (*perk3).to_owned(),
             deathstreak: (*deathstreak).to_owned(),
             camos,
+            weapon_buffs,
             lock_reason: None,
         });
     }
@@ -292,7 +304,7 @@ pub(crate) fn load_class_store(
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_nanos() as u64);
-        SessionClassStore::from_showcase(seed, registry)
+        SessionClassStore::from_showcase(seed, registry, &catalog.class_catalog)
     };
     match std::fs::read_to_string(&path) {
         Ok(text) => match decode_slots(&text) {

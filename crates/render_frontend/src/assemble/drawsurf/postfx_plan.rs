@@ -51,6 +51,7 @@ pub enum PostFxAdmissionRefusal {
     RemapCycle { first_set: RuntimeTechniqueSetId },
     TechniqueSetOutOfRange { set: RuntimeTechniqueSetId },
     TechniqueNamespaceMismatch,
+    HostUnsupported,
     TechniqueMissing,
     PassCount { actual: usize },
     Execute(MaterialRefusal),
@@ -120,8 +121,11 @@ fn postfx_material_location<'a>(
         .technique_sets
         .get(set_i)
         .ok_or(PostFxAdmissionRefusal::TechniqueSetOutOfRange { set })?;
-    if technique_set.namespace != material.namespace || !material.draw_rules.postfx_host_supported {
+    if technique_set.namespace != material.namespace {
         return Err(PostFxAdmissionRefusal::TechniqueNamespaceMismatch);
+    }
+    if !material.draw_rules.postfx_host_supported {
+        return Err(PostFxAdmissionRefusal::HostUnsupported);
     }
     let technique = technique_set
         .technique(TechType(POSTFX_TECH_TYPE))

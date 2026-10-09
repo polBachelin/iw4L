@@ -1,3 +1,5 @@
+mod capture_iw5;
+
 use std::collections::{HashMap, HashSet};
 
 use asset_iw4::size::{self as sz, fx_elem};
@@ -292,9 +294,12 @@ impl OwnedFxElemDef {
         }
     }
 
+    /// `namespace` is the owning effect's family: an elem names its alias in
+    /// the sound bank of the game that authored the effect.
     pub fn sound_in_bank<'a>(
         &self,
         random_seed: u64,
+        namespace: crate::AssetNamespace,
         sounds: &'a crate::SoundCatalog,
     ) -> FxBankSound<'a> {
         if self.view.elem_type != elem_type::SOUND {
@@ -311,7 +316,7 @@ impl OwnedFxElemDef {
             return FxBankSound::Silent;
         };
         match sounds
-            .index_in(crate::AssetNamespace::Iw4, name)
+            .index_in(namespace, name)
             .or_else(|| sounds.index_unique(name))
             .and_then(|index| {
                 sounds
@@ -1184,7 +1189,7 @@ impl FxDefinitions {
             .filter_map(|(ns, vis)| match vis {
                 OwnedFxVisual::Model {
                     hint: Some(name), ..
-                } if !name.is_empty() => Some((ns, name.clone())),
+                } if !name.is_empty() => Some((ns, crate::AssetRef::bare_name(name).to_owned())),
                 _ => None,
             })
             .collect()
@@ -1395,16 +1400,26 @@ fn capture_trail_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxTrailDef> {
     if header.len() < s.layout(sz::FX_TRAIL_DEF, 48) {
         return None;
     }
-    let scroll_time_msec = i32::from_le_bytes(header[0x00..0x04].try_into().ok()?);
-    let repeat_dist = i32::from_le_bytes(header[0x04..0x08].try_into().ok()?);
-    let inv_split_dist = f32::from_le_bytes(header[0x08..0x0c].try_into().ok()?);
-    let inv_split_arc_dist = f32::from_le_bytes(header[0x0c..0x10].try_into().ok()?);
-    let inv_split_time = f32::from_le_bytes(header[0x10..0x14].try_into().ok()?);
-    let vert_count = i32::from_le_bytes(header[0x14..0x18].try_into().ok()?).max(0) as usize;
+    let vert_count = trail_vert_count(header)?;
     let ind_count = s.i32_at(trail, s.layout(0x1c, 32)).ok()?.max(0) as usize;
-
     let vert_bytes = copy_ptr_array(s, trail, 0x18, vert_count, sz::FX_TRAIL_VERTEX);
-    let mut verts = Vec::with_capacity(vert_count);
+    let ind_bytes = copy_ptr_array(s, trail, s.layout(0x20, 40), ind_count, 2);
+    parse_trail_def(header, &vert_bytes, &ind_bytes)
+}
+
+fn trail_vert_count(header: &[u8]) -> Option<usize> {
+    Some(i32::from_le_bytes(header.get(0x14..0x18)?.try_into().ok()?).max(0) as usize)
+}
+
+/// The FxTrailDef header and its two arrays, already copied out of the zone.
+fn parse_trail_def(header: &[u8], vert_bytes: &[u8], ind_bytes: &[u8]) -> Option<OwnedFxTrailDef> {
+    let scroll_time_msec = i32::from_le_bytes(header.get(0x00..0x04)?.try_into().ok()?);
+    let repeat_dist = i32::from_le_bytes(header.get(0x04..0x08)?.try_into().ok()?);
+    let inv_split_dist = f32::from_le_bytes(header.get(0x08..0x0c)?.try_into().ok()?);
+    let inv_split_arc_dist = f32::from_le_bytes(header.get(0x0c..0x10)?.try_into().ok()?);
+    let inv_split_time = f32::from_le_bytes(header.get(0x10..0x14)?.try_into().ok()?);
+
+    let mut verts = Vec::with_capacity(vert_bytes.len() / sz::FX_TRAIL_VERTEX);
     for chunk in vert_bytes.chunks_exact(sz::FX_TRAIL_VERTEX) {
         let pos = [
             f32::from_le_bytes(chunk[0x00..0x04].try_into().ok()?),
@@ -1422,8 +1437,7 @@ fn capture_trail_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxTrailDef> {
         });
     }
 
-    let ind_bytes = copy_ptr_array(s, trail, s.layout(0x20, 40), ind_count, 2);
-    let mut inds = Vec::with_capacity(ind_count);
+    let mut inds = Vec::with_capacity(ind_bytes.len() / 2);
     for chunk in ind_bytes.chunks_exact(2) {
         inds.push(u16::from_le_bytes(chunk.try_into().ok()?));
     }
@@ -1444,7 +1458,10 @@ fn capture_spark_fountain_def(s: &ZoneStream<'_>, elem: Ptr) -> Option<OwnedFxSp
         return None;
     };
     let def = s.resolve_alias(def);
-    let header = s.slice_at(def, 0, FX_SPARK_FOUNTAIN_DEF_SIZE).ok()?;
+    parse_spark_fountain_def(s.slice_at(def, 0, FX_SPARK_FOUNTAIN_DEF_SIZE).ok()?)
+}
+
+fn parse_spark_fountain_def(header: &[u8]) -> Option<OwnedFxSparkFountainDef> {
     if header.len() < FX_SPARK_FOUNTAIN_DEF_SIZE {
         return None;
     }
@@ -1499,6 +1516,7 @@ fn capture_visuals(
             .map(|i| {
                 let m = arr.at(i * s.layout(sz::FX_ELEM_MARK_VISUALS, 16));
                 mark_pair(
+                    materials.capture_ns(),
                     resolve_material_visual(s, materials, m.at(0)),
                     resolve_material_visual(s, materials, m.at(s.layout(4, 8))),
                 )
@@ -1622,9 +1640,11 @@ fn model_hint_edge(
     hint: Option<&str>,
     models: &crate::FxModelCatalog,
 ) -> FxElemModelEdge {
+    // A model another zone holds is named with the reference mark; the
+    // catalog keeps the model under its own name, whichever zone carried it.
     match hint.filter(|name| !name.is_empty()) {
         None => AssetEdge::Absent,
-        Some(name) => match models.index_in(ns, name) {
+        Some(name) => match models.index_in(ns, crate::AssetRef::bare_name(name)) {
             Some(index) => AssetEdge::bind_order(index, models.zone_of(index)),
             None => AssetEdge::Unresolved(AssetEdgeReason::CatalogMiss),
         },
@@ -1680,7 +1700,13 @@ fn remap_elem_material(
     }
 }
 
-fn mark_pair(a: OwnedFxVisual, b: OwnedFxVisual) -> OwnedFxVisual {
+/// `namespace` is the capturing zone's material family, which a side the zone
+/// left without a material still belongs to.
+fn mark_pair(
+    namespace: crate::AssetNamespace,
+    a: OwnedFxVisual,
+    b: OwnedFxVisual,
+) -> OwnedFxVisual {
     let peel = |v: OwnedFxVisual| match v {
         OwnedFxVisual::Material {
             material,
@@ -1691,7 +1717,7 @@ fn mark_pair(a: OwnedFxVisual, b: OwnedFxVisual) -> OwnedFxVisual {
         _ => (
             FxElemMaterial::Absent,
             None,
-            crate::AssetNamespace::Iw4,
+            namespace,
             AuthoredRef::default(),
         ),
     };
@@ -1798,10 +1824,6 @@ pub struct FxName<'a> {
 impl<'a> FxName<'a> {
     pub fn new(namespace: crate::AssetNamespace, name: &'a str) -> Self {
         Self { namespace, name }
-    }
-
-    pub fn engine(name: &'a str) -> Self {
-        Self::new(crate::AssetNamespace::Iw4, name)
     }
 
     pub fn resolve(self, catalog: &'a FxDefinitions) -> Option<&'a OwnedFxEffectDef> {
@@ -2186,6 +2208,7 @@ fn leftover_capture_visuals_t5(
             .map(|i| {
                 let m = arr.at(i * sz_t5::FX_ELEM_MARK_VISUALS);
                 mark_pair(
+                    materials.capture_ns(),
                     leftover_resolve_material_t5(s, materials, m.at(0)),
                     leftover_resolve_material_t5(s, materials, m.at(4)),
                 )

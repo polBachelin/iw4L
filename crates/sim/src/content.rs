@@ -2,7 +2,7 @@ use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 17;
+pub const CONTENT_DIGEST_SCHEME: u64 = 18;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -172,12 +172,17 @@ fn hash_weapon_admission(h: &mut Digest, runnable: &[bool], transition_groups: &
     }
 }
 
-fn hash_class_catalog(h: &mut Digest) {
-    for perk in crate::match_state::CLASS_CATALOG_PERKS {
-        h.bytes(perk.as_bytes());
+fn hash_class_catalog(h: &mut Digest, catalog: &crate::ClassCatalog) {
+    h.u64(catalog.entries().len() as u64);
+    for entry in catalog.entries() {
+        h.u32(entry.id);
+        h.byte(entry.slot.code());
+        h.bytes(entry.name.as_bytes());
     }
-    for streak in crate::match_state::CLASS_CATALOG_DEATHSTREAKS {
-        h.bytes(streak.as_bytes());
+    h.u64(catalog.camos().len() as u64);
+    for (id, name) in catalog.camos() {
+        h.byte(*id);
+        h.bytes(name.as_bytes());
     }
 }
 
@@ -344,6 +349,7 @@ pub fn content_digest(
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
+    class_catalog: &crate::ClassCatalog,
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
     script_models: &[crate::EntityCollisionCapabilities],
@@ -354,7 +360,7 @@ pub fn content_digest(
     hash_penetration(&mut h, penetration);
     hash_weapon_admission(&mut h, runnable, transition_groups);
     hash_equipment(&mut h, equipment);
-    hash_class_catalog(&mut h);
+    hash_class_catalog(&mut h, class_catalog);
     hash_spawns(&mut h, &bootstrap.spawns);
     hash_collision(&mut h, clip_brushes);
     hash_script_models(&mut h, script_models);
@@ -378,6 +384,7 @@ pub fn content_components(
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
+    class_catalog: &crate::ClassCatalog,
     bootstrap: &MatchBootstrap,
     clip_brushes: &[SimBrush],
     script_models: &[crate::EntityCollisionCapabilities],
@@ -403,7 +410,7 @@ pub fn content_components(
     hash_equipment(&mut weapons, equipment);
 
     let mut classes = component(b'C');
-    hash_class_catalog(&mut classes);
+    hash_class_catalog(&mut classes, class_catalog);
 
     ContentComponents {
         map: map.finish(),

@@ -190,6 +190,84 @@ impl TracerCatalog {
         Ok(())
     }
 
+    /// MW3's `TracerDef` is MW2's field for field. The walk names the
+    /// material when its body or a remembered name was at hand; otherwise the
+    /// material catalog, which links MW3 slots like MW2's, answers for the slot.
+    pub fn capture_iw5(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::TracerDefGeometry,
+        materials: &asset_material::MaterialCatalog,
+    ) {
+        use crate::graph_support::iw5_link_ptr;
+        let name = geometry
+            .name
+            .and_then(|ptr| s.cstr(ptr).ok())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned);
+        let Some(name) = name else {
+            self.capture_gaps += 1;
+            self.last_captured = None;
+            return;
+        };
+        let slot = geometry.material_slot.map(iw5_link_ptr);
+        let alias = geometry
+            .material_slot
+            .and_then(|slot| match s.ptr_at(slot, 0) {
+                Ok(fastfile_iw5::ZonePtr::Offset(target)) => Some(iw5_link_ptr(target)),
+                _ => None,
+            });
+        let material_name = geometry
+            .material_name
+            .and_then(|ptr| s.cstr(ptr).ok())
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                slot.and_then(|slot| materials.material_index(slot))
+                    .and_then(|i| materials.materials.get(i.get()))
+                    .map(|m| m.name.to_string())
+                    .filter(|n| !n.is_empty())
+            });
+        let namespace = self
+            .capture_ns
+            .expect("asset capture requires an explicit family");
+        let index = self.published.insert_owned(OwnedTracerDef {
+            namespace,
+            name,
+            material: TracerMaterial::from_capture(slot, alias),
+            material_hint: material_name,
+            material_namespace: namespace,
+            material_authored: crate::AuthoredRef::from_ptrs(slot, alias),
+            draw_interval: geometry.draw_interval,
+            speed: geometry.speed,
+            beam_length: geometry.beam_length,
+            beam_width: geometry.beam_width,
+            screw_radius: geometry.screw_radius,
+            screw_dist: geometry.screw_dist,
+            colors: geometry.colors,
+        });
+        self.last_captured = Some(index);
+    }
+
+    /// Lays the tracers of a zone walked after this one over these: a name
+    /// both carry takes the later definition. The later walk's link map is
+    /// not kept; its pointers name slots of a zone whose walk has finished.
+    pub fn overlay(&mut self, later: TracerCatalog) {
+        let TracerDefinitions {
+            defs,
+            zones,
+            capture_gaps,
+            ..
+        } = later.published;
+        self.published.capture_gaps += capture_gaps;
+        let saved = self.published.capture_zone;
+        for (def, zone) in defs.into_iter().zip(zones) {
+            self.published.capture_zone = zone;
+            self.published.insert_owned(def);
+        }
+        self.published.capture_zone = saved;
+    }
+
     /// Ends the build: the tracer definitions travel on without the link map.
     pub fn publish(self) -> TracerDefinitions {
         self.published

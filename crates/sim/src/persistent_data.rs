@@ -3,8 +3,7 @@ use bevy_ecs::prelude::Resource;
 use std::{collections::BTreeMap, sync::Arc};
 use structured_data_iw4::{Definition, DefinitionSet, Key, Value};
 
-pub const PLAYER_DATA_BUFFER_BYTES: usize = 8188;
-const PLAYER_SCHEMA: &str = "mp/playerdata.def";
+pub(crate) const PLAYER_SCHEMA: &str = "mp/playerdata.def";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AccountId(pub [u8; 16]);
@@ -114,7 +113,7 @@ impl PersistentDataStore {
             AccountRecord {
                 definition: Arc::new(definition.clone()),
                 bytes: snapshot.bytes,
-                dirty: vec![0; PLAYER_DATA_BUFFER_BYTES.div_ceil(8)],
+                dirty: dirty_mask(definition),
                 revision: snapshot.revision,
                 saved_revision: Some(snapshot.revision),
                 temporary: false,
@@ -133,13 +132,7 @@ impl PersistentDataStore {
         if self.accounts.contains_key(&account) {
             return Err(PersistentDataError::AccountInUse);
         }
-        let definition = self
-            .schemas
-            .get(PLAYER_SCHEMA)
-            .ok_or(PersistentDataError::MissingSchema)?
-            .definitions
-            .first()
-            .ok_or(PersistentDataError::InvalidSchema)?;
+        let definition = initial_definition(&self.schemas)?;
         let bytes = crate::persistent_defaults::initialize(definition, defaults)?;
         self.create(account, definition.version, definition.checksum, bytes)
     }
@@ -244,21 +237,15 @@ impl PersistentDataStore {
         account: AccountId,
     ) -> Result<(), PersistentDataError> {
         if !self.preflight_binding(client, account, true)? {
-            let definition = self
-                .schemas
-                .get(PLAYER_SCHEMA)
-                .ok_or(PersistentDataError::MissingSchema)?
-                .definitions
-                .first()
-                .ok_or(PersistentDataError::InvalidSchema)?;
-            let bytes = vec![0; PLAYER_DATA_BUFFER_BYTES];
+            let definition = initial_definition(&self.schemas)?;
+            let bytes = vec![0; definition.size];
             validate_buffer_size(definition, &bytes)?;
             self.accounts.insert(
                 account,
                 AccountRecord {
                     definition: Arc::new(definition.clone()),
                     bytes,
-                    dirty: vec![0; PLAYER_DATA_BUFFER_BYTES.div_ceil(8)],
+                    dirty: dirty_mask(definition),
                     revision: 0,
                     saved_revision: None,
                     temporary: true,
@@ -433,6 +420,39 @@ impl PersistentDataStore {
             .definition
             .enum_index(&record.bytes, record.definition.lookup(keys)?)?)
     }
+    pub fn enum_names(
+        &self,
+        client: ClientId,
+        keys: &[Key<'_>],
+        name: &str,
+    ) -> Result<Option<bool>, PersistentDataError> {
+        let account = self
+            .account(client)
+            .ok_or(PersistentDataError::UnknownClient)?;
+        let record = self
+            .accounts
+            .get(&account)
+            .ok_or(PersistentDataError::UnknownAccount)?;
+        Ok(record
+            .definition
+            .enum_names(record.definition.lookup(keys)?, name)?)
+    }
+    /// The element count of the indexed array at `keys` in the client's
+    /// bound schema.
+    pub fn array_count(
+        &self,
+        client: ClientId,
+        keys: &[Key<'_>],
+    ) -> Result<usize, PersistentDataError> {
+        let account = self
+            .account(client)
+            .ok_or(PersistentDataError::UnknownClient)?;
+        let record = self
+            .accounts
+            .get(&account)
+            .ok_or(PersistentDataError::UnknownAccount)?;
+        array_count(&record.definition, keys)
+    }
     pub fn update_skill(
         &mut self,
         first: ClientId,
@@ -530,10 +550,36 @@ fn select_definition(
         .find(|definition| definition.version == version && definition.checksum == checksum)
         .ok_or(PersistentDataError::SchemaMismatch)
 }
+/// The player-data layout a new account record is created with.
+pub(crate) fn initial_definition(
+    schemas: &BTreeMap<String, Arc<DefinitionSet>>,
+) -> Result<&Definition, PersistentDataError> {
+    schemas
+        .get(PLAYER_SCHEMA)
+        .ok_or(PersistentDataError::MissingSchema)?
+        .definitions
+        .first()
+        .ok_or(PersistentDataError::InvalidSchema)
+}
+/// The element count of the indexed array a schema has at `keys`.
+pub(crate) fn array_count(
+    definition: &Definition,
+    keys: &[Key<'_>],
+) -> Result<usize, PersistentDataError> {
+    match definition.path_type(keys)? {
+        structured_data_iw4::DataType::IndexedArray(index) => definition
+            .indexed_arrays
+            .get(index)
+            .map(|array| array.count)
+            .ok_or(PersistentDataError::InvalidSchema),
+        _ => Err(PersistentDataError::InvalidSchema),
+    }
+}
+pub(crate) fn dirty_mask(definition: &Definition) -> Vec<u8> {
+    vec![0; definition.size.div_ceil(8)]
+}
 fn validate_buffer_size(definition: &Definition, bytes: &[u8]) -> Result<(), PersistentDataError> {
-    if bytes.len() != PLAYER_DATA_BUFFER_BYTES
-        || !(8..=PLAYER_DATA_BUFFER_BYTES).contains(&definition.size)
-    {
+    if definition.size < 8 || bytes.len() != definition.size {
         return Err(PersistentDataError::InvalidBuffer);
     }
     Ok(())

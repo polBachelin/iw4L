@@ -1,10 +1,9 @@
-use sim::{AccountId, AccountSnapshot, PLAYER_DATA_BUFFER_BYTES};
+use sim::{AccountId, AccountSnapshot};
 
 use super::wire::{WireError, WireReader, WireWriter};
 use crate::{AccountChallenge, AccountProof, ConnectionId};
 
-const MAGIC: &[u8; 8] = b"IW4LACP2";
-const MAX_BYTES: usize = 8500;
+const MAGIC: &[u8; 8] = b"IW4LACP3";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AccountMessage {
@@ -44,7 +43,7 @@ fn put_snapshot(
     out.put_u8(u8::from(snapshot.is_some()));
     if let Some(snapshot) = snapshot {
         if snapshot.account != account
-            || snapshot.bytes.len() != PLAYER_DATA_BUFFER_BYTES
+            || snapshot.bytes.len() < 8
             || snapshot.bytes[..4] != snapshot.version.to_le_bytes()
             || snapshot.bytes[4..8] != snapshot.checksum.to_le_bytes()
         {
@@ -52,9 +51,12 @@ fn put_snapshot(
                 "account snapshot owner, size or stamp",
             ));
         }
+        let length = u32::try_from(snapshot.bytes.len())
+            .map_err(|_| WireError::Malformed("account snapshot size"))?;
         out.put_u64(snapshot.revision);
         out.put_i32(snapshot.version);
         out.put_u32(snapshot.checksum);
+        out.put_u32(length);
         out.put_bytes(&snapshot.bytes);
         out.put_bytes(&snapshot.skills.encode());
     }
@@ -77,7 +79,11 @@ fn get_snapshot(
             let revision = input.get_u64()?;
             let version = input.get_i32()?;
             let checksum = input.get_u32()?;
-            let mut bytes = vec![0; PLAYER_DATA_BUFFER_BYTES];
+            let length = input.get_u32()? as usize;
+            if !(8..=input.remaining()).contains(&length) {
+                return Err(WireError::Malformed("account snapshot size"));
+            }
+            let mut bytes = vec![0; length];
             input.get_bytes(&mut bytes)?;
             let skills =
                 sim::SkillRatings::decode(&get_array::<{ sim::SKILL_RATING_BYTES }>(input)?)
@@ -180,7 +186,7 @@ impl AccountMessage {
         if !bytes.starts_with(MAGIC) {
             return Ok(None);
         }
-        if bytes.len() > MAX_BYTES {
+        if bytes.len() > master_protocol::MAX_CONTROL_BYTES {
             return Err(WireError::Malformed("account packet size"));
         }
         let mut input = WireReader::new(&bytes[MAGIC.len()..]);

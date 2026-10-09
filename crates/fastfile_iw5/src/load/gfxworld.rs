@@ -2,8 +2,8 @@ use super::{AssetLinkSink, asset_ptr_at, follow_name};
 use crate::asset_type::AssetType;
 use crate::size as sz;
 use crate::zone::{
-    GfxLightGridGeometry, GfxLightmapPair, GfxWorldGeometry, MAX_LIGHTMAP_PAGES, Ptr, Result,
-    XFILE_BLOCK_RUNTIME, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream,
+    GfxLightGridGeometry, GfxLightmapPair, GfxSunEffectsGeometry, GfxWorldGeometry,
+    MAX_LIGHTMAP_PAGES, Ptr, Result, XFILE_BLOCK_RUNTIME, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream,
 };
 
 pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
@@ -133,9 +133,26 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
     }
 
     s.walk_stage = "gfx_world.sun";
+    const _: () = assert!(0x108 + sz::SUNFLARE == 0x168);
     let sun = p.at(s.layout(0x108, 432));
-    asset_ptr_at(s, links, AssetType::Material, sun.at(s.layout(4, 8)))?;
-    asset_ptr_at(s, links, AssetType::Material, sun.at(s.layout(8, 16)))?;
+    let sprite = sun.at(s.layout(4, 8));
+    let flare = sun.at(s.layout(8, 16));
+    let (sprite_header, sprite_name, sprite_name_len) = sun_material_ref(s, links, sprite)?;
+    let (flare_header, flare_name, flare_name_len) = sun_material_ref(s, links, flare)?;
+    let mut raw = [0u8; 112];
+    let sun_len = s.layout(sz::SUNFLARE, 112);
+    raw[..sun_len].copy_from_slice(s.slice_at(sun, 0, sun_len)?);
+    let sun_effects = Some(GfxSunEffectsGeometry {
+        sprite,
+        flare,
+        sprite_header,
+        flare_header,
+        sprite_name,
+        sprite_name_len,
+        flare_name,
+        flare_name_len,
+        raw,
+    });
 
     let mut outdoor_lookup = [0u32; 16];
     let lookup_off = s.layout(0x168, 544);
@@ -263,6 +280,7 @@ pub(super) fn load_gfxworld(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
         sky_count,
         outdoor_image,
         outdoor_lookup,
+        sun_effects,
         reflection_probes: draw.reflection_probes,
         reflection_probe_origins: draw.reflection_probe_origins,
         reflection_probe_count: draw.reflection_probe_count,
@@ -565,6 +583,32 @@ fn load_gfx_dpvs_dynamic(s: &mut ZoneStream<'_>, p: Ptr, cell_count: usize) -> R
         runtime_array(s, p, vis + index * width, 16, 1, 32 * words)?;
     }
     Ok(())
+}
+
+/// Loads a sunflare material slot and names the material it loaded. A null
+/// slot loads nothing, so the last material walked is not this slot's.
+fn sun_material_ref(
+    s: &mut ZoneStream<'_>,
+    links: &mut dyn AssetLinkSink,
+    slot: Ptr,
+) -> Result<(Option<Ptr>, [u8; 32], u8)> {
+    let null = matches!(s.ptr_at(slot, 0)?, ZonePtr::Null);
+    asset_ptr_at(s, links, AssetType::Material, slot)?;
+    let Some(material) = s.latest_material().filter(|_| !null) else {
+        return Ok((None, [0; 32], 0));
+    };
+    let mut name = [0u8; 32];
+    let len = material
+        .name
+        .and_then(|ptr| s.cstr(ptr).ok())
+        .map(|text| {
+            let bytes = text.as_bytes();
+            let len = bytes.len().min(32);
+            name[..len].copy_from_slice(&bytes[..len]);
+            len as u8
+        })
+        .unwrap_or(0);
+    Ok((material.header, name, len))
 }
 
 fn runtime_array(

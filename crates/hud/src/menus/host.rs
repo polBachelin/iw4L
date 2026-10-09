@@ -22,9 +22,16 @@ pub(crate) struct MenuWorld<'a> {
     pub weapons: Option<&'a asset_game::WeaponRegistry>,
     pub emp_jammed: bool,
     pub radar_blocked: bool,
+    pub host: asset_core::AssetNamespace,
+    /// The local client's match player data: what `getPlayerData` reads under
+    /// survival.
+    pub player_data: Option<&'a sim::MatchPlayerData>,
 }
 
 const GAMETYPES_TABLE: &str = "mp/gametypestable.csv";
+/// Special Ops' rank table: c0 the rank, c7 the experience that ends it; the
+/// `maxrank` row's c1 is the last rank.
+const SO_RANK_TABLE: &str = "sp/ranktable.csv";
 const CUSTOM_CLASS_SLOTS: usize = 10;
 
 pub(crate) struct MenuHost<'a> {
@@ -88,6 +95,31 @@ impl MenuHost<'_> {
         ))
     }
 
+    /// Survival's `getPlayerData`: the fields of SP player data MW3's armory
+    /// menus read, kept by the survival script for this match only.
+    fn match_player_data(&self, path: &[Operand]) -> Result<Operand, ExprError> {
+        let data = self
+            .world
+            .player_data
+            .ok_or(ExprError::Host("match player data"))?;
+        let (field, key) = match path {
+            [field] => (hud_iw4::source_str(field), None),
+            [field, key] => (hud_iw4::source_str(field), Some(hud_iw4::source_str(key))),
+            _ => return Err(ExprError::Host("player data path")),
+        };
+        data.read(&field, key.as_deref())
+            .map(Operand::Int)
+            .map_err(|error| {
+                ExprError::Host(match error {
+                    sim::MatchDataError::UnknownField(_) | sim::MatchDataError::Arity { .. } => {
+                        "player data path"
+                    }
+                    sim::MatchDataError::Unset(_) => "player data unset",
+                    sim::MatchDataError::Undeclared => "match player data undeclared",
+                })
+            })
+    }
+
     fn custom_class(&self, path: &[Operand]) -> Result<Operand, ExprError> {
         let index = match path.get(1) {
             Some(Operand::Str(s)) => s.trim().parse::<usize>().unwrap_or(usize::MAX),
@@ -108,9 +140,7 @@ impl MenuHost<'_> {
             return Ok(Operand::Str(String::from("none")));
         };
         let reference = |key: &str| -> String {
-            if asset_core::AssetKey::parse(key)
-                .is_ok_and(|key| key.namespace != asset_core::AssetNamespace::Iw4)
-            {
+            if asset_core::AssetKey::parse(key).is_ok_and(|key| key.namespace != self.world.host) {
                 return key.to_owned();
             }
             let name = key.rsplit('/').next().unwrap_or(key);
@@ -360,6 +390,9 @@ impl ExprHost for MenuHost<'_> {
         self.gametype_text(2)
     }
     fn player_data(&self, path: &[Operand]) -> Result<Operand, ExprError> {
+        if self.world.kind == Some(gamemode_iw4::GameModeKind::Survival) {
+            return self.match_player_data(path);
+        }
         let root = path.first().map(hud_iw4::source_str).unwrap_or_default();
         if root.eq_ignore_ascii_case("customClasses") {
             self.custom_class(path)
@@ -399,6 +432,36 @@ impl ExprHost for MenuHost<'_> {
     }
     fn scoreboard_visible(&self) -> Result<i32, ExprError> {
         Ok(i32::from(self.world.scores_open))
+    }
+    fn level_for_experience_so(&self, experience: i32) -> Result<i32, ExprError> {
+        let table = self
+            .world
+            .catalog
+            .and_then(|c| c.string_table(SO_RANK_TABLE))
+            .ok_or(ExprError::Host("special ops rank table"))?;
+        let number = |row: usize, col: i32| table.cell(row as i32, col).trim().parse::<i32>();
+        for row in 0..table.rows {
+            if let (Ok(rank), Ok(end)) = (number(row, 0), number(row, 7))
+                && experience < end
+            {
+                return Ok(rank);
+            }
+        }
+        table
+            .lookup_row_in_col(0, "maxrank")
+            .and_then(|row| table.cell(row, 1).trim().parse().ok())
+            .ok_or(ExprError::Host("special ops max rank"))
+    }
+    fn menu_is_topmost(&self, name: &str) -> Result<i32, ExprError> {
+        Ok(i32::from(
+            self.open
+                .last()
+                .is_some_and(|top| top.eq_ignore_ascii_case(name)),
+        ))
+    }
+    /// iw4l plays no demos.
+    fn is_demo_playing(&self) -> Result<i32, ExprError> {
+        Ok(0)
     }
     fn menu_is_open(&self, name: &str) -> Result<i32, ExprError> {
         Ok(i32::from(

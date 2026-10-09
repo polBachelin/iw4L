@@ -351,7 +351,7 @@ pub(crate) fn apply_script_hit(world: &mut FrameWorld, tick: Tick, hit: &crate::
             [0.0; 3]
         },
         hitloc: hit.hitloc,
-        inflictor: None,
+        inflictor: hit.inflictor.map(crate::script_player::Inflictor::Entity),
         commit,
     };
     crate::script::player_damage(world.ecs(), tick, &player_hit);

@@ -10,6 +10,7 @@ use std::path::Path;
 pub(crate) use helpers::{
     build_iw5_static_model_draw, build_static_model_draw, build_t5_static_model_draw,
 };
+pub(crate) use iw5::load_mode_zone;
 pub(crate) use sink::{CommonWalkSink, MaterialPopulationSink, ZoneWalkSink};
 
 use crate::{
@@ -132,6 +133,116 @@ pub struct CommonCensus {
     pub pending_images: Option<asset_material::material_images::ImageDemandPlan>,
 
     pub(crate) preparation: Option<Box<dyn CommonFamilyCompiler>>,
+}
+
+impl CommonCensus {
+    /// Lays the census of a zone loaded after this one over it: an asset both
+    /// carry takes the later zone's definition, and the later zone's material
+    /// catalog, which was seeded from this one's, becomes the catalog. Returns
+    /// one line saying what the later zone brought.
+    pub(crate) fn overlay(&mut self, zone: &str, later: CommonCensus) -> String {
+        let CommonCensus {
+            scripts,
+            scene_models,
+            shared_surfaces,
+            weapons,
+            cac_tables,
+            fpv,
+            world_weapons,
+            projectile_meshes,
+            xanims,
+            player_anim_sources,
+            fx,
+            fx_models,
+            tracers,
+            impact_fx,
+            material_population,
+            light_defs,
+            report,
+            pen_table,
+            pen_table_loaded,
+            lochit_table,
+            xmodel_walk,
+            s1_common_bytes,
+            teamsets,
+            film_visions,
+            pending_images,
+            preparation,
+        } = later;
+        let tables = scripts.tables().len();
+        self.scripts.overlay(scripts);
+        let xmodels = scene_models.len();
+        // Both catalogs keep the first copy of a key, so the later zone's
+        // catalog absorbs this one's rather than the other way round.
+        let mut models = scene_models;
+        models.absorb_captured(std::mem::take(&mut self.scene_models));
+        self.scene_models = models;
+        self.shared_surfaces.0.extend(shared_surfaces.0);
+        let weapon_n = weapons.len();
+        let (weapons_replaced, weapons_added) = self.weapons.overlay(weapons);
+        for table in cac_tables {
+            match self
+                .cac_tables
+                .iter_mut()
+                .find(|kept| kept.name.eq_ignore_ascii_case(&table.name))
+            {
+                Some(kept) => *kept = table,
+                None => self.cac_tables.push(table),
+            }
+        }
+        let fpv_n = fpv.len();
+        let fpv_added = self.fpv.absorb(fpv);
+        let world_n = world_weapons.len();
+        let world_added = self.world_weapons.absorb(world_weapons);
+        let mut projectiles = projectile_meshes;
+        projectiles.absorb(std::mem::take(&mut self.projectile_meshes));
+        self.projectile_meshes = projectiles;
+        let xanim_n = xanims.len();
+        let xanims_added = self.xanims.absorb(xanims);
+        let anim_sources = self.player_anim_sources.overlay(player_anim_sources);
+        let fx_n = fx.len();
+        self.fx.absorb(fx);
+        let mut effect_models = fx_models;
+        effect_models.absorb(std::mem::take(&mut self.fx_models));
+        self.fx_models = effect_models;
+        let tracer_n = tracers.len();
+        self.tracers.overlay(tracers);
+        let mut gaps: Vec<&str> = Vec::new();
+        if impact_fx.is_some() {
+            self.impact_fx = impact_fx;
+        }
+        self.material_population = material_population;
+        self.light_defs.extend(light_defs);
+        self.report.extend(report);
+        if pen_table_loaded {
+            self.pen_table = pen_table;
+            self.pen_table_loaded = true;
+        }
+        self.lochit_table = lochit_table.or(self.lochit_table);
+        self.xmodel_walk.walked_n += xmodel_walk.walked_n;
+        self.xmodel_walk.unclassified_n += xmodel_walk.unclassified_n;
+        self.xmodel_walk
+            .projectile_names
+            .extend(xmodel_walk.projectile_names);
+        self.s1_common_bytes += s1_common_bytes;
+        self.teamsets.extend(teamsets);
+        self.film_visions.extend(film_visions);
+        if pending_images.is_some() {
+            gaps.push("its image plan was dropped (mode zones decode with the merged pool)");
+        }
+        if preparation.is_some() {
+            gaps.push("its family preparation was dropped (no lane prepares mode zones)");
+        }
+        format!(
+            "mode zone {zone}: tables={tables} weapons={weapon_n} (replaced={weapons_replaced} added={weapons_added}) fpv={fpv_n} (+{fpv_added}) world_guns={world_n} (+{world_added}) xanims={xanim_n} (+{xanims_added}) fx={fx_n} tracers={tracer_n} xmodels={xmodels} player_anim_sources_replaced=[{}]{}",
+            anim_sources.join(" "),
+            if gaps.is_empty() {
+                String::new()
+            } else {
+                format!("; gaps: {}", gaps.join("; "))
+            }
+        )
+    }
 }
 
 pub(crate) struct CommonPreparationProducts {

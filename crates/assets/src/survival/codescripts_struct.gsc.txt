@@ -1,0 +1,11 @@
+initstructs()
+{
+	level.struct = [];
+}
+
+createstruct()
+{
+	struct = spawnstruct();
+	level.struct[ level.struct.size ] = struct;
+	return struct;
+}

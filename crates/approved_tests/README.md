@@ -18,6 +18,7 @@ directories everywhere in the workspace, this crate included.
 | --- | --- |
 | `master_duo_chaos` | two real clients join one dev master lobby, load `mp_boneyard` once, move for 4 seconds and run 16 seconds of RPG chaos with seven bots |
 | `heavy_gameplay_lifecycle` | cold load `mp_overgrown` with 16 players, three input scenes, production disconnect, a watched menu, a second map with three scenes, production quit |
+| `survival_paris` | headless MW3 survival on `mp_paris`: clear waves 1–3, buy an air support item, go down, get up by a kill, die, MW3's summary, production quit |
 
 The scenario's steps are in `src/scenarios/heavy_gameplay_lifecycle.rs` and
 nowhere else: maps, seed rule, scenes, positions, angles, weapons, durations
@@ -91,6 +92,56 @@ applied, alive, no path: collision or a frozen player) or `input_not_applied`
 (the break the scenario exists to catch). There
 is no frame-time assertion. A run the controller had to kill is a failure,
 never a quit.
+
+## Survival on mp_paris
+
+```sh
+make approved SCENARIO=survival_paris                  # cold cache
+make approved SCENARIO=survival_paris ARGS='--cache shared'
+```
+
+`survival_paris` needs only MW3 data and no display: it starts `iw4l survival
+--headless` in its run directory and drives it through the stdin console
+(`IW4L_CONSOLE_STDIN=1`), syncing each step on a `mark` and on the gametype's
+`gsc log: survival:` lines in the game's log. Its steps (where the player stands
+to fight and how far in front of an armory to use it, where an enemy is brought to be shot, the weapon, the waves cleared, the item
+bought) are in `src/scenarios/survival_paris.rs`; the values the gametype runs
+with (start credits, wave bonus, enemy team, intermission, summary menu, armory
+menu and answer prefixes) are read from `crates/assets/src/survival/settings.csv`,
+the file the binary embeds. A `test_wave` set there blocks the run.
+
+Phases, each with its facts or `failure_reason` in `run.json`:
+
+- `load` — `gsc: installed … gametype=survival` on the settings' map, the
+  player spawned with `god`, the start credits line equal to `start_credits`.
+- `wave1`…`wave3` — the wave's start line (MW3's waves table read by the
+  script) names the enemies; exactly those connect on `enemy_team`, each
+  connects, spawns once and is killed by the player, never more; one kill
+  reward per kill, the same for every enemy of an archetype; the credits after
+  the wave are the credits before plus the kill rewards plus `wave_bonus`, and
+  every credits line is the previous total plus its delta. From wave 2 on the
+  intermission is `intermission_seconds`.
+- `armory` — after the air support armory unlocks and is usable, the
+  purchase answer MW3's armory menus send (the `menuresponse` console verb,
+  until MW3's armory menus can be used) is refused away from it (`uses no
+  armory`); standing in front of the armory where the gametype logged it and
+  pressing `+activate` opens its menu, the same answer is then `bought`, costs
+  exactly the item's price and puts the item on the action slot, and
+  `menukey escape` closes the menu and ends the use.
+- `laststand` — the start pistol given back (the waves were cleared with
+  another weapon), `god` off, `damage` puts the player down holding a
+  self-revive with that pistol drawn; an enemy brought in front is shot with it
+  and the player gets up, one self-revive spent.
+- `gameover` — the next `damage` is death with no self-revive left, `game
+  over` counts the wave and every kill, and the settings' `eog_menu` opens.
+- `quit` — `finish_run` ends the process through `lifecycle: process_exit
+  code=0`.
+
+`gsc.installed` and `no_execution_fault` (no `gsc: refused` or `gsc:
+runtime_error` on stdout, no `GSC execution failed` on stderr) are kept beside
+the phases. The run leaves
+`run.json`, `commands.txt`, `child_stdout.txt`, `child_stderr.txt` and the
+game's `iw4l-artifacts/` (log, cache).
 
 ## Two clients through the dev master
 

@@ -246,7 +246,7 @@ pub(crate) fn paint_clip_pips(
             ]
         };
         frame.list.cmds.push(crate::draw2d::Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: args.assets.host,
             x,
             y,
             w: metrics.width,

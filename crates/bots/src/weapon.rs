@@ -211,8 +211,9 @@ fn choose(obs: &BotObservation) -> Option<WeaponAct> {
         return None;
     }
     let held = held_slot(obs);
-    // An offhand or an item in hand is not a readiness decision.
-    if obs.held().is_some_and(|slot| !slot.facts.selectable) {
+    // An offhand or an item in hand is not a readiness decision, nor is a
+    // shield, which has no magazine.
+    if obs.held().is_some_and(|slot| !slot.facts.selectable) || me.weapon_class.melees() {
         return None;
     }
     let reload_ms = (me.ammo_stock > 0).then(|| held.reload_ms());

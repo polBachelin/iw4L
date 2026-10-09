@@ -50,6 +50,19 @@ impl Catalog {
     pub fn iw4() -> Self {
         Self::from_list(crate::script::Realm::Iw4, super::iw4_catalog::IW4)
     }
+    /// The IW4 builtins plus the survival gametype's own.
+    pub fn survival() -> Self {
+        let mut catalog = Self::iw4();
+        for builtin in super::survival_catalog::SURVIVAL {
+            assert!(
+                catalog.get(builtin.namespace, builtin.name).is_none(),
+                "survival builtin {} is already an IW4 builtin",
+                builtin.name
+            );
+            catalog.insert(builtin.clone());
+        }
+        catalog
+    }
     pub fn t5() -> Self {
         Self::from_list(crate::script::Realm::T5, super::t5_catalog::T5)
     }

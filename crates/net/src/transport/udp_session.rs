@@ -419,6 +419,11 @@ impl UdpAuthorityHub {
         self.retire_connection(conn)
     }
 
+    /// A remote client holds a connection to this authority.
+    pub fn has_peers(&self) -> bool {
+        !self.peers.is_empty()
+    }
+
     pub fn retire_client(&mut self, client: ClientId) -> bool {
         self.retire_client_with_reason(client, "ConnectionRetired")
     }

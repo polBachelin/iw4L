@@ -125,8 +125,16 @@ pub(crate) struct Hit {
     pub point: [f32; 3],
     pub dir: [f32; 3],
     pub hitloc: u8,
-    pub inflictor: Option<crate::ProjectileId>,
+    pub inflictor: Option<Inflictor>,
     pub commit: Option<DeathCommit>,
+}
+
+/// What dealt a hit, when it was not the attacker's own weapon in hand.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Inflictor {
+    Projectile(crate::ProjectileId),
+    /// A script entity's gun (a turret's or a vehicle's), by its presence.
+    Entity(crate::ScriptModelId),
 }
 
 pub(crate) const IDFLAGS_RADIUS: i32 = 1;
@@ -206,7 +214,7 @@ pub(crate) fn damage(
         dir: normalized([0, 1, 2].map(|i| victim_origin[i] - from[i])),
         hitloc: intent.hitloc,
         inflictor: match intent.source {
-            DamageSource::Projectile(id) => Some(id),
+            DamageSource::Projectile(id) => Some(Inflictor::Projectile(id)),
             _ => None,
         },
         commit: Some(DeathCommit {
@@ -745,6 +753,17 @@ fn perk_bits(name: &str) -> ([u32; 2], u32) {
 
 pub(crate) fn set_perk(world: &mut FrameWorld, id: ClientId, name: &str, on: bool) {
     let (perks, e_flags) = perk_bits(name);
+    if on
+        && perks == [0; 2]
+        && e_flags == 0
+        && name != "specialty_null"
+        && world.first_perk_without_behavior(name)
+    {
+        diag::info!(
+            Sim,
+            "perk `{name}`: no engine behavior; the script's own handling is all it has"
+        );
+    }
     if let Some(ps) = world.player_mut(id) {
         for (word, perk) in ps.perks.iter_mut().zip(perks) {
             if on {

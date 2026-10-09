@@ -18,34 +18,8 @@ pub(crate) struct EntityHit {
     pub flags: i32,
 }
 
-const MEANS: &[&str] = &[
-    "MOD_UNKNOWN",
-    "MOD_PISTOL_BULLET",
-    "MOD_RIFLE_BULLET",
-    "MOD_EXPLOSIVE_BULLET",
-    "MOD_GRENADE",
-    "MOD_GRENADE_SPLASH",
-    "MOD_PROJECTILE",
-    "MOD_PROJECTILE_SPLASH",
-    "MOD_MELEE",
-    "MOD_HEAD_SHOT",
-    "MOD_CRUSH",
-    "MOD_FALLING",
-    "MOD_SUICIDE",
-    "MOD_TRIGGER_HURT",
-    "MOD_EXPLOSIVE",
-    "MOD_IMPACT",
-    "MOD_BURNED",
-    "MOD_GAS",
-    "MOD_HIT_BY_OBJECT",
-    "MOD_BAYONET",
-    "MOD_TELEFRAG",
-    "MOD_ARTILLERY",
-    "MOD_DOGS",
-];
-
 pub(crate) fn means_named(name: &str) -> Result<&'static str, String> {
-    MEANS
+    weapon_iw4::MEANS_OF_DEATH
         .iter()
         .copied()
         .find(|means| means.eq_ignore_ascii_case(name))

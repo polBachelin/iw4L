@@ -34,6 +34,7 @@ pub fn emit_footstep_on_bob_wrap(
     quieter: bool,
     origin_inches: Option<[f32; 3]>,
     snd_ent: Option<u32>,
+    host: asset_core::AssetNamespace,
     footsteps: &mut MessageWriter<Footstep>,
     weapon_sounds: &mut MessageWriter<WeaponSound>,
 ) -> bool {
@@ -50,7 +51,7 @@ pub fn emit_footstep_on_bob_wrap(
     });
     weapon_sounds.write(WeaponSound {
         event: None,
-        namespace: asset_core::AssetNamespace::Iw4,
+        namespace: host,
         alias: gear_rattle_alias(gait, local_player).to_owned(),
         origin_inches,
         snd_ent,

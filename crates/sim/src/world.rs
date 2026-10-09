@@ -190,6 +190,10 @@ pub struct SimState {
 
     script_gaps: ScriptGaps,
 
+    /// Perks a script set this match that the engine has no behavior for,
+    /// each reported once.
+    perks_without_behavior: std::collections::BTreeSet<String>,
+
     sound_alias_cs: crate::SoundAliasCs,
 
     effect_name_cs: crate::EffectNameCs,
@@ -278,6 +282,7 @@ impl Default for SimState {
             projectile_impact_log: Vec::new(),
             world_objects: WorldObjectState::default(),
             script_gaps: ScriptGaps::default(),
+            perks_without_behavior: Default::default(),
             sound_alias_cs: crate::SoundAliasCs::default(),
             effect_name_cs: crate::EffectNameCs::default(),
             hud_material_cs: crate::HudMaterialCs::default(),
@@ -356,6 +361,7 @@ impl SimState {
         self.recent_kills.clear();
         self.presentation.reset();
         self.script_gaps = ScriptGaps::default();
+        self.perks_without_behavior.clear();
         self.recompute_content_digest();
         Ok(())
     }
@@ -732,6 +738,11 @@ impl SimState {
             .unwrap_or("")
     }
 
+    /// The class catalog this match's classes are read against.
+    pub fn class_catalog(&self) -> &crate::ClassCatalog {
+        self.content.class_catalog()
+    }
+
     pub(crate) fn shock(&self, name: &str) -> Option<&hud_iw4::ShockParams> {
         self.content.shocks().get(&name.to_ascii_lowercase())
     }
@@ -943,6 +954,7 @@ impl SimState {
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
             &self.content.weapons().equipment_runtime,
+            self.content.class_catalog(),
             &self.bootstrap,
             self.content.clip_brushes(),
             &self.entity_collision_capabilities,
@@ -953,6 +965,7 @@ impl SimState {
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
             &self.content.weapons().equipment_runtime,
+            self.content.class_catalog(),
             &self.bootstrap,
             self.content.clip_brushes(),
             &self.entity_collision_capabilities,
@@ -1702,6 +1715,12 @@ impl SimState {
 
     pub fn script_gaps_mut(&mut self) -> &mut ScriptGaps {
         &mut self.script_gaps
+    }
+
+    /// Whether `perk` is reported for the first time this match as a perk the
+    /// engine has no behavior for.
+    pub(crate) fn first_perk_without_behavior(&mut self, perk: &str) -> bool {
+        self.perks_without_behavior.insert(perk.to_owned())
     }
 
     pub(crate) fn alive_collision_poses(

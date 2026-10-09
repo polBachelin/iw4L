@@ -425,6 +425,15 @@ pub fn authority_should_tick(
     world: Option<Res<AuthorityWorld>>,
     hold: Option<Res<AuthorityLoadHold>>,
 ) -> bool {
+    authority_live(*role, world.as_deref(), hold.as_deref().copied())
+}
+
+/// The authority holds a loaded world and no load hold: its fixed chain steps.
+pub(crate) fn authority_live(
+    role: RuntimeRole,
+    world: Option<&AuthorityWorld>,
+    hold: Option<AuthorityLoadHold>,
+) -> bool {
     role.runs_authority()
         && world.is_some_and(|world| world.0.clip_brush_count() > 0)
         && hold.is_some_and(|h| !h.0)

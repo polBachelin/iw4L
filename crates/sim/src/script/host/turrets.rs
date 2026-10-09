@@ -198,7 +198,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     });
     registry.register(Method, "shootturret", |world, receiver, _| {
         let object = turret_of(world, receiver)?;
-        shoot(world, object);
+        shoot(world, object)?;
         Ok(Value::Undefined)
     });
     registry.register(Method, "setturretteam", |world, receiver, args| {
@@ -454,7 +454,11 @@ pub(crate) fn advance(world: &mut World) {
     }
 }
 
-fn shoot(world: &mut World, object: u64) {
+/// A shot along the turret's aim, by its weapon's kind: a bullet weapon (a
+/// minigun) traces, a projectile weapon (a grenade-launcher sentry) launches
+/// its projectile, owned by the turret's player as `fireweapon` does for a
+/// vehicle.
+fn shoot(world: &mut World, object: u64) -> Result<(), String> {
     let turret = world.resource::<Runtime>().engine.turrets[&object].clone();
     let from = muzzle(world, object);
     let attacker = {
@@ -464,7 +468,16 @@ fn shoot(world: &mut World, object: u64) {
             .and_then(|o| runtime.player_client(o))
             .map(ClientId)
     };
-    fire_bullet(world, object, from, turret.aim, turret.weapon, attacker);
+    let kind = FrameWorld::from_world(world)
+        .combat_facts_for(turret.weapon)
+        .and_then(|f| weapon_iw4::fire_weapon_kind(f.weap_type, f.weap_class));
+    if matches!(kind, Some(weapon_iw4::FireWeaponKind::Bullet) | None) {
+        fire_bullet(world, object, from, turret.aim, turret.weapon, attacker);
+        return Ok(());
+    }
+    let owner = attacker.ok_or("turret with a projectile weapon has no owning player")?;
+    let end = std::array::from_fn(|i| from[i] + turret.aim[i] * 1000.0);
+    super::weapons::launch(world, owner, turret.weapon, from, end).map(|_| ())
 }
 
 pub(crate) fn fire_bullet(

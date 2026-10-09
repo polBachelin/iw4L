@@ -1847,7 +1847,7 @@ fn apply_select_class(
     loadout: crate::PersonalClass,
 ) -> ActionOutcome {
     let accepted = (class_id.0 < crate::match_state::PERSONAL_CLASS_SLOTS as u32)
-        .then(|| loadout.definition(class_id, revision))
+        .then(|| loadout.definition(class_id, revision, world.class_catalog()))
         .flatten();
     let Some(def) = accepted else {
         diag::info!(
@@ -1910,17 +1910,32 @@ fn validate_class_content(
     world: &FrameWorld,
     def: &crate::ClassDef,
 ) -> Result<(), crate::ClassRejectReason> {
+    let catalog = world.class_catalog();
     for (slot, perk) in def.perks.iter().copied().enumerate() {
-        if perk != 0 && crate::match_state::perk_slot_from_class_catalog(perk) != Some(slot) {
+        if perk != 0 && catalog.perk_slot(perk) != Some(slot) {
             return Err(crate::ClassRejectReason::LockedContent);
         }
     }
-    let max_attachments = if def.perks[0] == 12 { 2 } else { 1 };
+    let perk1 = match def.perks[0] {
+        0 => "",
+        id => catalog
+            .perk_name(id)
+            .ok_or(crate::ClassRejectReason::LockedContent)?,
+    };
+    let mut buffs = [""; 2];
+    for (slot, (&id, name)) in def.weapon_buffs.iter().zip(&mut buffs).enumerate() {
+        if id != 0 {
+            *name = catalog
+                .weapon_buff_name(slot, id)
+                .ok_or(crate::ClassRejectReason::LockedContent)?;
+        }
+    }
     let table_len = world.weapon_combat_len();
-    for id in [def.primary, def.secondary] {
+    for (slot, id) in [def.primary, def.secondary].into_iter().enumerate() {
         if id == 0 {
             continue;
         }
+        let max_attachments = crate::match_state::weapon_attachment_limit(perk1, slot, buffs[slot]);
         if (id as usize) >= table_len {
             return Err(crate::ClassRejectReason::UnknownWeaponId);
         }

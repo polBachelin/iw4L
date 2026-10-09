@@ -55,8 +55,57 @@ impl Plugin for MenuPlugin {
     }
 }
 
+const FRONTEND_ROOT_MENU: &str = "iw4l_main";
+const SURVIVAL_ROOT_MENU: &str = "iw4l_survival_end";
+/// MW3's survival HUD menu, as the specialops zones name it. The gametype
+/// script draws the wave, the enemies left and the credits with hudelems, so
+/// this menu is only reported: in MW3's own data it carries no items, just
+/// the animation stamps of a HUD whose drawing menu its survival zones lack.
+const SURVIVAL_HUD_MENU: &str = "surhud_display";
+
+/// Survival has no multiplayer frontend to extend, so only the menus that stand
+/// on their own are installed. A finished run lands on the survival end screen,
+/// whose replay button starts `zone` again.
+pub fn install_survival_menus(
+    catalog: &mut asset_game::MenuCatalog,
+    zone: &str,
+) -> Result<(), String> {
+    catalog.load_definitions(include_str!("../menus/connection_error.json"))?;
+    catalog.load_definitions(include_str!("../menus/map_error.json"))?;
+    catalog.load_definitions(include_str!("../menus/pause.json"))?;
+    catalog.load_definitions(include_str!("../menus/survival_end.json"))?;
+    let replay = catalog
+        .menus
+        .get_mut(SURVIVAL_ROOT_MENU)
+        .and_then(|menu| menu.items.iter_mut().find(|item| item.name == "play_again"))
+        .ok_or_else(|| {
+            format!("survival menus: `{SURVIVAL_ROOT_MENU}` has no `play_again` item")
+        })?;
+    replay.handlers.action = vec![asset_game::MenuEvent::Script(format!(
+        "play mouse_click; close self; exec \"map {zone}\";"
+    ))];
+    catalog.root_menu = SURVIVAL_ROOT_MENU.into();
+    match catalog.get(SURVIVAL_HUD_MENU) {
+        Some(menu) if menu.items.is_empty() => diag::info!(
+            Ui,
+            "survival menus: `{SURVIVAL_HUD_MENU}` draws nothing (no items); the gametype script draws the survival HUD with hudelems"
+        ),
+        Some(menu) => diag::info!(
+            Ui,
+            "survival menus: `{SURVIVAL_HUD_MENU}` has {} items, not drawn; the gametype script draws the survival HUD with hudelems",
+            menu.items.len()
+        ),
+        None => diag::info!(
+            Ui,
+            "survival menus: no zone holds `{SURVIVAL_HUD_MENU}`; the gametype script draws the survival HUD with hudelems"
+        ),
+    }
+    Ok(())
+}
+
 pub fn install_frontend_menus(catalog: &mut asset_game::MenuCatalog) -> Result<(), String> {
     catalog.load_definitions(include_str!("../menus/frontend.json"))?;
+    catalog.root_menu = FRONTEND_ROOT_MENU.into();
     catalog.load_definitions(include_str!("../menus/connection_error.json"))?;
     catalog.load_definitions(include_str!("../menus/map_error.json"))?;
     catalog.load_definitions(include_str!("../menus/classes.json"))?;

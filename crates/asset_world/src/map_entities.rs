@@ -1065,6 +1065,92 @@ fn iw5_key_name(key: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
+/// IW5's key-type table: the rawfile its engine loads by this name, where
+/// IW4 reads `radiant/keys.txt`.
+pub const IW5_KEY_TABLE_RAWFILE: &str = "*";
+
+const IW5_KEY_STRING: u8 = 2;
+const IW5_KEY_VECTOR: u8 = 4;
+const IW5_KEY_FLOAT: u8 = 5;
+const IW5_KEY_INT: u8 = 6;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Iw5KeyTable {
+    /// The table in the `radiant/keys.txt` grammar (`<type> <key>` per line),
+    /// keyed the way `iw5_entity_string_named` writes the entity string.
+    pub text: String,
+    pub ids: usize,
+    pub named: usize,
+    /// Records whose type the engine sets no value for.
+    pub untyped: usize,
+}
+
+/// Each record is a little-endian canonical string id and a type byte; an id
+/// of 0 is followed by the key's own NUL-terminated name.
+pub fn iw5_key_table(data: &[u8], zlib_compressed: bool) -> Result<Iw5KeyTable, String> {
+    let bytes = if zlib_compressed {
+        std::borrow::Cow::Owned(asset_transport::inflate_zlib(data).map_err(|e| e.to_string())?)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    };
+    let mut table = Iw5KeyTable {
+        text: String::new(),
+        ids: 0,
+        named: 0,
+        untyped: 0,
+    };
+    let mut rest: &[u8] = &bytes;
+    while !rest.is_empty() {
+        let [lo, hi, tail @ ..] = rest else {
+            return Err(format!(
+                "truncated record at byte {}",
+                bytes.len() - rest.len()
+            ));
+        };
+        let id = u16::from_le_bytes([*lo, *hi]);
+        rest = tail;
+        let key = if id == 0 {
+            let end = rest
+                .iter()
+                .position(|b| *b == 0)
+                .ok_or("inline key name has no terminator")?;
+            let name = std::str::from_utf8(&rest[..end]).map_err(|e| e.to_string())?;
+            rest = &rest[end + 1..];
+            table.named += 1;
+            name.to_owned()
+        } else {
+            let id = id.to_string();
+            match iw5_key_name(&id) {
+                Some(name) => {
+                    table.named += 1;
+                    name.to_owned()
+                }
+                None => id,
+            }
+        };
+        let [kind, tail @ ..] = rest else {
+            return Err(format!("key {key} has no type"));
+        };
+        rest = tail;
+        table.ids += 1;
+        let kind = match *kind {
+            IW5_KEY_STRING => "string",
+            IW5_KEY_VECTOR => "vector",
+            IW5_KEY_FLOAT => "float",
+            IW5_KEY_INT => "int",
+            _ => {
+                table.untyped += 1;
+                continue;
+            }
+        };
+        table.text.push_str(kind);
+        table.text.push(' ');
+        table.text.push_str(&key);
+        table.text.push('\n');
+    }
+    Ok(table)
+}
+
 pub fn iw5_entity_string_named(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 4);
     for line in text.lines() {

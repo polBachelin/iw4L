@@ -1231,6 +1231,9 @@ pub(crate) fn hud_targets(world: &World) -> Vec<crate::VehicleHudTarget> {
             if !runtime.live(id) {
                 return None;
             }
+            // A target is marked hostile by its owner's team; an ownerless
+            // vehicle (a survival chopper) has none to mark it by.
+            let owner = vehicle.owner?;
             let entity = runtime.entities.get(id)?;
             Some(crate::VehicleHudTarget {
                 slot: vehicle.slot,
@@ -1241,7 +1244,7 @@ pub(crate) fn hud_targets(world: &World) -> Vec<crate::VehicleHudTarget> {
                 )
                 .ok()?,
                 model: entity.presence?,
-                owner: crate::ClientId(vehicle.owner.unwrap_or(0)),
+                owner: crate::ClientId(owner),
             })
         })
         .collect();

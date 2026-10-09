@@ -3,8 +3,10 @@ use super::*;
 static NEXT_PRODUCTS_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(super) async fn walk_prepared_match(
+    profile: asset_transport::RuntimeProfile,
     zone_ff: Result<PathBuf, String>,
     common_mp: Result<PathBuf, String>,
+    mode_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> (MatchLoadOutcome, Option<Arc<CommonSet>>) {
     let zone_name = zone_ff
@@ -38,8 +40,10 @@ pub(super) async fn walk_prepared_match(
 
     let mut donor_report = Vec::new();
     let key = CommonKey::for_match(
+        profile,
         zone_ff.as_ref().ok().map(PathBuf::as_path),
         common_mp.as_ref().ok().map(PathBuf::as_path),
+        &mode_zones,
         &mut donor_report,
     );
     let waiting = progress.begin_scoped(StageId::CommonAssets, "shared common", None);
@@ -55,6 +59,7 @@ pub(super) async fn walk_prepared_match(
 
     let cloning = std::time::Instant::now();
     let CommonProducts {
+        runtime_namespace,
         scripts: mut iw4_scripts,
         mut t5_scene_models,
         material_seed,
@@ -130,8 +135,13 @@ pub(super) async fn walk_prepared_match(
     let (loaded, map_namespace) = match opened_map {
         Ok((path, image)) => {
             let game = image.game;
+            // An IW5 runtime has no IW5 donor: its own walk holds the surfaces.
             let shared_surfaces = match game {
-                asset_core::ZoneGame::Iw5 => iw5_shared_surfaces,
+                asset_core::ZoneGame::Iw5
+                    if runtime_namespace != Some(asset_core::AssetNamespace::Iw5) =>
+                {
+                    iw5_shared_surfaces
+                }
                 _ => shared_surfaces,
             };
             (
@@ -214,18 +224,21 @@ pub(super) async fn walk_prepared_match(
         _ => {}
     }
 
-    if matches!(
-        map_namespace,
-        Some(
-            asset_core::AssetNamespace::T5
-                | asset_core::AssetNamespace::Iw5
-                | asset_core::AssetNamespace::T6
-        )
-    ) && !foreign_faction_rows(&mut iw4_scripts, &facts.team_settings)
-    {
-        report.push(format!(
-            "team rows gap: {FACTION_TABLE} lacks {IW4_ALLIES_CHARSET}/{IW4_AXIS_CHARSET}; IW4 scripts show IW4 teams"
-        ));
+    // A map of the runtime's own game is served by the runtime's faction table
+    // as authored; only a foreign map needs its teams written into those rows.
+    if map_namespace != runtime_namespace {
+        match runtime_namespace {
+            Some(asset_core::AssetNamespace::Iw4) => {
+                if !foreign_faction_rows(&mut iw4_scripts, &facts.team_settings) {
+                    report.push(format!(
+                        "team rows gap: {FACTION_TABLE} lacks {IW4_ALLIES_CHARSET}/{IW4_AXIS_CHARSET}; IW4 scripts show IW4 teams"
+                    ));
+                }
+            }
+            runtime => report.push(format!(
+                "team rows gap: {map_namespace:?} map under {runtime:?} scripts; only IW4 scripts take a foreign map's faction rows"
+            )),
+        }
     }
     let map_scripts = match map_namespace {
         Some(asset_core::AssetNamespace::T5 | asset_core::AssetNamespace::T6) => {
@@ -239,13 +252,19 @@ pub(super) async fn walk_prepared_match(
     };
     let mut scripts = iw4_scripts;
     scripts.overlay(map_scripts);
-    scripts.insert_source(
-        "iw4l_t6/equipment",
-        crate::map_scripts::T6_EQUIPMENT.to_owned(),
-    );
+    match runtime_namespace {
+        Some(asset_core::AssetNamespace::Iw5) => {
+            crate::survival::insert_survival_scripts(&mut scripts);
+        }
+        _ => scripts.insert_source(
+            "iw4l_t6/equipment",
+            crate::map_scripts::T6_EQUIPMENT.to_owned(),
+        ),
+    }
     report.push(format!(
-        "GSC source assets: {} (map overrides common_mp)",
-        scripts.len()
+        "GSC source assets: {} (map overrides common_mp) tables={}",
+        scripts.len(),
+        scripts.tables().len()
     ));
 
     report.push(format!(

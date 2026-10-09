@@ -46,6 +46,8 @@ pub enum UiMenuRequest {
     Focus { menu: String, item: String },
     Key(UiMenuKey),
     Text(String),
+    /// The answer a menu's `scriptmenuresponse` sends, as if that menu sent it.
+    Response { menu: String, response: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

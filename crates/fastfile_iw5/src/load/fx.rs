@@ -66,10 +66,13 @@ fn load_fx_elem_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Pt
     )?;
 
     let vis = p.at(s.layout(sz::FX_ELEM_VISUALS_OFF, 200));
+    // Each array and extended body is fixed up in its slot, as MW2's loader
+    // does, so a capture reading the elem after the walk finds it.
     if elem_type == fx_elem::DECAL {
         if s.begin_body(vis)? {
             let mark = s.layout(sz::FX_ELEM_MARK_VISUALS, 16);
             let arr = s.alloc_load(4, mark * visual_count)?;
+            s.fixup_slot(vis, arr)?;
             for i in 0..visual_count {
                 let m = arr.at(i * mark);
                 asset_ptr_at(s, links, AssetType::Material, m.at(0))?;
@@ -80,6 +83,7 @@ fn load_fx_elem_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Pt
         if s.begin_body(vis)? {
             let visual = s.layout(sz::FX_ELEM_VISUALS, 8);
             let arr = s.alloc_load(4, visual * visual_count)?;
+            s.fixup_slot(vis, arr)?;
             for i in 0..visual_count {
                 load_fx_elem_visuals(s, links, arr.at(i * visual), elem_type)?;
             }
@@ -97,6 +101,7 @@ fn load_fx_elem_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Pt
         fx_elem::TRAIL => {
             if s.begin_body(extended)? {
                 let t = s.alloc_load(4, s.layout(sz::FX_TRAIL_DEF, 48))?;
+                s.fixup_slot(extended, t)?;
                 let vert_count = s.i32_at(t, sz::FX_TRAIL_VERT_COUNT_OFF)?.max(0) as usize;
                 let ind_count = s
                     .i32_at(t, s.layout(sz::FX_TRAIL_IND_COUNT_OFF, 32))?
@@ -113,12 +118,14 @@ fn load_fx_elem_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Pt
         }
         fx_elem::SPARK_FOUNTAIN => {
             if s.begin_body(extended)? {
-                s.alloc_load(4, sz::FX_SPARK_FOUNTAIN_DEF)?;
+                let b = s.alloc_load(4, sz::FX_SPARK_FOUNTAIN_DEF)?;
+                s.fixup_slot(extended, b)?;
             }
         }
         fx_elem::SPOT_LIGHT => {
             if s.begin_body(extended)? {
-                s.alloc_load(4, sz::FX_SPOT_LIGHT_DEF)?;
+                let b = s.alloc_load(4, sz::FX_SPOT_LIGHT_DEF)?;
+                s.fixup_slot(extended, b)?;
             }
         }
         _ => {
@@ -153,16 +160,18 @@ pub(super) fn load_impact_fx(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSi
     let p = s.alloc_load(4, s.layout(sz::FX_IMPACT_TABLE, 16))?;
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
+    let mut entries = None;
     if s.begin_body(p.at(s.layout(4, 8)))? {
         let width = s.pointer_bytes();
         let entry = s.layout(sz::FX_IMPACT_ENTRY, 280);
-        let arr = s.alloc_load(4, entry * 15)?;
-        for i in 0..15 {
+        let arr = s.alloc_load(4, entry * sz::FX_IMPACT_TABLE_ROWS)?;
+        entries = Some(arr);
+        for i in 0..sz::FX_IMPACT_TABLE_ROWS {
             let e = arr.at(i * entry);
             for j in 0..sz::SURF_TYPE_NUM {
                 asset_ptr_at(s, links, AssetType::Fx, e.at(j * width))?;
             }
-            for j in 0..4 {
+            for j in 0..sz::FX_IMPACT_FLESH_COUNT {
                 asset_ptr_at(
                     s,
                     links,
@@ -171,6 +180,21 @@ pub(super) fn load_impact_fx(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSi
                 )?;
             }
         }
+    }
+    let name = match s.ptr_at(p, 0)? {
+        ZonePtr::Offset(name) => Some(s.resolve_alias(name)),
+        _ => None,
+    };
+    if let Some(entries) = entries {
+        links.capture_impact_fx(
+            s,
+            crate::zone::FxImpactTableGeometry {
+                header: p,
+                name,
+                entries,
+                row_count: sz::FX_IMPACT_TABLE_ROWS,
+            },
+        )?;
     }
     s.pop()
 }

@@ -488,8 +488,11 @@ fn profile_item(world: &mut World, client: u32, class: &str, slot: &str) -> i32 
         }
         "specialty1" | "specialty2" | "specialty3" => {
             let index = usize::from(slot.as_bytes()[9] - b'1');
-            crate::match_state::class_catalog_perk_name(def.perks[index])
-                .map_or(0, |perk| stats_number(world, perk))
+            let perk = FrameWorld::from_world(world)
+                .class_catalog()
+                .perk_name(def.perks[index])
+                .map(str::to_owned);
+            perk.map_or(0, |perk| stats_number(world, &perk))
         }
         _ => 0,
     }

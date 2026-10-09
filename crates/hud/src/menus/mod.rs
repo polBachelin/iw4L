@@ -82,6 +82,28 @@ fn painted_def(def: &MenuDef, open: &OpenMenu) -> MenuDef {
     out
 }
 
+/// Asks the host to stop the game while the in-game main menu is the menu
+/// taking input, in a mode whose main menu pauses. Worked out again every
+/// frame, so closing the menu, another menu on top of it or leaving the match
+/// withdraws the request.
+pub(crate) fn request_host_pause(
+    menus: Res<ScriptMenus>,
+    presented: Res<PresentedSnapshot>,
+    local: Res<LocalPresentClient>,
+    screen: Res<AppScreen>,
+    mut request: ResMut<net::HostPauseRequest>,
+) {
+    let in_game = matches!(*screen, AppScreen::InGame | AppScreen::ClassSelect);
+    let menu = presented
+        .snapshot()
+        .filter(|snapshot| in_game && snapshot.meta.kind.main_menu_pauses())
+        .and_then(|snapshot| snapshot.meta.script_dvars(local.0).string(MAIN_MENU_DVAR))
+        .zip(menus.input_menu())
+        .filter(|(main, top)| top.name.eq_ignore_ascii_case(main))
+        .map(|(_, top)| top.name.clone());
+    request.set_if_neq(net::HostPauseRequest(menu));
+}
+
 #[derive(Component)]
 pub(crate) struct ScriptMenuRaster;
 
@@ -148,7 +170,7 @@ pub(crate) struct MenuOutputs<'w> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_script_menus(
     surface: Res<crate::surface::Hud2dSurface>,
-    catalog: Option<Res<MenuCatalog>>,
+    (catalog, host_namespace): (Option<Res<MenuCatalog>>, assets::HostNamespace),
     strings: Option<Res<PreparedLocalizedStrings>>,
     teams: Option<Res<SessionTeamSettings>>,
     presented: Res<PresentedSnapshot>,
@@ -164,6 +186,7 @@ pub(crate) fn update_script_menus(
     mut images: ResMut<Assets<Image>>,
     mut pass: ResMut<HudTessPass>,
 ) {
+    let chrome = host_namespace.get();
     pass.script_menus = TessJob::Hide;
     if torn.read().count() > 0 {
         out.binding.command = None;
@@ -205,6 +228,7 @@ pub(crate) fn update_script_menus(
         input.frontend_strings.as_deref()
     };
     let world = MenuWorld {
+        host: chrome,
         ms: crate::scorebar::milliseconds() as i32,
         in_game,
         party: &input.party,
@@ -239,6 +263,7 @@ pub(crate) fn update_script_menus(
                 .snapshot()
                 .and_then(|snap| snap.meta.for_client(local.0))
                 .is_some_and(|meta| meta.radar_blocked),
+        player_data: meta.filter(|_| in_game).map(|meta| &meta.player_data),
     };
 
     let mut runner = Runner {
@@ -253,7 +278,7 @@ pub(crate) fn update_script_menus(
     };
 
     if frontend && screen_changed {
-        runner.open("iw4l_main");
+        runner.open_root();
         if let Some(def) = catalog.get("main")
             && !def.sound_name.is_empty()
         {
@@ -311,6 +336,9 @@ pub(crate) fn update_script_menus(
             UiMenuRequest::Key(UiMenuKey::Backspace) => pressed.backspace = true,
             UiMenuRequest::Key(UiMenuKey::Delete) => pressed.delete = true,
             UiMenuRequest::Text(text) => pressed.text.push(text),
+            UiMenuRequest::Response { menu, response } => {
+                runner.menus.responses.push((menu, response))
+            }
         }
     }
     // Reopen after a teardown resets the stack; only acknowledgement clears
@@ -539,6 +567,7 @@ pub(crate) fn update_script_menus(
             ChromeAssets {
                 catalog: Some(catalog),
                 localize,
+                host: chrome,
             },
             ChromeMenuAnim::IDENTITY,
             &mut exprs,
@@ -667,7 +696,7 @@ fn handle_input(
     if pressed.escape {
         match runner.menus.input_menu().map(|m| m.name.clone()) {
             Some(top) => runner.escape(&top),
-            None if !runner.world.in_game => runner.open("iw4l_main"),
+            None if !runner.world.in_game => runner.open_root(),
             None => {
                 let main = runner
                     .world

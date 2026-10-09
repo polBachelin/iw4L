@@ -139,7 +139,7 @@ fn queue_match_clips(
     catalog: Option<Res<asset_game::MenuCatalog>>,
     script_sound: Option<Res<asset_audio::SessionMapScriptSound>>,
     teams: Option<Res<asset_game::SessionTeamSettings>>,
-    namespace: Option<Res<SoundBankNamespace>>,
+    (namespace, host): (Option<Res<SoundBankNamespace>>, assets::HostNamespace),
     loading: Option<Res<MapLoadProcess>>,
     mut prep: ResMut<MatchClipPrep>,
     mut announcer: ResMut<crate::match_voices::AnnouncerRoutes>,
@@ -214,6 +214,7 @@ fn queue_match_clips(
     if namespace.generation != scope {
         return;
     }
+    let host = host.get();
     let mut set = MatchRequests::default();
     let mut aliases = 0usize;
     for weapon in 1..=weapons.registry().len() as u32 {
@@ -221,7 +222,7 @@ fn queue_match_clips(
     }
     for alias in movement_prepare_names() {
         aliases += 1;
-        request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
+        request_named(clips, &bank.0, host, alias, &mut set);
     }
     if let Some(identity) = identity.as_deref() {
         let ns = namespace.namespace;
@@ -270,7 +271,7 @@ fn queue_match_clips(
     if let Some(catalog) = catalog.as_deref() {
         for alias in catalog.played_sound_aliases().into_iter().chain(MENU_CODE) {
             aliases += 1;
-            request_named(clips, &bank.0, AssetNamespace::Iw4, alias, &mut set);
+            request_named(clips, &bank.0, host, alias, &mut set);
         }
     }
     for alias in MATCH_HUD_PULSE
@@ -281,7 +282,7 @@ fn queue_match_clips(
         .chain(MATCH_CLOCK)
     {
         aliases += 1;
-        let (ns, alias) = crate::aliases::match_ui_alias(namespace.namespace, alias);
+        let (ns, alias) = crate::aliases::match_ui_alias(host, namespace.namespace, alias);
         request_named(clips, &bank.0, ns, alias, &mut set);
     }
     let mut breath_policies = HashSet::new();

@@ -83,6 +83,19 @@ pub(crate) fn route_ui_commands(
                 }
                 _ => echo(format!("usage: {} <menu>", cmd.name), console, line),
             },
+            "menuresponse" => match cmd.args.as_slice() {
+                [menu, response] => {
+                    menu_requests.write(frame::UiMenuRequest::Response {
+                        menu: menu.clone(),
+                        response: response.clone(),
+                    });
+                }
+                _ => echo(
+                    "usage: menuresponse <menu> <response>".into(),
+                    console,
+                    line,
+                ),
+            },
             "menutext" => {
                 menu_requests.write(frame::UiMenuRequest::Text(cmd.args.join(" ")));
             }

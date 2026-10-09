@@ -90,7 +90,7 @@ pub use expr::{
     OP_INKILLCAM, OP_MENUISOPEN, OP_MILLISECONDS, OP_SCOREBOARD_VISIBLE, OP_SECONDSASCOUNTDOWN,
     OP_SPLASHHASICON, OP_SPLASHROWNUM, OP_TEAMFIELD, OP_UIACTIVE, Operand, PartyFlag, Statement,
     WeaponLockView, evaluate as evaluate_expression, evaluate_float, evaluate_string,
-    is_expression_true, source_int, source_str,
+    is_expression_true, op_by_name, source_int, source_str,
 };
 pub use flashbang::{
     SCREEN_BLEND_BLURRED, SCREEN_BLEND_FLASHED, SCREEN_BLEND_NONE, ShellshockLookParms,

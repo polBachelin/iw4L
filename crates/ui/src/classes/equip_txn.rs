@@ -23,6 +23,7 @@ pub fn apply_pending_class_equip(
     mut status: ResMut<ClassSelectStatus>,
     local: Res<LocalPresentClient>,
     signon: Option<Res<net::SignonState>>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
 ) {
     let Some(req) = pending.0.take() else {
         return;
@@ -52,12 +53,14 @@ pub fn apply_pending_class_equip(
         );
         return;
     };
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
     let resolved = weapons
         .as_ref()
         .ok_or_else(|| "Weapon catalog is not ready".to_owned())
         .and_then(|weapons| {
             let row = session::ClassRow::from(&frame::HostClassSlot::from(slot));
-            session::loadout::resolve_personal_class(&row, weapons.registry())
+            let catalog = session::class_catalog(weapons.registry(), profile);
+            session::loadout::resolve_personal_class(&row, weapons.registry(), &catalog)
         });
     let loadout = match resolved {
         Ok(loadout) => loadout,
@@ -230,6 +233,7 @@ fn consume_class_select_handoff(
     mut catalog: ResMut<crate::ClassLoadoutCatalog>,
     mut store: ResMut<SessionClassStore>,
     weapons: Option<Res<assets::PreparedWeapons>>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
 ) {
     if !handoff.pending {
         return;
@@ -237,10 +241,16 @@ fn consume_class_select_handoff(
     let Some(weapons) = weapons else {
         return;
     };
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let class_catalog = std::sync::Arc::new(session::class_catalog(weapons.registry(), profile));
     if catalog.resolver.0.is_none() {
-        *catalog = crate::ClassLoadoutCatalog::from_weapon_registry(weapons.registry().clone());
+        *catalog = crate::ClassLoadoutCatalog::from_weapon_registry(
+            weapons.registry().clone(),
+            class_catalog,
+        );
     } else {
         catalog.resolver.0 = Some(weapons.registry().clone());
+        catalog.bind_class_catalog(class_catalog);
     }
     catalog.revision = catalog.revision.wrapping_add(1);
     catalog.primary = std::mem::take(&mut handoff.primary);

@@ -254,6 +254,21 @@ impl Definition {
         )))
     }
 
+    /// Whether the enum field at `lookup` has an entry spelled `name`;
+    /// `None` when the field is not an enum.
+    pub fn enum_names(&self, lookup: Lookup, name: &str) -> Result<Option<bool>, Error> {
+        let DataType::Enum(i) = lookup.ty else {
+            return Ok(None);
+        };
+        let name = c_prefix(name);
+        let en = self.enums.get(i).ok_or(Error::InvalidDefinition)?;
+        Ok(Some(
+            en.entries
+                .binary_search_by(|e| e.name.as_str().cmp(name))
+                .is_ok(),
+        ))
+    }
+
     pub fn read<'a>(&'a self, data: &'a [u8], lookup: Lookup) -> Result<Value<'a>, Error> {
         Ok(match lookup.ty {
             DataType::Int => Value::Int(i32::from_le_bytes(

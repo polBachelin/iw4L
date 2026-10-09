@@ -167,6 +167,133 @@ pub const OP_GETMAPNAME: i32 = 0xA1;
 
 pub const OP_SCOREBOARDEXTERNALMUTENOTICE: i32 = 0x9E;
 
+// MW3's operators that IW4's table has no number for. The evaluator numbers
+// them past the end of IW4's table, so no IW4 dump can name one.
+
+pub const OP_LOCALCLIENTUIMILLISECONDS: i32 = 0x200;
+
+pub const OP_LEVELFOREXPERIENCESO: i32 = 0x201;
+
+pub const OP_MENUISTOPMOST: i32 = 0x202;
+
+pub const OP_SELECT: i32 = 0x203;
+
+pub const OP_ISDEMOPLAYING: i32 = 0x204;
+
+/// The evaluator's operator number for an operator a game's expression parser
+/// names `name`, or `None` when the evaluator implements no operator by that
+/// name. Dumps carry these numbers whatever game a menu came from: a reader
+/// for a game that numbers its operators differently translates through its
+/// own name list and this table.
+pub fn op_by_name(name: &str) -> Option<i32> {
+    Some(match name {
+        "NOOP" => OP_NOOP,
+        ")" => OP_RIGHTPAREN,
+        "*" => OP_MULTIPLY,
+        "/" => OP_DIVIDE,
+        "%" => OP_MODULUS,
+        "+" => OP_ADD,
+        "-" => OP_SUBTRACT,
+        "!" => OP_NOT,
+        "<" => OP_LESSTHAN,
+        "<=" => OP_LESSTHANEQUALTO,
+        ">" => OP_GREATERTHAN,
+        ">=" => OP_GREATERTHANEQUALTO,
+        "==" => OP_EQUALS,
+        "!=" => OP_NOTEQUAL,
+        "&&" => OP_AND,
+        "||" => OP_OR,
+        "(" => OP_LEFTPAREN,
+        "," => OP_COMMA,
+        "dvarint(static)" => OP_STATICDVARINT,
+        "dvarbool(static)" => OP_STATICDVARBOOL,
+        "dvarstring(static)" => OP_STATICDVARSTRING,
+        "int" => OP_INT,
+        "string" => OP_STRING,
+        "float" => OP_FLOAT,
+        "sin" => OP_SIN,
+        "cos" => OP_COS,
+        "min" => OP_MIN,
+        "max" => OP_MAX,
+        "milliseconds" => OP_MILLISECONDS,
+        "dvarint" => OP_DVARINT,
+        "dvarbool" => OP_DVARBOOL,
+        "dvarfloat" => OP_DVARFLOAT,
+        "dvarstring" => OP_DVARSTRING,
+        "ui_active" => OP_UIACTIVE,
+        "flashbanged" => OP_FLASHBANGED,
+        "missilecam" => OP_MISSILECAM,
+        "scoped" => OP_SCOPED,
+        "scoreboard_visible" => OP_SCOREBOARD_VISIBLE,
+        "inkillcam" => OP_INKILLCAM,
+        "inkillcamnpc" => OP_INKILLCAMNPC,
+        "player" => OP_PLAYERFIELD,
+        "getperk" => OP_GETPERK,
+        "selecting_location" => OP_SELECTINGLOCATION,
+        "selecting_direction" => OP_SELECTINGDIRECTION,
+        "team" => OP_TEAMFIELD,
+        "otherteam" => OP_OTHERTEAMFIELD,
+        "marinesfield" => OP_MARINESFIELD,
+        "opforfield" => OP_OPFORFIELD,
+        "menuisopen" => OP_MENUISOPEN,
+        "inlobby" => OP_INLOBBY,
+        "inprivateparty" => OP_INPRIVATEPARTY,
+        "privatepartyhost" => OP_PRIVATEPARTYHOST,
+        "privatepartyhostinlobby" => OP_PRIVATEPARTYHOSTINLOBBY,
+        "adsjavelin" => OP_ADSJAVELIN,
+        "weaplockblink" => OP_WEAPLOCKBLINK,
+        "weapattacktop" => OP_WEAPATTACKTOP,
+        "weapattackdirect" => OP_WEAPATTACKDIRECT,
+        "weaplocking" => OP_WEAPLOCKING,
+        "weaplocked" => OP_WEAPLOCKED,
+        "weaplocktooclose" => OP_WEAPLOCKTOOCLOSE,
+        "weaplockscreenposx" => OP_WEAPLOCKSCREENPOSX,
+        "weaplockscreenposy" => OP_WEAPLOCKSCREENPOSY,
+        "tablelookup" => OP_TABLELOOKUP,
+        "tablelookupbyrow" => OP_TABLELOOKUPBYROW,
+        "locstring" => OP_LOCALIZESTRING,
+        "localvarint" => OP_LOCALVARINT,
+        "localvarbool" => OP_LOCALVARBOOL,
+        "localvarfloat" => OP_LOCALVARFLOAT,
+        "localvarstring" => OP_LOCALVARSTRING,
+        "timeleft" => OP_TIMELEFT,
+        "secondsascountdown" => OP_SECONDSASCOUNTDOWN,
+        "gametypename" => OP_GAMETYPENAME,
+        "gametypedescription" => OP_GAMETYPEDESCRIPTION,
+        "scoreatrank" => OP_SCORE,
+        "spectatingclient" => OP_SPECTATINGCLIENT,
+        "spectatingfree" => OP_SPECTATINGFREE,
+        "keybinding" => OP_KEYBINDING,
+        "actionslotusable" => OP_ACTIONSLOTUSABLE,
+        "getplayerdata" => OP_GETPLAYERDATA,
+        "isitemunlocked" => OP_IS_ITEM_UNLOCKED,
+        "weaponname" => OP_WEAPONNAME,
+        "isreloading" => OP_ISRELOADING,
+        "radarisjammed" => OP_RADARISJAMMED,
+        "radarjamintensity" => OP_RADARJAMINTENSITY,
+        "isempjammed" => OP_EMPJAMMED,
+        "getsplashtext" => OP_GETSPLASHTEXT,
+        "getsplashdescription" => OP_GETSPLASHDESCRIPTION,
+        "getsplashmaterial" => OP_GETSPLASHMATERIAL,
+        "splashhasicon" => OP_SPLASHHASICON,
+        "splashrownum" => OP_SPLASHROWNUM,
+        "getfocuseditemx" => OP_GETFOCUSEDITEMX,
+        "getfocuseditemy" => OP_GETFOCUSEDITEMY,
+        "getfocuseditemwidth" => OP_GETFOCUSEDITEMWIDTH,
+        "getfocuseditemheight" => OP_GETFOCUSEDITEMHEIGHT,
+        "scoreboardexternalmutenotice" => OP_SCOREBOARDEXTERNALMUTENOTICE,
+        "getmapname" => OP_GETMAPNAME,
+        "getplayercardinfo" => OP_GETPLAYERCARDINFO,
+        "getadjustedsafeareavertical" => OP_GETADJUSTEDSAFEAREAVERTICAL,
+        "localclientuimilliseconds" => OP_LOCALCLIENTUIMILLISECONDS,
+        "levelforexperienceso" => OP_LEVELFOREXPERIENCESO,
+        "menuistopmost" => OP_MENUISTOPMOST,
+        "select" => OP_SELECT,
+        "isdemoplaying" => OP_ISDEMOPLAYING,
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartyFlag {
     InLobby,
@@ -191,7 +318,9 @@ pub enum Operand {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExprError {
     TruncatedDump,
-    FunctionBodyMissing,
+    /// The dump names an operator the menu reader could not translate
+    /// (`fnmiss <what>`).
+    FunctionBodyMissing(String),
     UnsupportedOp(i32),
     StackUnderflow,
     StrayOperands,
@@ -347,6 +476,22 @@ pub trait ExprHost {
 
     fn scoreboard_visible(&self) -> Result<i32, ExprError> {
         Ok(0)
+    }
+
+    /// The Special Ops rank an amount of experience earns.
+    fn level_for_experience_so(&self, experience: i32) -> Result<i32, ExprError> {
+        let _ = experience;
+        Err(ExprError::UnsupportedOp(OP_LEVELFOREXPERIENCESO))
+    }
+
+    /// Whether `name` is the menu on top of the open stack.
+    fn menu_is_topmost(&self, name: &str) -> Result<i32, ExprError> {
+        let _ = name;
+        Err(ExprError::UnsupportedOp(OP_MENUISTOPMOST))
+    }
+
+    fn is_demo_playing(&self) -> Result<i32, ExprError> {
+        Err(ExprError::UnsupportedOp(OP_ISDEMOPLAYING))
     }
 
     fn menu_is_open(&self, name: &str) -> Result<i32, ExprError> {
@@ -539,7 +684,10 @@ fn parse_seq(toks: &[&str], mut i: usize) -> Result<(Vec<Entry>, usize), ExprErr
                 out.push(Entry::Operand(Operand::Str(string)));
                 i += 1;
             }
-            "fnmiss" => return Err(ExprError::FunctionBodyMissing),
+            "fnmiss" => {
+                let what = toks.get(i + 1).copied().unwrap_or("");
+                return Err(ExprError::FunctionBodyMissing(String::from(what)));
+            }
             "op" => {
                 i += 1;
                 let n = toks.get(i).ok_or(ExprError::TruncatedDump)?;
@@ -721,8 +869,33 @@ fn run_op(
             data.push(logic_op(op, a, b)?);
             Ok(())
         }
-        OP_MILLISECONDS => {
+        OP_MILLISECONDS | OP_LOCALCLIENTUIMILLISECONDS => {
             data.push(Operand::Int(host.milliseconds()));
+            Ok(())
+        }
+        OP_LEVELFOREXPERIENCESO => {
+            let experience = source_int(&pop_data(data)?);
+            data.push(Operand::Int(host.level_for_experience_so(experience)?));
+            Ok(())
+        }
+        OP_MENUISTOPMOST => {
+            let name = source_str(&pop_data(data)?);
+            data.push(Operand::Int(host.menu_is_topmost(&name)?));
+            Ok(())
+        }
+        OP_ISDEMOPLAYING => {
+            data.push(Operand::Int(host.is_demo_playing()?));
+            Ok(())
+        }
+        OP_SELECT => {
+            let otherwise = pop_data(data)?;
+            let then = pop_data(data)?;
+            let condition = pop_data(data)?;
+            data.push(if source_int(&condition) != 0 {
+                then
+            } else {
+                otherwise
+            });
             Ok(())
         }
         OP_KEYBINDING => {

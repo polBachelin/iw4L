@@ -51,7 +51,9 @@ pub(crate) fn update_mantle_hint(
     mut images: ResMut<Assets<Image>>,
     mut gaps: ResMut<HudPresentationGaps>,
     mut pass: ResMut<HudTessPass>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     let Some(ps) = presented.alive_player(local.0) else {
         hide(&mut pass);
         return;
@@ -142,11 +144,7 @@ pub(crate) fn update_mantle_hint(
     );
 
     let pic_ok = hud_images
-        .get(
-            crate::images::HUD_CHROME_NAMESPACE,
-            HINT_MANTLE_MATERIAL,
-            &mut images,
-        )
+        .get(chrome, HINT_MANTLE_MATERIAL, &mut images)
         .is_some();
     if !pic_ok {
         gaps.raise(GapCause::MantleHintImageMissing {
@@ -161,7 +159,7 @@ pub(crate) fn update_mantle_hint(
     let list = Draw2dList {
         cmds: vec![
             Draw2dCmd {
-                material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+                material_namespace: chrome,
                 x: (text_applied.x + 0.5).floor(),
                 y: (text_applied.y + 0.5).floor(),
                 w: text_applied.w,
@@ -188,7 +186,7 @@ pub(crate) fn update_mantle_hint(
                 layer: 1,
             },
             Draw2dCmd {
-                material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+                material_namespace: chrome,
                 x: (pic_applied.x + 0.5).floor(),
                 y: (pic_applied.y + 0.5).floor(),
                 w: pic_applied.w,
@@ -209,11 +207,7 @@ pub(crate) fn update_mantle_hint(
     fonts.insert(font_name.to_owned(), font);
     let (quads, _) = tessellate_fonts(&list, &fonts);
     let tex_ok = hud_images
-        .get(
-            crate::images::HUD_CHROME_NAMESPACE,
-            &font_material,
-            &mut images,
-        )
+        .get(chrome, &font_material, &mut images)
         .is_some();
     if quads.is_empty() || !tex_ok {
         if !tex_ok && !quads.is_empty() {

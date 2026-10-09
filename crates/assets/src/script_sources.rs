@@ -28,6 +28,15 @@ pub struct ScriptTable {
     pub cells: Vec<String>,
 }
 
+impl ScriptTable {
+    pub fn rows(&self) -> impl Iterator<Item = &[String]> {
+        self.cells.chunks_exact(self.columns.max(1)).take(self.rows)
+    }
+}
+
+/// Where the key-type table lives, whichever rawfile a game ships it in.
+pub(crate) const RADIANT_KEYS: &str = "radiant/keys.txt";
+
 fn normalize(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
 }
@@ -99,7 +108,7 @@ impl ScriptSources {
 
     pub(crate) fn capture(&mut self, name: &str, data: &[u8], compressed: bool) {
         let name = normalize(name);
-        if name.ends_with(".cfg") || name.ends_with(".shock") || name == "radiant/keys.txt" {
+        if name.ends_with(".cfg") || name.ends_with(".shock") || name == RADIANT_KEYS {
             if let Some(text) = asset_world::decode_rawfile_text(data, compressed) {
                 self.configs.insert(name, text);
             }
@@ -170,6 +179,32 @@ impl ScriptSources {
             ScriptSource {
                 bytes: Ok(source.into_bytes()),
                 origin: ScriptSourceOrigin::BuiltIn,
+            },
+        );
+    }
+
+    pub(crate) fn insert_config(&mut self, name: &str, text: String) {
+        self.configs.insert(normalize(name), text);
+    }
+
+    pub(crate) fn insert_table(&mut self, name: &str, csv: &str) {
+        let rows: Vec<Vec<&str>> = csv
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.split(',').map(str::trim).collect())
+            .collect();
+        let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+        let cells = rows
+            .iter()
+            .flat_map(|row| (0..columns).map(|column| row.get(column).copied().unwrap_or("")))
+            .map(str::to_owned)
+            .collect();
+        self.tables.insert(
+            normalize(name),
+            ScriptTable {
+                columns,
+                rows: rows.len(),
+                cells,
             },
         );
     }

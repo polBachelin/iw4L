@@ -112,7 +112,9 @@ pub(crate) fn update_compass(
     view: Option<Res<frame::ViewSubject>>,
     local_vars: Res<crate::playercard::UiLocalVars>,
     hud_input: Option<Res<frame::HudInputView>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     take_fire_pings(
         &mut ping_bus,
         &presented,
@@ -267,6 +269,7 @@ pub(crate) fn update_compass(
         [player_w, player_h],
         radar,
         jam_fade,
+        chrome,
     );
 
     let Some(map_ns) = hud_images.map_namespace() else {
@@ -325,7 +328,7 @@ pub(crate) fn update_compass(
                 t1: 1.0,
                 color: [1.0, 1.0, 1.0, jam_fade],
                 material: objective.icon.clone(),
-                material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+                material_namespace: chrome,
                 op: Draw2dOp::StretchPic,
                 provenance: Draw2dProvenance::Objective,
                 layer: 1,
@@ -348,6 +351,7 @@ pub(crate) fn update_compass(
         COMPASS_ENEMY_FIRING_PING_IMAGE,
         &live,
         jam_fade,
+        chrome,
     ));
     let (mut quads, _) = crate::draw2d::tessellate_fonts(&list, &fonts);
     if let Some(snapshot) = presented.snapshot() {
@@ -380,6 +384,7 @@ pub(crate) fn update_compass(
                 icon,
                 crate::chrome::atlas_frame_st(catalog.as_deref(), icon, cg_clock.time()),
                 Draw2dProvenance::OwnerDraw(158),
+                chrome,
             ));
         }
         for (id, _) in &snapshot.players {
@@ -412,6 +417,7 @@ pub(crate) fn update_compass(
                 "compassping_friendly_mp",
                 [0.0, 0.0, 1.0, 1.0],
                 Draw2dProvenance::OwnerDraw(158),
+                chrome,
             ));
         }
     }
@@ -434,6 +440,7 @@ fn build_compass_list(
     player_size: [f32; 2],
     radar_center_s: Option<f32>,
     jam_fade: f32,
+    chrome: asset_core::AssetNamespace,
 ) -> Draw2dList {
     let (map_index, map_item) = map;
     let horz = map_item.rect.horz_align as i32;
@@ -471,7 +478,7 @@ fn build_compass_list(
     });
     if let Some(center_s) = radar_center_s {
         cmds.push(Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: applied.x,
             y: applied.y,
             w: applied.w,
@@ -506,7 +513,7 @@ fn build_compass_list(
             vert,
         );
         cmds.push(Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: pr.x,
             y: pr.y,
             w: pr.w,
@@ -536,6 +543,7 @@ fn enemy_ping_cmds(
     ping_image: &str,
     pings: &[([f32; 2], f32)],
     jam_fade: f32,
+    chrome: asset_core::AssetNamespace,
 ) -> Vec<Draw2dCmd> {
     let horz = map_item.rect.horz_align as i32;
     let vert = map_item.rect.vert_align as i32;
@@ -562,7 +570,7 @@ fn enemy_ping_cmds(
             vert,
         );
         cmds.push(Draw2dCmd {
-            material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+            material_namespace: chrome,
             x: pr.x,
             y: pr.y,
             w: pr.w,
@@ -595,6 +603,7 @@ fn friendly_quad(
     material: &str,
     st: [f32; 4],
     provenance: Draw2dProvenance,
+    chrome: asset_core::AssetNamespace,
 ) -> crate::draw2d::Draw2dQuad {
     let map_size = [
         map.rect.w * COMPASS_SIZE_DEFAULT,
@@ -629,7 +638,7 @@ fn friendly_quad(
         ],
         color: [1.0, 1.0, 1.0, alpha],
         material: material.to_owned(),
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+        material_namespace: chrome,
         provenance,
         layer: 1,
         clip: None,

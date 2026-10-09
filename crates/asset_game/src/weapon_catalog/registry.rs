@@ -629,7 +629,7 @@ impl WeaponRegistry {
         if name.is_empty() {
             return None;
         }
-        crate::AssetKey::new(ns, crate::AssetKind::Weapon, gsc_weapon_script_name(name)).ok()
+        crate::AssetKey::new(ns, crate::AssetKind::Weapon, self.script_name_of(index)).ok()
     }
 
     pub fn namespace_count(&self, ns: crate::AssetNamespace) -> usize {
@@ -655,8 +655,13 @@ impl WeaponRegistry {
             .unwrap_or("")
     }
 
+    /// The name the game's scripts call the weapon by: its asset's spelling,
+    /// else the `_mp` spelling of its bare name.
     pub fn script_name_of(&self, index: u32) -> String {
-        gsc_weapon_script_name(self.name_of(index))
+        match self.rows.get(index as usize) {
+            Some(row) if !row.script_name.is_empty() => row.script_name.clone(),
+            _ => gsc_weapon_script_name(self.name_of(index)),
+        }
     }
 
     pub fn configuration_supported(&self, id: u32) -> bool {

@@ -19,6 +19,7 @@ pub mod svc_scores;
 mod svc_script_audio;
 pub mod svc_sound;
 mod time_scale;
+pub use time_scale::HostPauseRequest;
 pub mod transport;
 
 pub use authority::actions::{
@@ -174,6 +175,6 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 111;
+pub const PROTOCOL_VERSION: u32 = 114;
 
 pub use client::fire_verdict::{FireVerdictState, PredictedFireStatus};

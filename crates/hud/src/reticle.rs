@@ -77,7 +77,9 @@ pub(crate) fn update_reticle(
     cg_clock: Res<FrameClock>,
     mut quads: Query<(&ReticleQuad, &mut Node, &mut ImageNode, &mut UiTransform)>,
     life: (MessageReader<LifeStarted>, Res<ViewSubject>),
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     let (mut started, view) = life;
     for ev in started.read() {
         if ev.client == local.0.0 {
@@ -252,7 +254,7 @@ pub(crate) fn update_reticle(
     let weapon_ns = weapons
         .registry()
         .component_namespace_of(viewmodel_index, asset_game::WeaponComponent::Material)
-        .unwrap_or(crate::images::HUD_CHROME_NAMESPACE);
+        .unwrap_or(chrome);
     let center = resolve_slot(
         ReticleSlot::Center,
         assets.center_authored,

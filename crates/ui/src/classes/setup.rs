@@ -95,6 +95,9 @@ pub struct ClassLoadoutCatalog {
     pub excluded: Vec<(String, String)>,
     pub previews: std::collections::BTreeMap<String, asset_game::CacWeaponPreview>,
     pub resolver: CatalogResolver,
+    /// The class catalog classes resolve their perks, deathstreak and buffs
+    /// against; the runtime profile's, read from the resolver's registry.
+    pub class_catalog: std::sync::Arc<sim::ClassCatalog>,
     pub presentation: std::collections::BTreeMap<String, CacItemPresentation>,
 }
 
@@ -121,6 +124,7 @@ impl Default for ClassLoadoutCatalog {
             excluded: Vec::new(),
             previews: std::collections::BTreeMap::new(),
             resolver: CatalogResolver::default(),
+            class_catalog: Default::default(),
             presentation: ClassEditRow::ALL
                 .into_iter()
                 .flat_map(|row| {
@@ -141,7 +145,10 @@ impl Default for ClassLoadoutCatalog {
 }
 
 impl ClassLoadoutCatalog {
-    pub fn from_weapon_registry(registry: std::sync::Arc<asset_game::WeaponRegistry>) -> Self {
+    pub fn from_weapon_registry(
+        registry: std::sync::Arc<asset_game::WeaponRegistry>,
+        class_catalog: std::sync::Arc<sim::ClassCatalog>,
+    ) -> Self {
         let families = registry.weapon_families();
         let mut catalog = Self::default();
         for family in families.offered() {
@@ -202,7 +209,34 @@ impl ClassLoadoutCatalog {
         }
         catalog.excluded = families.excluded().to_vec();
         catalog.resolver = CatalogResolver(Some(registry));
+        catalog.bind_class_catalog(class_catalog);
         catalog
+    }
+
+    /// Binds the class catalog classes are checked against, and offers its
+    /// perks and deathstreaks, so an offered choice is one a class can carry.
+    pub fn bind_class_catalog(&mut self, class_catalog: std::sync::Arc<sim::ClassCatalog>) {
+        let of_slot = |fits: &dyn Fn(sim::ClassCatalogSlot) -> bool| -> Vec<String> {
+            std::iter::once(NO_PERK.to_owned())
+                .chain(
+                    class_catalog
+                        .entries()
+                        .iter()
+                        .filter(|entry| fits(entry.slot))
+                        .map(|entry| entry.name.clone()),
+                )
+                .collect()
+        };
+        self.perks = std::array::from_fn(|slot| {
+            of_slot(&|kind| kind == sim::ClassCatalogSlot::Perk(slot as u8))
+        });
+        self.deathstreak = of_slot(&|kind| kind == sim::ClassCatalogSlot::Deathstreak);
+        for name in self.perks.iter().chain([&self.deathstreak]).flatten() {
+            self.presentation
+                .entry(name.clone())
+                .or_insert_with(|| CacItemPresentation::prepare_perk(name));
+        }
+        self.class_catalog = class_catalog;
     }
 
     pub fn with_weapon_tables(
@@ -364,7 +398,7 @@ impl ClassLoadoutCatalog {
             .as_deref()
             .ok_or("Weapon catalog is not ready")?;
         let row = session::ClassRow::from(&frame::HostClassSlot::from(slot));
-        session::loadout::resolve_personal_class(&row, registry).map(|_| ())
+        session::loadout::resolve_personal_class(&row, registry, &self.class_catalog).map(|_| ())
     }
 
     pub fn validate_edit(&self, slot: &ClassSlotState, row: ClassEditRow) -> Result<(), String> {
@@ -383,7 +417,7 @@ impl ClassLoadoutCatalog {
                 registry,
                 slot.row_value(row),
                 attachments,
-                slot.loadout_rules(),
+                slot.loadout_rules(row),
             )?;
         } else if !self
             .options(row)
@@ -457,6 +491,8 @@ pub struct ClassSlotState {
     pub perk3: String,
     pub deathstreak: String,
     pub camos: [String; 2],
+    /// Primary and secondary weapon buff (MW3 proficiency), empty for none.
+    pub weapon_buffs: [String; 2],
 
     pub lock_reason: Option<String>,
 }
@@ -476,6 +512,7 @@ impl ClassSlotState {
             perk3: slot.perks[2].clone(),
             deathstreak: slot.deathstreak.clone(),
             camos: slot.camos.clone(),
+            weapon_buffs: slot.weapon_buffs.clone(),
             lock_reason: None,
         }
     }
@@ -506,6 +543,7 @@ impl ClassSlotState {
             perk3: perk(2),
             deathstreak: preset.deathstreak.to_owned(),
             camos: Default::default(),
+            weapon_buffs: Default::default(),
             lock_reason: None,
         }
     }
@@ -523,8 +561,17 @@ impl ClassSlotState {
         }
     }
 
-    pub fn loadout_rules(&self) -> asset_game::LoadoutRules {
-        asset_game::LoadoutRules::for_class(&self.perk1)
+    /// The attachment rules for the weapon `row` edits, by the same weapon
+    /// slot order the class resolves in (primary, secondary, lethal, tactical).
+    pub fn loadout_rules(&self, row: ClassEditRow) -> asset_game::LoadoutRules {
+        let slot = match row {
+            ClassEditRow::Secondary => 1,
+            ClassEditRow::Lethal => 2,
+            ClassEditRow::Tactical => 3,
+            _ => 0,
+        };
+        let buff = self.weapon_buffs.get(slot).map_or("", String::as_str);
+        session::weapon_loadout_rules(&self.perk1, slot, buff)
     }
 
     pub fn set_row(&mut self, row: ClassEditRow, value: String) {

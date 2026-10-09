@@ -57,6 +57,13 @@ impl ZoneSoundCapture {
         Some(Self::new(path, game, walk, Some(claim)))
     }
 
+    /// A capture for a zone its caller has named a sound source of its own,
+    /// such as a launch mode's zone, which no fixed name list knows.
+    pub fn claim_source(path: &Path, game: ZoneGame, walk: &'static str) -> Option<Self> {
+        let claim = Claim::take(path)?;
+        Some(Self::new(path, game, walk, Some(claim)))
+    }
+
     pub fn finish(mut self, walk: Result<(), String>) -> Result<SoundCatalog, String> {
         let capture = std::mem::replace(&mut self.capture, Capture::Iw4(SoundCatalog::default()));
         match capture {

@@ -395,6 +395,15 @@ impl LocalizeCatalog {
     }
 }
 
+fn load_localize_catalog_for_zone_game(path: &Path) -> Result<LocalizeCatalog, String> {
+    match asset_transport::zone_game_for_path(path) {
+        Some(ZoneGame::Iw4) | None => load_localize_catalog(path),
+        Some(ZoneGame::Iw5) => load_localize_catalog_iw5(path),
+        Some(ZoneGame::T5) => load_localize_catalog_t5(path),
+        Some(ZoneGame::T6) => load_localize_catalog_t6(path),
+    }
+}
+
 pub fn load_localize_catalog_in_lane(path: &Path) -> Result<LocalizeCatalog, String> {
     let key = localize_cache_key(path);
     if let Some(hit) = cached_localize_catalog(key.as_deref()) {
@@ -407,12 +416,7 @@ pub fn load_localize_catalog_in_lane(path: &Path) -> Result<LocalizeCatalog, Str
     if let Some(hit) = cached_localize_catalog(key.as_deref()) {
         return Ok(hit);
     }
-    let catalog = match asset_transport::zone_game_for_path(path) {
-        Some(ZoneGame::Iw4) | None => load_localize_catalog(path),
-        Some(ZoneGame::Iw5) => load_localize_catalog_iw5(path),
-        Some(ZoneGame::T5) => load_localize_catalog_t5(path),
-        Some(ZoneGame::T6) => load_localize_catalog_t6(path),
-    }?;
+    let catalog = load_localize_catalog_for_zone_game(path)?;
     if let Some(key) = &key
         && let Err(error) = asset_transport::cache_put("localize", key, &catalog.cache_encode())
     {
@@ -571,7 +575,7 @@ pub fn load_mp_localized_strings(
     let mut catalog = LocalizeCatalog::default();
     for name in MP_LOCALIZED_ZONES {
         match crate::find_zone_for_tree(&zone_ff.path, name) {
-            Ok(found) => match load_localize_catalog(&found.path) {
+            Ok(found) => match load_localize_catalog_for_zone_game(&found.path) {
                 Ok(part) => catalog.absorb(part),
                 Err(e) => diag::warn!(Zone, "localize: {name} failed to load ({e})"),
             },

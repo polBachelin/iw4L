@@ -2308,7 +2308,15 @@ impl MaterialCatalog {
             .name
             .and_then(|name| s.cstr(name).ok())
             .map(AssetRef::decode)?;
-        let technique_set = self.link.take_techset()?;
+        let Some(technique_set) = self.link.take_techset() else {
+            // A material another zone holds is written as a stub: its name
+            // with the reference mark and no technique set. It links to that
+            // zone's material by name, or stands as a reference row, which
+            // the finalize drops, until a zone that holds it is walked.
+            return name
+                .is_reference()
+                .then(|| self.take_reference_material_slot(name));
+        };
         let mut textures = Vec::with_capacity(geometry.texture_count);
         if let Some(table) = geometry.textures {
             for i in 0..geometry.texture_count {
@@ -2376,7 +2384,7 @@ impl MaterialCatalog {
                 draw_surf: geometry.draw_surf,
                 sort_key: geometry.sort_key,
                 info_game_flags,
-                texture_atlas: None,
+                texture_atlas: Some(geometry.texture_atlas),
                 surface_type_bits: None,
                 t5_layered_surface_types: None,
                 state_flags,
@@ -2395,6 +2403,34 @@ impl MaterialCatalog {
                 zone: self.capture_zone,
             }),
         )
+    }
+
+    fn take_reference_material_slot(&mut self, name: AssetRef) -> usize {
+        self.take_material_slot(AuthoredMaterial {
+            name,
+            namespace: self
+                .capture_ns
+                .expect("asset capture requires an explicit family"),
+            technique_set: AssetRef::default(),
+            technique_set_edge: crate::AssetEdge::Absent,
+            draw_surf: 0,
+            sort_key: 0,
+            info_game_flags: 0,
+            texture_atlas: None,
+            surface_type_bits: None,
+            t5_layered_surface_types: None,
+            state_flags: 0,
+            camera_region: 0,
+            state_bits: Vec::new(),
+            state_bits_entry: None,
+            t5_state_bits_entry: None,
+            iw5_state_bits_entry: None,
+            technique_table: None,
+            route: None,
+            textures: Vec::new(),
+            constants: Vec::new(),
+            zone: self.capture_zone,
+        })
     }
 
     fn capture_technique_set_iw5(&mut self, s: &fastfile_iw5::ZoneStream<'_>) -> Option<usize> {

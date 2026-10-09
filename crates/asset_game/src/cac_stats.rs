@@ -289,18 +289,30 @@ pub fn weapon_preview(table: &CapturedStringTable, weapon_name: &str) -> Option<
     None
 }
 
+pub const PERK_INDEX_COL: i32 = 0;
 pub const PERK_REF_COL: i32 = 1;
 pub const PERK_NAME_COL: i32 = 2;
 pub const PERK_ICON_COL: i32 = 3;
 pub const PERK_DESC_COL: i32 = 4;
 pub const PERK_SLOT_COL: i32 = 5;
 
+/// A perk table row's slot (column 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacPerkSlot {
     Perk1,
     Perk2,
     Perk3,
     Deathstreak,
+    /// Lethal and tactical items (MW3).
+    Equipment,
+    /// Strike packages, MW3's `perk5`.
+    StrikePackage,
+    /// Weapon buffs, MW3's `proficiency`.
+    Proficiency,
+    /// The pro upgrade of a perk 1, 2 or 3 (MW3's `upgrade1`..`upgrade3`).
+    Upgrade(u8),
+    /// Rows the class editor never offers (`slot_null`).
+    Hidden,
 }
 
 impl CacPerkSlot {
@@ -311,8 +323,24 @@ impl CacPerkSlot {
             "perk2" => Self::Perk2,
             "perk3" => Self::Perk3,
             "perk4" => Self::Deathstreak,
+            "equipment" => Self::Equipment,
+            "perk5" => Self::StrikePackage,
+            "proficiency" => Self::Proficiency,
+            "upgrade1" => Self::Upgrade(0),
+            "upgrade2" => Self::Upgrade(1),
+            "upgrade3" => Self::Upgrade(2),
+            "slot_null" => Self::Hidden,
             _ => return None,
         })
+    }
+
+    /// A perk 1, 2 or 3 or a deathstreak: the rows the class editor lists.
+    #[must_use]
+    pub fn is_class_perk(self) -> bool {
+        matches!(
+            self,
+            Self::Perk1 | Self::Perk2 | Self::Perk3 | Self::Deathstreak
+        )
     }
 }
 
@@ -329,7 +357,9 @@ pub struct CacPerkRow {
 pub fn perk_rows(table: &CapturedStringTable) -> Vec<CacPerkRow> {
     let mut out = Vec::new();
     for row in 0..table.rows as i32 {
-        let Some(slot) = CacPerkSlot::from_table_token(table.cell(row, PERK_SLOT_COL)) else {
+        let Some(slot) = CacPerkSlot::from_table_token(table.cell(row, PERK_SLOT_COL))
+            .filter(|slot| slot.is_class_perk())
+        else {
             continue;
         };
         let reference = table.cell(row, PERK_REF_COL);
@@ -363,4 +393,57 @@ pub fn is_perk_table_name(name: &str) -> bool {
     let n = name.replace('\\', "/");
     let leaf = n.rsplit('/').next().unwrap_or(&n);
     leaf.eq_ignore_ascii_case("perktable.csv")
+}
+
+/// One perk table row as the class catalog reads it: every row the table
+/// indexes (column 0 a number), `_`-prefixed references included, since
+/// class tables name those too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PerkTableEntry {
+    pub index: u32,
+    pub reference: String,
+    pub slot: CacPerkSlot,
+}
+
+/// The indexed rows of a perk table. Rows whose column 0 is not a number
+/// (MW3's per-slot colour rows) are not perks and are left out.
+#[must_use]
+pub fn perk_table_entries(table: &CapturedStringTable) -> Vec<PerkTableEntry> {
+    (0..table.rows as i32)
+        .filter_map(|row| {
+            let index = table.cell(row, PERK_INDEX_COL).parse().ok()?;
+            let reference = table.cell(row, PERK_REF_COL);
+            let slot = CacPerkSlot::from_table_token(table.cell(row, PERK_SLOT_COL))?;
+            (!reference.is_empty()).then(|| PerkTableEntry {
+                index,
+                reference: reference.to_owned(),
+                slot,
+            })
+        })
+        .collect()
+}
+
+/// Whether row `row` of a perk table is an indexed perk row.
+#[must_use]
+pub fn is_perk_table_entry(table: &CapturedStringTable, row: i32) -> bool {
+    table.cell(row, PERK_INDEX_COL).parse::<u32>().is_ok()
+}
+
+#[must_use]
+pub fn is_camo_table_name(name: &str) -> bool {
+    let n = name.replace('\\', "/");
+    let leaf = n.rsplit('/').next().unwrap_or(&n);
+    leaf.eq_ignore_ascii_case("camoTable.csv")
+}
+
+/// A camo table's camouflages by id (column 0; 0 is none) and name (column 1).
+#[must_use]
+pub fn camo_table_entries(table: &CapturedStringTable) -> Vec<(u8, String)> {
+    (0..table.rows as i32)
+        .filter_map(|row| {
+            let id = table.cell(row, 0).parse().ok()?;
+            let name = table.cell(row, 1);
+            (!name.is_empty()).then(|| (id, name.to_owned()))
+        })
+        .collect()
 }

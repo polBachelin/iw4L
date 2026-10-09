@@ -10,9 +10,9 @@ pub struct OwnedFxImpactEntry {
     pub flesh: [String; FX_IMPACT_FLESH_COUNT],
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct OwnedFxImpactTable {
-    pub t5: bool,
+    pub namespace: crate::AssetNamespace,
     pub name: String,
     pub entries: Vec<OwnedFxImpactEntry>,
     pub capture_gaps: usize,
@@ -28,11 +28,7 @@ impl OwnedFxImpactTable {
     }
 
     pub fn namespace(&self) -> crate::AssetNamespace {
-        if self.t5 {
-            crate::AssetNamespace::T5
-        } else {
-            crate::AssetNamespace::Iw4
-        }
+        self.namespace
     }
 
     pub fn effect_name(
@@ -105,7 +101,7 @@ impl ImpactFxCatalog {
         }
         self.capture_gaps += gaps;
         self.table = Some(OwnedFxImpactTable {
-            t5: false,
+            namespace: crate::AssetNamespace::Iw4,
             name,
             entries,
             capture_gaps: gaps,
@@ -123,6 +119,83 @@ fn name_at_cell(
         return Ok(String::new());
     }
     match fx.name_at_slot(cell) {
+        Some(n) => Ok(n.to_owned()),
+        None => Err(()),
+    }
+}
+
+/// MW3's `FxImpactTable` keeps MW2's fifteen rows of 31 non-flesh and four
+/// flesh `FxEffectDef` cells; only the zone stream it is read from differs.
+const _: () = {
+    use fastfile_iw5::size as sz5;
+    assert!(sz5::FX_IMPACT_TABLE_ROWS == FX_IMPACT_TABLE_ROWS);
+    assert!(sz5::SURF_TYPE_NUM == FX_IMPACT_NONFLESH_COUNT);
+    assert!(sz5::FX_IMPACT_FLESH_COUNT == FX_IMPACT_FLESH_COUNT);
+    assert!(sz5::FX_IMPACT_ENTRY == FX_IMPACT_ENTRY_SIZE);
+};
+
+impl ImpactFxCatalog {
+    pub fn capture_iw5(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::FxImpactTableGeometry,
+        fx: &crate::FxCatalog,
+    ) {
+        if self.table.is_some() {
+            self.capture_gaps += 1;
+            return;
+        }
+        let name = match geometry.name {
+            Some(p) => s.cstr(p).unwrap_or("").to_owned(),
+            None => String::new(),
+        };
+        let rows = geometry.row_count.min(FX_IMPACT_TABLE_ROWS);
+        if rows == 0 {
+            self.capture_gaps += 1;
+            return;
+        }
+        let width = s.pointer_bytes();
+        let entry = s.layout(fastfile_iw5::size::FX_IMPACT_ENTRY, 280);
+        let flesh_off = fastfile_iw5::size::SURF_TYPE_NUM * width;
+        let mut entries = Vec::with_capacity(rows);
+        let mut gaps = 0usize;
+        for i in 0..rows {
+            let e = geometry.entries.at(i * entry);
+            let mut nonflesh = std::array::from_fn(|_| String::new());
+            let mut flesh = std::array::from_fn(|_| String::new());
+            for (j, slot) in nonflesh.iter_mut().enumerate() {
+                match name_at_cell_iw5(s, fx, e.at(j * width)) {
+                    Ok(n) => *slot = n,
+                    Err(()) => gaps += 1,
+                }
+            }
+            for (j, slot) in flesh.iter_mut().enumerate() {
+                match name_at_cell_iw5(s, fx, e.at(flesh_off + j * width)) {
+                    Ok(n) => *slot = n,
+                    Err(()) => gaps += 1,
+                }
+            }
+            entries.push(OwnedFxImpactEntry { nonflesh, flesh });
+        }
+        self.capture_gaps += gaps;
+        self.table = Some(OwnedFxImpactTable {
+            namespace: crate::AssetNamespace::Iw5,
+            name,
+            entries,
+            capture_gaps: gaps,
+        });
+    }
+}
+
+fn name_at_cell_iw5(
+    s: &fastfile_iw5::ZoneStream<'_>,
+    fx: &crate::FxCatalog,
+    cell: fastfile_iw5::Ptr,
+) -> core::result::Result<String, ()> {
+    if matches!(s.ptr_at(cell, 0), Ok(fastfile_iw5::ZonePtr::Null)) {
+        return Ok(String::new());
+    }
+    match fx.name_at_slot(crate::graph_support::iw5_link_ptr(cell)) {
         Some(n) => Ok(n.to_owned()),
         None => Err(()),
     }
@@ -164,7 +237,7 @@ impl ImpactFxCatalog {
         }
         self.capture_gaps += gaps;
         self.table = Some(OwnedFxImpactTable {
-            t5: true,
+            namespace: crate::AssetNamespace::T5,
             name: s.cstr(name)?.to_owned(),
             entries: rows,
             capture_gaps: gaps,
@@ -175,7 +248,7 @@ impl ImpactFxCatalog {
 
 impl OwnedFxImpactTable {
     pub fn impact_row(&self, impact_type: i32, exit: bool) -> Option<usize> {
-        if !self.t5 {
+        if self.namespace != crate::AssetNamespace::T5 {
             return fx_iw4::impact_table_row(impact_type, exit);
         }
         let exit = usize::from(exit);

@@ -3,9 +3,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use frame::ClientSet;
 
 use asset_game::{LocalizeCatalog, load_mp_localized_strings};
-use asset_transport::{
-    GamesRoot, LoadProgress, find_runtime_common_mp, find_zone_file, list_mp_map_packs,
-};
+use asset_transport::{GamesRoot, LoadProgress, RuntimeProfile, find_zone_file, list_mp_map_packs};
 use assets::{LoadingPreviewSource, MatchLoadRequest};
 
 use crate::classes::select::ClassSelectOverlayOpen;
@@ -34,6 +32,7 @@ fn launch_report(
 }
 
 fn resolve_zone(
+    profile: RuntimeProfile,
     games: &asset_transport::GamesRoot,
     requested: &str,
 ) -> (
@@ -57,7 +56,7 @@ fn resolve_zone(
         .map(|z| z.path.clone())
         .map_err(|e| e.clone());
     let common_mp = match &zone_ff {
-        Ok(path) => find_runtime_common_mp(games, path).map(|z| z.path),
+        Ok(path) => profile.find_common_mp(games, path).map(|z| z.path),
         Err(e) => Err(e.clone()),
     };
     let game = parsed_game.or_else(|| {
@@ -106,6 +105,7 @@ pub(crate) fn begin_load_from_session(
     mut app_screen: ResMut<AppScreen>,
     mut class_overlay: ResMut<ClassSelectOverlayOpen>,
     identity: Option<ResMut<LaunchIdentity>>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
     loading: Option<Res<LoadingScreen>>,
     request: Option<Res<MatchLoadRequest>>,
     abort: Option<Res<assets::MatchLoadAbort>>,
@@ -121,7 +121,9 @@ pub(crate) fn begin_load_from_session(
         return;
     };
     let games = asset_transport::GamesRoot(identity.games_root.clone());
-    let (zone, zone_ff, common_mp, zone_alias, loading_title) = resolve_zone(&games, &fact.zone);
+    let profile = profile.map_or(RuntimeProfile::Iw4, |profile| profile.0);
+    let (zone, zone_ff, common_mp, zone_alias, loading_title) =
+        resolve_zone(profile, &games, &fact.zone);
     if loading.as_ref().is_some_and(|s| s.title() == loading_title) {
         return;
     }
@@ -190,6 +192,7 @@ fn start_menu_strings_prepare(
     loc: Res<LocalizeCatalog>,
     running: Option<Res<MenuStringsPrepare>>,
     root: Option<Res<crate::UiAssetRoot>>,
+    profile: Option<Res<assets::MatchRuntimeProfile>>,
     loading: (
         Option<Res<assets::MatchLoadBusy>>,
         Option<Res<MatchLoadRequest>>,
@@ -209,8 +212,10 @@ fn start_menu_strings_prepare(
     let Some(root) = root.as_ref().and_then(|root| root.0.clone()) else {
         return;
     };
+    let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let zone = format!("{}:code_post_gfx_mp", profile.game().prefix());
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        match load_mp_localized_strings(&GamesRoot(root), "iw4:code_post_gfx_mp") {
+        match load_mp_localized_strings(&GamesRoot(root), &zone) {
             Ok(catalog) => Some(catalog),
             Err(error) => {
                 diag::warn!(Ui, "menu: localize: {error}");

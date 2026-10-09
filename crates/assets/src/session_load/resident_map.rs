@@ -37,15 +37,19 @@ fn resident_copy(zone: &ZoneStamp, key: &CommonKey) -> Option<PreparedMatch> {
 }
 
 pub async fn load_prepared_match(
+    profile: asset_transport::RuntimeProfile,
     zone_ff: Result<PathBuf, String>,
     common_mp: Result<PathBuf, String>,
+    mode_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> MatchLoadOutcome {
     let stamp = zone_ff.as_deref().ok().and_then(ZoneStamp::of);
     if let Some(stamp) = &stamp {
         let key = CommonKey::for_match(
+            profile,
             Some(&stamp.path),
             common_mp.as_deref().ok(),
+            &mode_zones,
             &mut Vec::new(),
         );
         let copying = std::time::Instant::now();
@@ -77,7 +81,8 @@ pub async fn load_prepared_match(
             dropped.prepared.materials.products_id
         );
     }
-    let (outcome, common) = walk_prepared_match(zone_ff, common_mp, progress.clone()).await;
+    let (outcome, common) =
+        walk_prepared_match(profile, zone_ff, common_mp, mode_zones, progress.clone()).await;
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {
         return outcome;
     };

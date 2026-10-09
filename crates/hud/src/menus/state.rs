@@ -4,6 +4,9 @@ use frame::AppScreen;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ItemState {
     pub(crate) hidden: bool,
+    /// What the item's disabled expression last read, for an item that has
+    /// one: logged each time it changes.
+    pub(crate) disabled: Option<bool>,
     pub(crate) fore: Option<[f32; 4]>,
     pub(crate) back: Option<[f32; 4]>,
 }

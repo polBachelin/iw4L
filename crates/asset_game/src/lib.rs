@@ -13,6 +13,7 @@ use asset_transport::{
 use asset_world::decode_rawfile_text;
 pub mod arena;
 mod attachment_hide;
+mod authored_classes;
 mod cac_host;
 mod cac_presentation;
 mod cac_stats;
@@ -44,6 +45,7 @@ pub use weapon_t6::{
 
 pub use arena::*;
 pub use attachment_hide::*;
+pub use authored_classes::*;
 pub use cac_host::*;
 pub use cac_presentation::*;
 pub use cac_stats::*;

@@ -1,0 +1,18 @@
+[
+  {
+    "name": "iw4l_pause",
+    "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4},
+    "handlers": {
+      "open": [{"Script": "focusFirst;"}],
+      "esc": [{"Script": "close self;"}]
+    },
+    "items": [
+      {"name": "shade", "background": "white", "rect": {"x": 0, "y": 0, "w": 640, "h": 480, "horz_align": 4, "vert_align": 4}, "fore_color": [0, 0, 0, 0.65], "static_flags": 1048576},
+      {"name": "panel", "background": "white", "rect": {"x": -150, "y": -70, "w": 300, "h": 140, "horz_align": 2, "vert_align": 2}, "fore_color": [0.07, 0.08, 0.07, 0.98], "static_flags": 1048576},
+      {"name": "line", "background": "white", "rect": {"x": -150, "y": -70, "w": 300, "h": 2, "horz_align": 2, "vert_align": 2}, "fore_color": [0.65, 0.7, 0.4, 1], "static_flags": 1048576},
+      {"name": "title", "text_key": "@MENU_PAUSED_CAP", "rect": {"x": -130, "y": -55, "w": 260, "h": 28, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "font_enum": 3, "text_scale": 0.5, "text_align_mode": 8, "static_flags": 1048576},
+      {"name": "resume", "item_type": 1, "style": 1, "text_key": "@MENU_RESUMEGAME", "rect": {"x": -130, "y": -5, "w": 260, "h": 24, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 8, "handlers": {"action": [{"Script": "play mouse_click; close self;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0.65 0.7 0.4 0.35;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}},
+      {"name": "quit", "item_type": 1, "style": 1, "text_key": "@MENU_QUIT", "rect": {"x": -130, "y": 27, "w": 260, "h": 24, "horz_align": 2, "vert_align": 2}, "fore_color": [1, 1, 1, 1], "back_color": [0, 0, 0, 0], "font_enum": 3, "text_scale": 0.375, "text_align_mode": 8, "text_align_x": 8, "handlers": {"action": [{"Script": "play mouse_click; uiScript quit;"}], "focus": [{"Script": "play mouse_over; setItemColor self backcolor 0.65 0.7 0.4 0.35;"}], "leave_focus": [{"Script": "setItemColor self backcolor 0 0 0 0;"}]}}
+    ]
+  }
+]

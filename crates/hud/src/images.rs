@@ -15,8 +15,6 @@ use hud_iw4::{COMPASS_ENEMY_FIRING_PING_IMAGE, COMPASS_RADAR_LINE_IMAGE};
 
 use crate::gaps::ImageMiss;
 
-pub const HUD_CHROME_NAMESPACE: AssetNamespace = AssetNamespace::Iw4;
-
 const DATA_SAMPLED_IMAGES: &[&str] = &[BLOOD_OVERLAY_MASK, BLOOD_OVERLAY_COLOR];
 
 pub(crate) const BLOOD_OVERLAY_MASK: &str = "blood_defocus_mask";
@@ -69,7 +67,10 @@ pub(crate) struct BloodMaterialBinding {
     pub mask_sampler: u8,
 }
 
-fn blood_material_binding(catalog: &MenuCatalog) -> Result<BloodMaterialBinding, String> {
+fn blood_material_binding(
+    catalog: &MenuCatalog,
+    chrome: AssetNamespace,
+) -> Result<BloodMaterialBinding, String> {
     let pass = "splatter_alt/unlit/pass 0";
     let plan = catalog
         .material_2d_plans
@@ -95,8 +96,7 @@ fn blood_material_binding(catalog: &MenuCatalog) -> Result<BloodMaterialBinding,
             "{pass}: color/mask color-map bindings missing or out of order"
         ));
     }
-    let state =
-        asset_material::compile_material_state(HUD_CHROME_NAMESPACE, plan.unlit_pass_states[0]);
+    let state = asset_material::compile_material_state(chrome, plan.unlit_pass_states[0]);
     if let Some(fields) = state.unsupported_host_fields() {
         return Err(format!("{pass}: unsupported material state: {fields:?}"));
     }
@@ -139,6 +139,7 @@ pub struct HudImages {
     adopted_zone: Option<PathBuf>,
 
     map_namespace: Option<AssetNamespace>,
+    chrome: Option<AssetNamespace>,
     by_name: HashMap<IwdKey, Option<Handle<Image>>>,
     rgba_by_name: HashMap<(AssetNamespace, String), CachedRgba>,
     zone_rgba: HashMap<String, (u32, u32, Arc<Vec<u8>>)>,
@@ -204,13 +205,14 @@ impl HudImages {
         !self.games_root.as_os_str().is_empty()
     }
 
-    pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog) {
+    pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog, chrome: AssetNamespace) {
         if self.zone_installed {
             return;
         }
         self.zone_installed = true;
         self.zone_uploaded = false;
-        self.blood_plan = Some(blood_material_binding(catalog));
+        self.chrome = Some(chrome);
+        self.blood_plan = Some(blood_material_binding(catalog, chrome));
         self.zone_srgb_reads.extend(
             catalog
                 .material_srgb_reads
@@ -243,7 +245,7 @@ impl HudImages {
         }
         for (name, state) in &catalog.material_state_bits {
             let compiled = state.agreed().and_then(|words| {
-                let compiled = asset_material::compile_material_state(HUD_CHROME_NAMESPACE, words);
+                let compiled = asset_material::compile_material_state(chrome, words);
                 if let Some(fields) = compiled.unsupported_host_fields() {
                     diag::warn!(Ui, "hud material state refused: {name}: {fields:?}");
                     None
@@ -272,11 +274,15 @@ impl HudImages {
         ns: AssetNamespace,
         name: &str,
     ) -> Option<render_material::CompiledPassState> {
-        if ns == HUD_CHROME_NAMESPACE {
+        if self.is_chrome(ns) {
             self.zone_states.get(&cache_key(name)).copied().flatten()
         } else {
             asset_material::zone_ui_material_state(ns, name)
         }
+    }
+
+    fn is_chrome(&self, ns: AssetNamespace) -> bool {
+        self.chrome == Some(ns)
     }
 
     pub(crate) fn blood_material_binding(&self) -> Result<BloodMaterialBinding, &str> {
@@ -320,13 +326,14 @@ impl HudImages {
         name: &str,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
-        let srgb = ns == HUD_CHROME_NAMESPACE
+        let srgb = self.is_chrome(ns)
             && self
                 .zone_srgb_reads
                 .get(&cache_key(name))
                 .copied()
                 .unwrap_or(false);
-        let sampler = (ns == HUD_CHROME_NAMESPACE)
+        let sampler = self
+            .is_chrome(ns)
             .then(|| self.zone_samplers.get(&cache_key(name)).copied())
             .flatten();
         self.get_sampled_with_sampler(
@@ -361,13 +368,13 @@ impl HudImages {
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
         let key = iwd_key(ns, name, sampling, sampler);
-        if ns == HUD_CHROME_NAMESPACE && self.zone_states.get(&key.1) == Some(&None) {
+        if self.is_chrome(ns) && self.zone_states.get(&key.1) == Some(&None) {
             return None;
         }
         if let Some(cached) = self.by_name.get(&key) {
             return cached.clone();
         }
-        if ns == HUD_CHROME_NAMESPACE {
+        if self.is_chrome(ns) {
             if let Some(handle) = self.upload_zone(name, sampling, sampler, images) {
                 return Some(handle);
             }
@@ -382,7 +389,7 @@ impl HudImages {
         if self.rgba_by_name.contains_key(&key) {
             return;
         }
-        if ns == HUD_CHROME_NAMESPACE {
+        if self.is_chrome(ns) {
             if let Some((width, height, rgba)) = self.zone_lookup(name) {
                 self.rgba_by_name
                     .insert(key, Some((width, height, rgba.to_vec())));
@@ -404,6 +411,7 @@ impl HudImages {
         images: &mut Assets<Image>,
         catalog: Option<&MenuCatalog>,
         compass: Option<&SessionCompass>,
+        chrome: AssetNamespace,
     ) {
         self.upload_pending_zone(images);
         if self.iwd_warmed {
@@ -429,13 +437,7 @@ impl HudImages {
             (COMPASS_ENEMY_FIRING_PING_IMAGE, HudSampling::Color, None),
             (COMPASS_RADAR_LINE_IMAGE, HudSampling::Color, None),
         ] {
-            let _ = self.get_sampled_with_sampler(
-                HUD_CHROME_NAMESPACE,
-                name,
-                sampling,
-                sampler,
-                images,
-            );
+            let _ = self.get_sampled_with_sampler(chrome, name, sampling, sampler, images);
         }
         if let Some(compass) = compass {
             if let Some(name) = compass.declaration.image.as_deref()
@@ -448,7 +450,7 @@ impl HudImages {
         if let Some(catalog) = catalog {
             for font in catalog.fonts.values() {
                 if !font.material.is_empty() {
-                    let _ = self.get(HUD_CHROME_NAMESPACE, &font.material, images);
+                    let _ = self.get(chrome, &font.material, images);
                 }
             }
             for menu_name in HUD_CHROME_MENUS {
@@ -456,11 +458,11 @@ impl HudImages {
                     continue;
                 };
                 if !menu.window_background.is_empty() {
-                    let _ = self.get(HUD_CHROME_NAMESPACE, &menu.window_background, images);
+                    let _ = self.get(chrome, &menu.window_background, images);
                 }
                 for item in &menu.items {
                     if !item.background.is_empty() {
-                        let _ = self.get(HUD_CHROME_NAMESPACE, &item.background, images);
+                        let _ = self.get(chrome, &item.background, images);
                     }
                 }
             }
@@ -510,7 +512,8 @@ impl HudImages {
             return Some((width, height, rgba.as_ref().clone()));
         }
         let main = self.trees.main_for(ns)?;
-        let mapped = (ns == HUD_CHROME_NAMESPACE)
+        let mapped = self
+            .is_chrome(ns)
             .then(|| {
                 self.material_images
                     .get(&cache_key(name))

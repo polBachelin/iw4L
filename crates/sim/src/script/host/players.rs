@@ -38,9 +38,17 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
     {
         return;
     }
+    let gun = match hit.inflictor {
+        Some(crate::script_player::Inflictor::Entity(presence)) => runtime
+            .presented_by(presence)
+            .filter(|object| runtime.live(object))
+            .map(Value::Object),
+        _ => None,
+    };
+    // A turret or vehicle with no owner is its own attacker.
     let attacker = match hit.attacker.map(|a| player_object(world, a.0)) {
         Some(attacker) if attacker != Value::Undefined => attacker,
-        _ => world_entity(world),
+        _ => gun.clone().unwrap_or_else(|| world_entity(world)),
     };
     let weapon = event_weapon(world, hit.attacker.map_or(u32::MAX, |a| a.0), hit.weapon);
     let weapon = crate::script_player::weapon_name(&FrameWorld::from_world(world), weapon);
@@ -48,10 +56,12 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
         .get(usize::from(hit.hitloc))
         .copied()
         .unwrap_or("none");
-    let inflictor = hit
-        .inflictor
-        .and_then(|id| projectile_entity(world, id, hit))
-        .unwrap_or_else(|| attacker.clone());
+    let inflictor = match hit.inflictor {
+        Some(crate::script_player::Inflictor::Projectile(id)) => projectile_entity(world, id, hit),
+        Some(crate::script_player::Inflictor::Entity(_)) => gun,
+        None => None,
+    }
+    .unwrap_or_else(|| attacker.clone());
     let args = vec![
         inflictor,
         attacker,
@@ -496,6 +506,12 @@ pub(crate) fn event_weapon(world: &mut World, client: u32, weapon: u32) -> u32 {
 
 const INSERTION: &str = "flare_mp";
 
+/// The perk the insertion is given as, and the name a player-data schema
+/// that holds the insertion in a class slot gives it.
+const INSERTION_PERK: &str = "specialty_tacticalinsertion";
+
+/// The tactical a class carries the insertion as when the schema's tactical
+/// field cannot name it.
 const INSERTION_CARRIER: &str = "smoke_grenade_mp";
 
 const GIVE_PERK: &str = "maps/mp/perks/_perks::giveperk";
@@ -631,14 +647,19 @@ fn bridge_insertion_carrier(world: &mut World, client: u32, weapon: u32) {
     bridge.push((carrier, weapon));
 }
 
-fn mark_t6_offhands(world: &mut World, client: u32, class: &crate::ClassDef) {
+fn mark_t6_offhands(
+    world: &mut World,
+    client: u32,
+    class: &crate::ClassDef,
+    insertion_carried: bool,
+) {
     let given = |world: &mut World, weapon: u32, tactical: bool| -> Value {
         let Some(stand_in) = offhand_stand_in(world, weapon) else {
             return Value::Undefined;
         };
         let frame = FrameWorld::from_world(world);
         let name = frame.weapon_script_name(stand_in);
-        Value::string(if tactical && name == INSERTION {
+        Value::string(if tactical && insertion_carried && name == INSERTION {
             INSERTION_CARRIER
         } else {
             name
@@ -670,7 +691,7 @@ pub(crate) fn give_carried_insertion(
         world,
         GIVE_PERK,
         receiver.clone(),
-        vec![Value::String("specialty_tacticalinsertion".into())],
+        vec![Value::String(INSERTION_PERK.into())],
     )
     .map(|_| ())
     .map_err(|fault| fault.to_string())
@@ -761,28 +782,103 @@ pub(crate) fn choose_class(world: &mut World, client: u32, class: &crate::ClassD
     }
     bridge_offhand(world, client, class.lethal);
     bridge_offhand(world, client, class.tactical);
-    bridge_insertion_carrier(world, client, class.tactical);
-    mark_t6_offhands(world, client, class);
-    let data = class_profile_data(world, class);
+    let profile = match class_profile_data(world, client, class) {
+        Ok(profile) => profile,
+        Err(message) => {
+            class_selection_fault(world, message);
+            return;
+        }
+    };
+    if profile.insertion_carried {
+        bridge_insertion_carrier(world, client, class.tactical);
+    }
+    mark_t6_offhands(world, client, class, profile.insertion_carried);
     push_answer(
         world,
         client,
         MenuAnswer {
             menu: CLASS_MENU.into(),
-            response: format!("custom{}", class.id.0 as usize % 10 + 1).into(),
-            data,
+            response: format!("custom{}", profile.slot + 1).into(),
+            data: profile.data,
         },
     );
 }
 
-fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Value>, Value)> {
+/// A class as the client's player-data schema holds it.
+struct ClassProfile {
+    /// The `customClasses` element the class is written to.
+    slot: usize,
+    data: Vec<(Vec<Value>, Value)>,
+    /// The schema's tactical field cannot name the insertion, so the class
+    /// carries it as `INSERTION_CARRIER`.
+    insertion_carried: bool,
+}
+
+fn class_profile_data(
+    world: &mut World,
+    client: u32,
+    class: &crate::ClassDef,
+) -> Result<ClassProfile, String> {
+    use structured_data_iw4::Key;
     let weapons = [
         stand_in_for(world, 0, class.primary).unwrap_or(class.primary),
         stand_in_for(world, 1, class.secondary).unwrap_or(class.secondary),
     ];
     let lethal = offhand_stand_in(world, class.lethal).unwrap_or(class.lethal);
     let tactical = offhand_stand_in(world, class.tactical).unwrap_or(class.tactical);
-    let index = class.id.0 as usize % 10;
+    let offhand_script = |world: &mut World, weapon: u32| {
+        (weapon != 0).then(|| {
+            FrameWorld::from_world(world)
+                .weapon_script_name(weapon)
+                .to_owned()
+        })
+    };
+    let lethal = offhand_script(world, lethal);
+    let tactical = offhand_script(world, tactical);
+    let store = world.resource::<crate::PersistentDataStore>();
+    let slots = store
+        .array_count(ClientId(client), &[Key::Name("customClasses")])
+        .map_err(super::natives::player::data_error)?;
+    let slot = (class.id.0 as usize)
+        .checked_rem(slots)
+        .ok_or("player data: the schema has no customClasses slot")?;
+    let equipment = match &lethal {
+        None => "specialty_null".to_owned(),
+        Some(script) => {
+            let keys = [
+                Key::Name("customClasses"),
+                Key::Index(slot as i32),
+                Key::Name("perks"),
+                Key::Index(0),
+            ];
+            let spellings = offhand_spellings(script);
+            schema_name(store, client, &keys, &spellings)?
+                .ok_or_else(|| unnamed_offhand(slot, "perks.0", &spellings))?
+        }
+    };
+    let (special_grenade, insertion_carried) = match &tactical {
+        None => ("none".to_owned(), false),
+        Some(script) => {
+            let keys = [
+                Key::Name("customClasses"),
+                Key::Index(slot as i32),
+                Key::Name("specialGrenade"),
+            ];
+            let spellings = offhand_spellings(script);
+            match schema_name(store, client, &keys, &spellings)? {
+                Some(name) => (name, false),
+                None if script == INSERTION => {
+                    let carrier = offhand_spellings(INSERTION_CARRIER);
+                    let name = schema_name(store, client, &keys, &carrier)?.ok_or_else(|| {
+                        let tried = [spellings, carrier].concat();
+                        unnamed_offhand(slot, "specialGrenade", &tried)
+                    })?;
+                    (name, true)
+                }
+                None => return Err(unnamed_offhand(slot, "specialGrenade", &spellings)),
+            }
+        }
+    };
     let frame = FrameWorld::from_world(world);
     let name = |weapon: u32| -> String {
         if weapon == 0 {
@@ -805,7 +901,7 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Va
         }
         (setup.base.clone(), attachments)
     };
-    let prefix = format!("customClasses.{index}");
+    let prefix = format!("customClasses.{slot}");
     let mut data = Vec::new();
     let mut put = |key: String, value: &str| {
         let keys = key
@@ -827,24 +923,14 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Va
         let camo = class.camos.get(setup_index).copied().unwrap_or(0);
         put(
             format!("{key}.camo"),
-            crate::match_state::IW4_CAMOS
-                .get(usize::from(camo))
-                .copied()
-                .unwrap_or("none"),
+            frame.class_catalog().camo_name(camo).unwrap_or("none"),
         );
     }
-    let equipment = match name(lethal) {
-        _ if lethal == 0 => "specialty_null".to_owned(),
-        insertion if insertion == INSERTION => "specialty_tacticalinsertion".to_owned(),
-        other => other,
-    };
     put(format!("{prefix}.perks.0"), &equipment);
+    let catalog = frame.class_catalog();
     let mut perks = ["specialty_null"; 3];
     for id in class.perks {
-        if let (Some(slot), Some(perk)) = (
-            crate::match_state::perk_slot_from_class_catalog(id),
-            crate::match_state::class_catalog_perk_name(id),
-        ) {
+        if let (Some(slot), Some(perk)) = (catalog.perk_slot(id), catalog.perk_name(id)) {
             perks[slot] = perk;
         }
     }
@@ -857,16 +943,60 @@ fn class_profile_data(world: &mut World, class: &crate::ClassDef) -> Vec<(Vec<Va
         &class.deathstreak
     };
     put(format!("{prefix}.perks.4"), deathstreak);
-    let tactical = match name(tactical) {
-        insertion if insertion == INSERTION => INSERTION_CARRIER.to_owned(),
-        other => other,
-    };
-    put(
-        format!("{prefix}.specialGrenade"),
-        tactical.strip_suffix("_mp").unwrap_or(&tactical),
-    );
+    put(format!("{prefix}.specialGrenade"), &special_grenade);
 
-    data
+    Ok(ClassProfile {
+        slot,
+        data,
+        insertion_carried,
+    })
+}
+
+/// The names an offhand may have in a player-data schema, in the order they
+/// are tried: the insertion's perk name, then the script name (`_mp`
+/// included), then the base name.
+fn offhand_spellings(script: &str) -> Vec<&str> {
+    let insertion = (script == INSERTION).then_some(INSERTION_PERK);
+    insertion
+        .into_iter()
+        .chain([script, script.strip_suffix("_mp").unwrap_or(script)])
+        .collect()
+}
+
+/// The first of `spellings` the schema field at `keys` names; a field that is
+/// not an enum takes the first as written.
+fn schema_name(
+    store: &crate::PersistentDataStore,
+    client: u32,
+    keys: &[structured_data_iw4::Key<'_>],
+    spellings: &[&str],
+) -> Result<Option<String>, String> {
+    for spelling in spellings {
+        match store
+            .enum_names(ClientId(client), keys, spelling)
+            .map_err(super::natives::player::data_error)?
+        {
+            Some(false) => {}
+            Some(true) | None => return Ok(Some((*spelling).to_owned())),
+        }
+    }
+    Ok(None)
+}
+
+fn unnamed_offhand(slot: usize, field: &str, spellings: &[&str]) -> String {
+    format!("player data: customClasses.{slot}.{field} names none of {spellings:?}")
+}
+
+fn class_selection_fault(world: &mut World, message: String) {
+    world.resource_mut::<Runtime>().fault = Some(Fault::at(
+        &Location {
+            module: "<engine>".into(),
+            function: "class selection".into(),
+            line: 0,
+            column: 0,
+        },
+        message,
+    ));
 }
 
 fn menu_kind(menu: &str) -> Option<bool> {
@@ -931,15 +1061,7 @@ fn deliver_answers(world: &mut World, client: u32) {
     let slot = runtime.players.get_mut(&client).expect("checked above");
     slot.menu = None;
     if let Err(message) = super::natives::player::write_class_data(world, client, &answer.data) {
-        world.resource_mut::<Runtime>().fault = Some(Fault::at(
-            &Location {
-                module: "<engine>".into(),
-                function: "class selection".into(),
-                line: 0,
-                column: 0,
-            },
-            message,
-        ));
+        class_selection_fault(world, message);
         return;
     }
     raise(
@@ -1143,17 +1265,26 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
             runtime.pending_local_dvars.clear();
         }
     }
-    let Some(slot) = world.resource::<Runtime>().players.get(&client).cloned() else {
+    let slot = world.resource::<Runtime>().players.get(&client).cloned();
+    if let Some(slot) = &slot {
+        let now = now_ms(world);
+        let _ = run_now(
+            world,
+            DISCONNECT,
+            Value::Object(slot.object),
+            Vec::new(),
+            now,
+        );
+    }
+    // After the disconnect callback, which may still read it. The roster
+    // reuses client ids, so a binding left behind would hand the next bot on
+    // this id the departed one's archetype.
+    world
+        .resource_mut::<crate::script_bots::ScriptBots>()
+        .release(ClientId(client));
+    let Some(slot) = slot else {
         return;
     };
-    let now = now_ms(world);
-    let _ = run_now(
-        world,
-        DISCONNECT,
-        Value::Object(slot.object),
-        Vec::new(),
-        now,
-    );
     world
         .resource_mut::<crate::PersistentDataStore>()
         .unbind(crate::ClientId(client));

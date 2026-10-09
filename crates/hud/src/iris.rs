@@ -151,7 +151,9 @@ pub(crate) fn update_iris(
         ),
         Without<AdsIrisOverlay>,
     >,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     let Some(ps) = presented.player(local.0) else {
         gaps.clear(HudGap::AdsOverlay);
         hide_overlay(&mut overlay);
@@ -243,7 +245,7 @@ pub(crate) fn update_iris(
     let weapon_ns = weapons
         .registry()
         .component_namespace_of(viewmodel_index, asset_game::WeaponComponent::OverlayImage)
-        .unwrap_or(crate::images::HUD_CHROME_NAMESPACE);
+        .unwrap_or(chrome);
     let Some(handle) = hud_images.get(weapon_ns, image_name, &mut images) else {
         gaps.raise(GapCause::AdsOverlayImageMissing {
             name: image_name.to_owned(),

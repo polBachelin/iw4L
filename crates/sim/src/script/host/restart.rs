@@ -155,6 +155,11 @@ pub(crate) fn restart_level(world: &mut World, tick: crate::Tick) {
         crate::t5_destructible::restart(&mut frame);
         frame.restart_level_phase();
         for id in frame.client_ids_sorted() {
+            // A restart that keeps no `pers` starts a new match, and the
+            // match's player data with it.
+            if !persist {
+                frame.client_meta_mut(id).player_data.clear();
+            }
             let (origin, angles) = frame
                 .player(id)
                 .map_or(([0.0; 3], [0.0; 3]), |ps| (ps.origin, ps.viewangles));

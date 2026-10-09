@@ -20,8 +20,8 @@ use asset_model::{
 use asset_transport::load_jobs::{self, JobKind};
 use asset_transport::{
     LoadProgress, StageHandle, StageId, find_common_mp_for_envelope, find_common_mp_for_zone,
-    find_runtime_common_mp, find_runtime_zone, find_zone_file_version, find_zone_for_tree,
-    games_root_from_env, open_zone_shared, peek_zone_version,
+    find_zone_file_version, find_zone_for_tree, games_root_from_env, open_zone_shared,
+    peek_zone_version,
 };
 use asset_world::{ClipCollision, IntermissionView, WorldDraw};
 

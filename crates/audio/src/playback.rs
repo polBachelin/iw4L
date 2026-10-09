@@ -211,7 +211,7 @@ fn play_alias_messages(
         };
         let Some(bank) = bank.as_ref() else {
             drop_without_bank(
-                std::iter::once((event.alias.as_str(), event.event)),
+                std::iter::once((event.namespace, event.alias.as_str(), event.event)),
                 &mut decisions,
             );
             continue;
@@ -243,14 +243,20 @@ fn play_footstep_messages(
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
     epoch: Res<MatchEpoch>,
+    host: assets::HostNamespace,
 ) {
+    let host = host.get();
     let Some(bank) = bank else {
-        drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
+        drop_without_bank(
+            events.read().map(|e| (host, e.alias, e.event)),
+            &mut decisions,
+        );
         return;
     };
     for event in events.read() {
         let outcome = play_surface_alias_chain(
             &bank.0,
+            host,
             event.alias,
             event.fallback,
             event.origin_inches,
@@ -280,7 +286,9 @@ fn play_weapon_sound_messages(
 ) {
     let Some(bank) = bank else {
         drop_without_bank(
-            events.read().map(|e| (e.alias.as_str(), e.event)),
+            events
+                .read()
+                .map(|e| (e.namespace, e.alias.as_str(), e.event)),
             &mut decisions,
         );
         return;
@@ -362,14 +370,20 @@ fn play_land_sound_messages(
     mut decisions: ResMut<StartDecisions>,
     bank: Option<Res<SoundBank>>,
     epoch: Res<MatchEpoch>,
+    host: assets::HostNamespace,
 ) {
+    let host = host.get();
     let Some(bank) = bank else {
-        drop_without_bank(events.read().map(|e| (e.alias, e.event)), &mut decisions);
+        drop_without_bank(
+            events.read().map(|e| (host, e.alias, e.event)),
+            &mut decisions,
+        );
         return;
     };
     for event in events.read() {
         let outcome = play_surface_alias_chain(
             &bank.0,
+            host,
             event.alias,
             event.fallback,
             event.origin_inches,
@@ -389,10 +403,10 @@ fn play_land_sound_messages(
 }
 
 fn drop_without_bank<'a>(
-    aliases: impl Iterator<Item = (&'a str, Option<crate::AudioEvent>)>,
+    aliases: impl Iterator<Item = (AssetNamespace, &'a str, Option<crate::AudioEvent>)>,
     decisions: &mut StartDecisions,
 ) {
-    for (alias, event) in aliases {
+    for (namespace, alias, event) in aliases {
         if !crate::AudioSilent::active() {
             diag::warn!(
                 Audio,
@@ -401,7 +415,7 @@ fn drop_without_bank<'a>(
         }
         decisions.record(StartDecision {
             event,
-            namespace: AssetNamespace::Iw4,
+            namespace,
             alias: alias.to_owned(),
             variant: None,
             loaded_binding_origin: None,
@@ -414,6 +428,7 @@ fn drop_without_bank<'a>(
 
 fn play_surface_alias_chain(
     bank: &Arc<SoundCatalog>,
+    namespace: AssetNamespace,
     alias: &str,
     fallback: &str,
     origin_inches: Option<[f32; 3]>,
@@ -431,7 +446,7 @@ fn play_surface_alias_chain(
     };
     play_oneshot_recorded(
         bank,
-        AssetNamespace::Iw4,
+        namespace,
         first,
         None,
         origin_inches,

@@ -12,7 +12,7 @@ impl MaterialCompiler for Iw5Compiler {
             colour_camera_region: material.camera_region,
             smodel_colour_emits: true,
             unlit_sky: false,
-            postfx_host_supported: false,
+            postfx_host_supported: true,
         }
     }
     fn compile_state(&self, words: [u32; 2]) -> render_material::CompiledPassState {

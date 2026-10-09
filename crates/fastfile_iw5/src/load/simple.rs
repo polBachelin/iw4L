@@ -1,6 +1,8 @@
-use super::{AssetLinkSink, always_array, asset_ptr_at, follow_name};
+use super::{AssetLinkSink, always_array, follow_name, load_asset_at_observed, material_name_at};
 use crate::size as sz;
-use crate::zone::{Result, XFILE_BLOCK_SCRIPT, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream};
+use crate::zone::{
+    FontDefGeometry, Result, XFILE_BLOCK_SCRIPT, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream,
+};
 
 fn linked_name<'a>(s: &'a ZoneStream<'_>, p: crate::zone::Ptr) -> &'a str {
     match s.ptr_at(p, 0).ok() {
@@ -113,25 +115,49 @@ pub(super) fn load_localize(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSin
 pub(super) fn load_font(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     s.walk_stage = "font";
     let p = s.alloc_load(4, s.layout(sz::FONT, 40))?;
-    let glyph_count = s.i32_at(p, s.layout(8, 12))?.max(0) as usize;
+    let pixel_height = s.i32_at(p, s.layout(sz::FONT_PIXEL_HEIGHT_OFF, 8))?;
+    let glyph_count = s.i32_at(p, s.layout(sz::FONT_GLYPH_COUNT_OFF, 12))?.max(0) as usize;
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
-    let material = s.layout(12, 16);
-    let glow_material = s.layout(16, 24);
-    asset_ptr_at(
-        s,
-        links,
-        crate::asset_type::AssetType::Material,
-        p.at(material),
+    let material_name = load_font_material(s, links, p.at(s.layout(sz::FONT_MATERIAL_OFF, 16)))?;
+    let glow_material_name =
+        load_font_material(s, links, p.at(s.layout(sz::FONT_GLOW_MATERIAL_OFF, 24)))?;
+    let glyphs = s.plain_array(
+        p,
+        s.layout(sz::FONT_GLYPHS_OFF, 32),
+        4,
+        sz::GLYPH,
+        glyph_count,
     )?;
-    asset_ptr_at(
+    let name = match s.ptr_at(p, 0)? {
+        ZonePtr::Offset(q) => Some(s.resolve_alias(q)),
+        _ => None,
+    };
+    links.capture_font(
         s,
-        links,
-        crate::asset_type::AssetType::Material,
-        p.at(glow_material),
+        FontDefGeometry {
+            name,
+            pixel_height,
+            glyphs,
+            glyph_count,
+            material_name,
+            glow_material_name,
+        },
     )?;
-    s.plain_array(p, s.layout(20, 32), 4, sz::GLYPH, glyph_count)?;
     s.pop()
+}
+
+fn load_font_material(
+    s: &mut ZoneStream<'_>,
+    links: &mut dyn AssetLinkSink,
+    slot: crate::zone::Ptr,
+) -> Result<Option<crate::zone::Ptr>> {
+    let fresh = load_asset_at_observed(s, crate::asset_type::AssetType::Material, slot, links)?;
+    Ok(if fresh {
+        s.latest_material().and_then(|g| g.name)
+    } else {
+        material_name_at(s, links, slot)
+    })
 }
 
 pub(super) fn load_leaderboard_def(s: &mut ZoneStream<'_>) -> Result<()> {
@@ -155,34 +181,35 @@ pub(super) fn load_leaderboard_def(s: &mut ZoneStream<'_>) -> Result<()> {
     s.pop()
 }
 
-pub(super) fn load_structured_data_def_set(s: &mut ZoneStream<'_>) -> Result<()> {
+pub(super) fn load_structured_data_def_set(
+    s: &mut ZoneStream<'_>,
+    links: &mut dyn AssetLinkSink,
+) -> Result<()> {
     s.walk_stage = "structured_data";
     let p = s.alloc_load(4, s.layout(sz::STRUCTURED_DATA_DEF_SET, 24))?;
     let def_count = s.i32_at(p, s.layout(4, 8))?.max(0) as usize;
 
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
-    if s.begin_body(p.at(s.layout(8, 16)))? {
-        let def = s.layout(sz::STRUCTURED_DATA_DEF, 88);
-        let defs = s.alloc_load(4, def * def_count)?;
+    let def = s.layout(sz::STRUCTURED_DATA_DEF, 88);
+    if let Some(defs) = s.follow_array(p, s.layout(8, 16), 4, def, def_count)? {
         for index in 0..def_count {
             load_structured_data_def(s, defs.at(index * def))?;
         }
     }
+    links.capture_structured_data_def_set(s, p)?;
     s.pop()
 }
 
 fn load_structured_data_def(s: &mut ZoneStream<'_>, p: crate::zone::Ptr) -> Result<()> {
     let enum_count = s.i32_at(p, 8)?.max(0) as usize;
-    if s.begin_body(p.at(s.layout(12, 16)))? {
-        let enum_row = s.layout(sz::STRUCTURED_DATA_ENUM, 16);
+    let enum_row = s.layout(sz::STRUCTURED_DATA_ENUM, 16);
+    if let Some(enums) = s.follow_array(p, s.layout(12, 16), 4, enum_row, enum_count)? {
         let entry = s.layout(sz::STRUCTURED_DATA_ENUM_ENTRY, 16);
-        let enums = s.alloc_load(4, enum_row * enum_count)?;
         for index in 0..enum_count {
             let row = enums.at(index * enum_row);
             let entry_count = s.i32_at(row, 0)?.max(0) as usize;
-            if s.begin_body(row.at(8))? {
-                let entries = s.alloc_load(4, entry * entry_count)?;
+            if let Some(entries) = s.follow_array(row, 8, 4, entry, entry_count)? {
                 for entry_index in 0..entry_count {
                     s.follow_string(entries.at(entry_index * entry), 0)?;
                 }
@@ -191,15 +218,15 @@ fn load_structured_data_def(s: &mut ZoneStream<'_>, p: crate::zone::Ptr) -> Resu
     }
 
     let struct_count = s.i32_at(p, s.layout(16, 24))?.max(0) as usize;
-    if s.begin_body(p.at(s.layout(20, 32)))? {
-        let struct_row = s.layout(sz::STRUCTURED_DATA_STRUCT, 24);
+    let struct_row = s.layout(sz::STRUCTURED_DATA_STRUCT, 24);
+    if let Some(structs) = s.follow_array(p, s.layout(20, 32), 4, struct_row, struct_count)? {
         let property = s.layout(sz::STRUCTURED_DATA_STRUCT_PROPERTY, 24);
-        let structs = s.alloc_load(4, struct_row * struct_count)?;
         for index in 0..struct_count {
             let row = structs.at(index * struct_row);
             let property_count = s.i32_at(row, 0)?.max(0) as usize;
-            if s.begin_body(row.at(s.layout(4, 8)))? {
-                let properties = s.alloc_load(4, property * property_count)?;
+            if let Some(properties) =
+                s.follow_array(row, s.layout(4, 8), 4, property, property_count)?
+            {
                 for property_index in 0..property_count {
                     s.follow_string(properties.at(property_index * property), 0)?;
                 }

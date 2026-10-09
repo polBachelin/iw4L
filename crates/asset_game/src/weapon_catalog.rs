@@ -1313,7 +1313,13 @@ pub struct T6AttachmentModel {
 #[derive(Clone, Debug)]
 struct WeaponRow {
     preparation: WeaponPreparationRecipe,
+    /// The asset name less `_mp`: the row's identity, which merges an asset
+    /// with its `_mp` spelling.
     name: String,
+    /// The asset name as the zone spells it, which is what the game's scripts
+    /// call the weapon: `iw5_ak47_mp`, but `sentry_minigun_so` or
+    /// `remote_missile_detonator`. Empty on a row no asset names.
+    script_name: String,
     alternate_weapon: Option<String>,
     impact_payload: Option<String>,
     alternate_index: u32,
@@ -1454,6 +1460,7 @@ impl Default for WeaponRow {
         Self {
             preparation: WeaponPreparationRecipe::native(crate::AssetNamespace::Iw4),
             name: String::new(),
+            script_name: String::new(),
             alternate_weapon: None,
             impact_payload: None,
             alternate_index: 0,
@@ -2057,6 +2064,56 @@ impl WeaponBuild {
         self.registry.revision = mint_weapon_revision();
     }
 
+    /// Lays the weapons of a zone loaded after these over them: a weapon both
+    /// carry takes the later definition in its existing row, so its id holds,
+    /// and a weapon only the later zone carries is appended. Returns how many
+    /// rows were replaced and how many were added.
+    pub fn overlay(&mut self, mut later: Self) -> (usize, usize) {
+        if self.registry.rows.is_empty() {
+            let added = later.len();
+            self.absorb(later);
+            return (0, added);
+        }
+        self.registry
+            .vehicle_compass
+            .extend(std::mem::take(&mut later.registry.vehicle_compass));
+        self.registry
+            .vehicle_accel
+            .extend(std::mem::take(&mut later.registry.vehicle_accel));
+        self.registry
+            .vehicle_turrets
+            .extend(std::mem::take(&mut later.registry.vehicle_turrets));
+        self.registry
+            .iw5_attachments
+            .extend(std::mem::take(&mut later.registry.iw5_attachments));
+        self.registry
+            .item_groups
+            .extend(std::mem::take(&mut later.registry.item_groups));
+        self.family_tables.extend(later.family_tables);
+        let (mut replaced, mut added) = (0, 0);
+        let rows = later.registry.rows.into_iter().skip(1);
+        for (row, slots) in rows.zip(later.combat_slots.into_iter().skip(1)) {
+            let key = (row.namespace, row.name.clone());
+            match self.registry.by_namespaced.get(&key) {
+                Some(&id) => {
+                    self.registry.rows[id as usize] = row;
+                    self.combat_slots[id as usize] = slots;
+                    replaced += 1;
+                }
+                None => {
+                    let id = self.registry.rows.len() as u32;
+                    self.registry.by_namespaced.insert(key, id);
+                    self.registry.rows.push(row);
+                    self.combat_slots.push(slots);
+                    added += 1;
+                }
+            }
+        }
+        self.registry.rebuild_name_maps();
+        self.registry.revision = mint_weapon_revision();
+        (replaced, added)
+    }
+
     pub fn resolve_combat_fx(&mut self, fx: &crate::FxCatalog, tracers: &crate::TracerCatalog) {
         let n = self.registry.rows.len().min(self.combat_slots.len());
         for i in 1..n {
@@ -2487,6 +2544,8 @@ fn normalize_weapon_name(name: &str) -> String {
     lower.strip_suffix("_mp").unwrap_or(&lower).to_owned()
 }
 
+/// The script name of a weapon whose asset spelling is unknown: the `_mp`
+/// spelling of its bare name.
 pub fn gsc_weapon_script_name(catalog_bare: &str) -> String {
     if catalog_bare.is_empty() {
         return String::new();

@@ -192,14 +192,19 @@ fn push_rumble(active: &mut Vec<ActiveRumble>, request: ActiveRumble) {
     active.push(request);
 }
 
-fn canonical_alias(alias: &str) -> String {
-    alias.strip_prefix("iw4:").unwrap_or(alias).to_owned()
+/// A rumble of the host game is named bare; any other keeps its `ns:` prefix.
+fn canonical_alias(host: asset_core::AssetNamespace, alias: &str) -> String {
+    match crate::aliases::namespace_alias(host, alias) {
+        (namespace, name) if namespace == host => name.to_owned(),
+        _ => alias.to_owned(),
+    }
 }
 
 fn script_rumble(
     event: On<net::EntityRumble>,
     adopted: Option<Res<net::LastAdoptedSnapshot>>,
     bank: Option<Res<crate::SoundBank>>,
+    host: assets::HostNamespace,
     mut requests: MessageWriter<ScriptRumbleRequest>,
     mut gaps: ResMut<crate::MissingAliasGaps>,
 ) {
@@ -229,10 +234,8 @@ fn script_rumble(
         }
     };
     let stop = record.event == entity_iw4::EntityEventKind::STOP_RUMBLE;
-    let (namespace, name) = alias
-        .split_once(':')
-        .and_then(|(ns, name)| asset_core::AssetNamespace::parse(ns).map(|ns| (ns, name)))
-        .unwrap_or((asset_core::AssetNamespace::Iw4, alias.as_str()));
+    let host = host.get();
+    let (namespace, name) = crate::aliases::namespace_alias(host, alias);
     let rumble = if stop {
         None
     } else {
@@ -246,7 +249,7 @@ fn script_rumble(
     };
     requests.write(ScriptRumbleRequest {
         revision: bank.0.revision(),
-        alias: canonical_alias(alias),
+        alias: canonical_alias(host, alias),
         source,
         stop,
         rumble,
@@ -319,6 +322,7 @@ fn update(
     mut output: MessageWriter<GamepadRumbleRequest>,
     settings: Res<frame::GameSettings>,
     active: Option<Res<frame::ActivePad>>,
+    host: assets::HostNamespace,
 ) {
     let now = (time.elapsed_secs_f64() * 1000.0) as i32;
     let selected = active
@@ -373,7 +377,7 @@ fn update(
                 rumble: Arc::clone(&request.rumble),
                 script: request.alias.as_ref().map(|alias| {
                     (
-                        canonical_alias(alias),
+                        canonical_alias(host.get(), alias),
                         ScriptSource::Entity {
                             number: local.0.0 as i32,
                             origin: [0.0; 3],

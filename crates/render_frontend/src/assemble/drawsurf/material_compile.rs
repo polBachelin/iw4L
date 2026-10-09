@@ -41,6 +41,14 @@ fn compile_one_job(catalog: &RuntimeMaterialCatalog, job: CompileJob) -> PassOut
             tech: job.tech,
             port,
         },
+        Err(super::ProgramRegistryError::Preparation(cause))
+            if cause.is_vertex_type_without_declaration() =>
+        {
+            PassOutcome::NoDeclaration {
+                tech: job.tech,
+                vertex_type: job.vertex_type,
+            }
+        }
         Err(cause) => PassOutcome::Refused {
             tech: job.tech,
             vertex_type: job.vertex_type,
@@ -134,6 +142,10 @@ fn compile_jobs_parallel(
                 tech: job.tech,
                 vertex_type,
                 key,
+            },
+            PassOutcome::NoDeclaration { vertex_type, .. } => PassOutcome::NoDeclaration {
+                tech: job.tech,
+                vertex_type,
             },
             PassOutcome::Missing => PassOutcome::Missing,
         })
@@ -250,6 +262,32 @@ enum PassOutcome {
         vertex_type: u8,
         key: String,
     },
+    NoDeclaration {
+        tech: u8,
+        vertex_type: u8,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum PortLane {
+    World,
+    Packed,
+    PosTex,
+    PostFx,
+}
+
+impl PortLane {
+    fn of(tech: u8, vertex_type: u8) -> Self {
+        if tech == POSTFX_TECH_TYPE {
+            Self::PostFx
+        } else if vertex_type == asset_iw4::vertex_decl::PACKED_VERTEX_TYPE {
+            Self::Packed
+        } else if vertex_type == asset_iw4::vertex_decl::POS_TEX_VERTEX_TYPE {
+            Self::PosTex
+        } else {
+            Self::World
+        }
+    }
 }
 
 #[derive(Default)]
@@ -282,6 +320,10 @@ pub struct MaterialProgramCompile {
     pub(crate) refused_packed: usize,
     pub(crate) refused_pos_tex: usize,
     pub(crate) refused_postfx: usize,
+    pub(crate) no_decl_world: usize,
+    pub(crate) no_decl_packed: usize,
+    pub(crate) no_decl_pos_tex: usize,
+    pub(crate) no_decl_postfx: usize,
 }
 
 impl MaterialProgramCompile {
@@ -347,19 +389,30 @@ impl MaterialProgramCompile {
                 tech,
                 vertex_type,
                 key,
-            } => {
-                if tech == POSTFX_TECH_TYPE {
+            } => match PortLane::of(tech, vertex_type) {
+                PortLane::PostFx => {
                     *self.postfx_causes.entry(key).or_default() += 1;
                     self.refused_postfx += 1;
-                } else if vertex_type == asset_iw4::vertex_decl::PACKED_VERTEX_TYPE {
+                }
+                PortLane::Packed => {
                     *self.packed_causes.entry(key).or_default() += 1;
                     self.refused_packed += 1;
-                } else if vertex_type == asset_iw4::vertex_decl::POS_TEX_VERTEX_TYPE {
+                }
+                PortLane::PosTex => {
                     *self.pos_tex_causes.entry(key).or_default() += 1;
                     self.refused_pos_tex += 1;
-                } else {
+                }
+                PortLane::World => {
                     *self.world_causes.entry(key).or_default() += 1;
                     self.refused_world += 1;
+                }
+            },
+            PassOutcome::NoDeclaration { tech, vertex_type } => {
+                match PortLane::of(tech, vertex_type) {
+                    PortLane::PostFx => self.no_decl_postfx += 1,
+                    PortLane::Packed => self.no_decl_packed += 1,
+                    PortLane::PosTex => self.no_decl_pos_tex += 1,
+                    PortLane::World => self.no_decl_world += 1,
                 }
             }
         }
@@ -657,6 +710,10 @@ impl MaterialProgramCompile {
         self.refused_packed = 0;
         self.refused_pos_tex = 0;
         self.refused_postfx = 0;
+        self.no_decl_world = 0;
+        self.no_decl_packed = 0;
+        self.no_decl_pos_tex = 0;
+        self.no_decl_postfx = 0;
         if let Some(stage) = &self.compile_stage {
             stage.set_total(u64::from(self.total));
         }

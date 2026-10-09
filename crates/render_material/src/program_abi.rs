@@ -66,6 +66,13 @@ pub enum ProgramAbiRefusal {
 }
 
 impl ProgramAbiRefusal {
+    pub fn is_vertex_type_without_declaration(&self) -> bool {
+        matches!(
+            self,
+            Self::Abi(PassAbiRefusal::VertexTypeMissingSource { .. })
+        )
+    }
+
     pub fn census_key(&self) -> String {
         match self {
             Self::StageMismatch { .. } => "StageMismatch".into(),

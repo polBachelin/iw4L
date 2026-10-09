@@ -1,5 +1,35 @@
 # IW4L
 
+## This fork: MW3 Survival (`mw3` branch)
+
+This branch makes IW4L run Call of Duty: Modern Warfare 3 (2011) **Survival** on Paris
+(`mp_paris`), solo and offline, on **MW3 data alone**. No MW2 install is needed. It is
+developed and tested on macOS (Apple silicon, Metal).
+
+Point it at your own MW3 PC installation. The branch ships no game content: maps,
+models, weapons, menus and MW3's own survival tables (`sp/survival_waves.csv`,
+`sp/survival_armories.csv`, ...) are read from your install at runtime. MW3's survival
+scripts are compiled and are not used; the game mode is new code in
+[`crates/assets/src/survival/`](crates/assets/src/survival/).
+
+```bash
+cp .env.example .env
+# Edit .env: IW4L_GAMES=/path/to/folder/containing/your/MW3/install
+make launcher            # or: cargo build --profile play -p launcher
+./target/play/iw4l survival
+```
+
+What works: waves from MW3's table (21 waves, repeating), enemy archetypes including
+juggernauts, martyrdom, claymore and chemical enemies, the chopper boss, credits, MW3's
+weapon, equipment and air support armories, last stand with self-revive, revive at wave
+end, a pause that freezes solo play, and MW3's end-of-game summary. Not yet: dogs, last
+stand HUD, per-archetype enemy bodies, co-op.
+
+Details: [Survival mode](docs/SURVIVAL.md), [run recipes](docs/RUN.md). Regression run:
+`make approved SCENARIO=survival_paris` (headless).
+
+The rest of this README describes upstream IW4L.
+
 IW4L is an open-source runtime for Call of Duty: Modern Warfare 2 (2009), written in
 Rust with [Bevy](https://bevy.org/). Point it at a copy of MW2 you already own and it
 loads that installation's maps, models, textures and weapons into its own engine. You

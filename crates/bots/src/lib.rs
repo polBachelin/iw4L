@@ -9,7 +9,7 @@ mod query;
 mod roster;
 mod sensor;
 mod task;
-pub mod unique_loadout;
+mod tuning;
 mod weapon;
 
 pub use controller::HostController;
@@ -35,4 +35,5 @@ pub use roster::{
 };
 pub use sensor::{observe, observe_focused};
 pub use task::{ActionStage, Decision, SwitchReason, Task, TaskKind};
+pub use tuning::BotTuning;
 pub use weapon::{WeaponAct, WeaponFailure, WeaponSkill, WeaponStatus};

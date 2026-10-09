@@ -16,9 +16,9 @@ ABI preparation success establishes program decoding and register-source/layout 
 
 Stable material shells retain catalog generation, material/technique/vertex identity, selection provenance, compiled state and local bindings. Constructors and retained fields are private; capture rejects a mismatched execution identity, and rebinding receives the actual immutable catalog and refuses a stale shell. Rebinding resolves dynamic code constants and textures again and preserves typed failures. The renderer owns current-generation checks for retained frame products and GPU resources; a shell alone does not establish residency in a newer scene.
 
-HUD chrome compiles its state when installing its menu catalog and caches the result with that catalog. Unsupported HUD state is refused during installation; blood composition also reports its material-state failure before creating a batch. Tess batches and pipeline keys carry compiled products. The current chrome namespace remains an explicit HUD ownership rule.
+HUD chrome compiles its state when installing its menu catalog and caches the result with that catalog. Unsupported HUD state is refused during installation; blood composition also reports its material-state failure before creating a batch. Tess batches and pipeline keys carry compiled products. The chrome namespace is the runtime profile's game: the menu catalog is read from that game's UI zones and every chrome draw names it.
 
-Family compilation also publishes colour camera routing, smodel colour admission, unlit sky routing and the explicit IW4 host-postfx admission rule. Shared draw consumers read these rules; authored camera regions remain available as provenance.
+Family compilation also publishes colour camera routing, smodel colour admission, unlit sky routing and host-postfx admission: IW4 and IW5 admit host post-FX, T5 and T6 refuse it. Shared draw consumers read these rules; authored camera regions remain available as provenance.
 
 Material execution still uses one shared drawsurf path. Compiled state is independent of shader compilation success, texture residency, GPU pipeline availability and frame-specific dynamic sources. These dependencies must all succeed before drawing.
 

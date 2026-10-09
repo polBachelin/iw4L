@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use bevy::prelude::Resource;
 use sim::{ClientId, LifeSequence};
 
 use crate::controller::HostController;
+use crate::tuning::BotTuning;
 
 pub const MAX_HOST_BOTS: u32 = 20;
 
@@ -68,6 +71,12 @@ pub struct BotAddRequest {
     pub count: u32,
     pub dummy: bool,
     pub side: Option<BotSide>,
+    /// Set when the match script asked for the bots: the script gives them
+    /// their loadout and decides their lives, so they pick no class.
+    pub archetype: Option<Arc<str>>,
+    /// Aim skill the bots' tuning is scaled by: 1 for every bot the script
+    /// did not ask for, the archetype's own otherwise.
+    pub skill: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,6 +91,8 @@ impl BotAddQueue {
             count: count.max(1),
             dummy: false,
             side: None,
+            archetype: None,
+            skill: 1.0,
         });
     }
 
@@ -91,8 +102,23 @@ impl BotAddQueue {
                 count,
                 dummy: false,
                 side: Some(side),
+                archetype: None,
+                skill: 1.0,
             });
         }
+    }
+
+    pub fn push_script(&mut self, request: sim::ScriptBotRequest) {
+        self.0.push(BotAddRequest {
+            count: request.count,
+            dummy: false,
+            side: Some(match request.side {
+                sim::ScriptBotSide::Enemy => BotSide::Enemy,
+                sim::ScriptBotSide::Ally => BotSide::Friendly,
+            }),
+            archetype: Some(request.archetype),
+            skill: request.skill,
+        });
     }
 
     pub fn push_dummy(&mut self, count: u32) {
@@ -100,6 +126,8 @@ impl BotAddQueue {
             count: count.max(1),
             dummy: true,
             side: None,
+            archetype: None,
+            skill: 1.0,
         });
     }
 
@@ -172,6 +200,10 @@ pub struct BotSlot {
     pub class_picked_in: Option<LifeSequence>,
     pub class_picks: u32,
     pub side: Option<BotSide>,
+    pub archetype: Option<Arc<str>>,
+    /// The authority has listed the client. A joined bot that is not yet
+    /// listed is still joining; one that was and no longer is has left.
+    pub present: bool,
 }
 
 #[derive(Resource, Debug)]
@@ -209,7 +241,10 @@ impl BotRoster {
         taken: &[ClientId],
         dummy: bool,
         side: Option<BotSide>,
+        archetype: Option<&Arc<str>>,
+        skill: f32,
     ) -> Vec<ClientId> {
+        let tuning = BotTuning::default().scaled(skill);
         let room = MAX_HOST_BOTS.saturating_sub(self.bots.len() as u32);
         let count = count.min(room);
         let seed = self.seed;
@@ -225,8 +260,9 @@ impl BotRoster {
                     return added;
                 }
             }
-            let brain = (!dummy)
-                .then(|| HostController::new(seed ^ (u64::from(id.0) << 32) ^ u64::from(i)));
+            let brain = (!dummy).then(|| {
+                HostController::new(seed ^ (u64::from(id.0) << 32) ^ u64::from(i), tuning)
+            });
             let available: Vec<_> = BOT_NAMES
                 .iter()
                 .copied()
@@ -243,23 +279,22 @@ impl BotRoster {
                 class_picked_in: None,
                 class_picks: 0,
                 side,
+                archetype: archetype.cloned(),
+                present: false,
             });
             added.push(id);
         }
         added
     }
 
+    /// A client id is its entity number, and only the first `MAX_CLIENTS`
+    /// entities are clients. Bots rotate through ids 1 and up within them, so
+    /// an id a bot just left is the last one handed out again.
     fn claim_id(&mut self, taken: &[ClientId]) -> Option<ClientId> {
-        // Only `bots + taken` ids are spoken for, so one candidate more than
-        // that always turns up a free one.
-        let candidates = self
-            .bots
-            .len()
-            .saturating_add(taken.len())
-            .saturating_add(1);
-        for _ in 0..candidates {
+        let slots = playerstate_iw4::MAX_CLIENTS as u32;
+        for _ in 1..slots {
             let id = ClientId(self.next_client);
-            self.next_client = self.next_client.wrapping_add(1).max(1);
+            self.next_client = self.next_client % (slots - 1) + 1;
             if !taken.contains(&id) && !self.is_bot(id) {
                 return Some(id);
             }

@@ -1,4 +1,3 @@
-use asset_core::AssetNamespace;
 use bevy::prelude::*;
 use frame::{AppScreen, LifeEnded, MatchTornDown};
 use hud_iw4::shellshock_remaining_ms;
@@ -23,6 +22,7 @@ pub(crate) fn update_shellshock_tinnitus(
     presented: Option<Res<PresentedSnapshot>>,
     local: Option<Res<LocalPresentClient>>,
     bank: Option<Res<SoundBank>>,
+    host: assets::HostNamespace,
     runtime: Res<crate::AudioRuntime>,
     mut sources: ResMut<ShellshockSources>,
     mut play: MessageWriter<crate::AliasCommand>,
@@ -85,7 +85,7 @@ pub(crate) fn update_shellshock_tinnitus(
             if let Some(bank) = bank
                 && let Some(cue) = runtime.source_cue(SourceCueRequest {
                     bank: bank.0.clone(),
-                    namespace: AssetNamespace::Iw4,
+                    namespace: host.get(),
                     alias: parms.loop_alias.clone(),
                     emitter: Some(local.0.0),
                     scope: crate::backend::AudioScope::Match,
@@ -126,7 +126,7 @@ pub(crate) fn update_shellshock_tinnitus(
         };
         play.write(crate::AliasCommand::Play(PlayAlias {
             event: None,
-            namespace: AssetNamespace::Iw4,
+            namespace: host.get(),
             alias: alias.to_owned(),
             fallback: None,
             origin_inches: None,

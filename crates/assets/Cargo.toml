@@ -19,6 +19,7 @@ asset_model.workspace = true
 asset_transport.workspace = true
 asset_world.workspace = true
 weapon_iw4.workspace = true
+gamemode_iw4.workspace = true
 fastfile_iw4.workspace = true
 fastfile_t5.workspace = true
 fastfile_t6.workspace = true

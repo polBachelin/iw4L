@@ -6,6 +6,7 @@ mod scenario;
 mod scenarios {
     pub mod heavy_gameplay_lifecycle;
     pub mod master_duo_chaos;
+    pub mod survival_paris;
 }
 
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ fn main() {
         Err(message) => {
             eprintln!("{message}");
             eprintln!(
-                "usage: approved_tests <heavy_gameplay_lifecycle|master_duo_chaos> [--seed N | --replay run.json] \
+                "usage: approved_tests <heavy_gameplay_lifecycle|master_duo_chaos|survival_paris> [--seed N | --replay run.json] \
                  [--cache cold|shared] [--bin path]"
             );
             std::process::exit(2);
@@ -60,9 +61,28 @@ fn main() {
             }
         });
     }
+    if args.scenario == scenarios::survival_paris::NAME {
+        if args.seed.is_some() || args.replay.is_some() {
+            eprintln!(
+                "survival_paris supports --bin and --cache; seeds and replay belong to heavy_gameplay_lifecycle"
+            );
+            std::process::exit(2);
+        }
+
+        std::process::exit(
+            match scenarios::survival_paris::run(&root, &args.bin, args.cache) {
+                Ok(true) => 0,
+                Ok(false) => 1,
+                Err(error) => {
+                    eprintln!("approved_tests: {error}");
+                    1
+                }
+            },
+        );
+    }
     if args.scenario != SCENARIO.name {
         eprintln!(
-            "approved scenarios: {}, master_duo_chaos (asked for {:?})",
+            "approved scenarios: {}, master_duo_chaos, survival_paris (asked for {:?})",
             SCENARIO.name, args.scenario
         );
         std::process::exit(2);

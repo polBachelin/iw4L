@@ -76,8 +76,8 @@ pub fn host_game_mode_kind() -> GameModeKind {
     std::env::var("IW4L_GAMETYPE")
         .ok()
         .as_deref()
-        .and_then(GameModeKind::parse_ascii_ignore_case)
-        .unwrap_or(GameModeKind::FreeForAll)
+        .and_then(HostGameModeSelection::from_token)
+        .map_or(GameModeKind::FreeForAll, HostGameModeSelection::kind)
 }
 
 #[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -87,6 +87,7 @@ pub struct HostCheats(pub bool);
 pub struct HostGameModeSelection(GameModeKind);
 
 impl HostGameModeSelection {
+    /// The modes a multiplayer lobby offers and accepts by token.
     pub const ALL: [Self; 8] = [
         Self(GameModeKind::FreeForAll),
         Self(GameModeKind::Domination),
@@ -98,8 +99,19 @@ impl HostGameModeSelection {
         Self(GameModeKind::Sabotage),
     ];
 
+    /// Survival is chosen by its own launch, never by a lobby token.
+    pub const SURVIVAL: Self = Self(GameModeKind::Survival);
+
     pub fn from_token(token: &str) -> Option<Self> {
-        GameModeKind::parse_ascii_ignore_case(token).map(Self)
+        GameModeKind::parse_ascii_ignore_case(token)
+            .map(Self)
+            .filter(|mode| mode.is_lobby_choice())
+    }
+
+    /// Whether a lobby offers this mode, so a selection of it ends with its
+    /// match. Any other was fixed by the launch, for every match it plays.
+    pub fn is_lobby_choice(self) -> bool {
+        Self::ALL.contains(&self)
     }
 
     pub fn from_env() -> Self {
@@ -118,6 +130,11 @@ impl HostGameModeSelection {
         self.0.display_name()
     }
 }
+
+/// The sides of a survival match, from the mode's settings. A survival launch
+/// inserts it with [`HostGameModeSelection::SURVIVAL`].
+#[derive(bevy_ecs::prelude::Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SurvivalTeams(pub gamemode_iw4::survival::TeamRules);
 
 pub fn spawn_candidate_indices(spawns: &[AuthoredSpawnPoint]) -> Vec<usize> {
     spawn_candidate_indices_for(spawns, GameModeKind::FreeForAll, TEAM_FREE, true)

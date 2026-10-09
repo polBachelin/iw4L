@@ -513,7 +513,7 @@ pub(crate) fn spawn_world(
                 sun.direction[1],
                 sun.direction[2]
             ),
-            None => diag::info!(World, "sun effects: off (no authored IW4 record)"),
+            None => diag::info!(World, "sun effects: off (the map authors no sun record)"),
         }
         match scene.outdoor_image {
             Some(id) => diag::info!(

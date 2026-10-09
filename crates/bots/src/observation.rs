@@ -53,7 +53,12 @@ pub enum WeaponClass {
     Lmg,
     Sniper,
     Shotgun,
+    /// A riot shield: it fights by bashing, so only within melee reach.
+    Shield,
 }
+
+/// How close a shield bash lands: the player melee range.
+pub const MELEE_REACH: f32 = weapon_iw4::PLAYER_MELEE_RANGE_DEFAULT;
 
 impl WeaponClass {
     pub fn fight_hold(self) -> f32 {
@@ -63,35 +68,28 @@ impl WeaponClass {
             Self::Assault => 160.0,
             Self::Smg => 112.0,
             Self::Shotgun => 72.0,
+            Self::Shield => MELEE_REACH * 0.75,
         }
     }
 
-    pub fn from_script_name(name: &str) -> Self {
-        if name.is_empty() {
-            return Self::Assault;
+    /// The bucket of a weapon's own `weapType` and `weapClass`. Every
+    /// namespace's combat facts carry both in the IW4 enumerations.
+    pub fn from_weapon(weap_type: i32, weap_class: i32) -> Self {
+        if weap_type == weapon_iw4::WEAPTYPE_SHIELD {
+            return Self::Shield;
         }
-        let stem = crate::unique_loadout::family_stem(name);
-        for row in crate::unique_loadout::UNIQUE_WEAPONS {
-            if crate::unique_loadout::family_stem(row.key) == stem {
-                return Self::from_group(row.group);
-            }
+        match weap_class {
+            weapon_iw4::WEAPCLASS_SNIPER => Self::Sniper,
+            weapon_iw4::WEAPCLASS_MG => Self::Lmg,
+            weapon_iw4::WEAPCLASS_SPREAD => Self::Shotgun,
+            weapon_iw4::WEAPCLASS_SMG | weapon_iw4::WEAPCLASS_PISTOL => Self::Smg,
+            _ => Self::Assault,
         }
-        Self::Assault
     }
 
-    fn from_group(group: crate::unique_loadout::UniqueGroup) -> Self {
-        use crate::unique_loadout::UniqueGroup;
-        match group {
-            UniqueGroup::Sniper => Self::Sniper,
-            UniqueGroup::Lmg => Self::Lmg,
-            UniqueGroup::Shotgun => Self::Shotgun,
-            UniqueGroup::Smg | UniqueGroup::MachinePistol | UniqueGroup::Pistol => Self::Smg,
-            UniqueGroup::Assault
-            | UniqueGroup::Riot
-            | UniqueGroup::Projectile
-            | UniqueGroup::Cqb
-            | UniqueGroup::Special => Self::Assault,
-        }
+    /// The weapon attacks with the melee button: it has no magazine to fire.
+    pub fn melees(self) -> bool {
+        self == Self::Shield
     }
 }
 
@@ -273,6 +271,10 @@ pub struct BotObservation {
     pub events: Vec<BotEvent>,
     pub objective: Option<ModeObjective>,
     pub objectives: Vec<ModeObjective>,
+    /// Clients the mode tells this bot about wherever they are, as
+    /// `PublicMode` contacts: the live players a survival enemy hunts. `None`
+    /// when the mode tells it nothing; empty when nobody it hunts is alive.
+    pub quarry: Option<Vec<Contact>>,
 }
 
 impl BotObservation {

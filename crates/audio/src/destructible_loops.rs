@@ -29,6 +29,7 @@ pub(crate) fn update(
     presented: Res<PresentedSnapshot>,
     bank: Option<Res<SoundBank>>,
     namespace: Option<Res<SoundBankNamespace>>,
+    host: assets::HostNamespace,
     epoch: Res<MatchEpoch>,
     runtime: Res<AudioRuntime>,
     mut sources: ResMut<DestructibleSources>,
@@ -41,7 +42,7 @@ pub(crate) fn update(
     let Some(snapshot) = presented.snapshot() else {
         return;
     };
-    let ns = namespace.map_or(AssetNamespace::Iw4, |map| map.namespace);
+    let ns = namespace.map_or(host.get(), |map| map.namespace);
     let mut speaking: Vec<_> = snapshot
         .meta
         .world_objects

@@ -35,14 +35,20 @@ const ITEM_TYPE_PASSWORDFIELD: i32 = 23;
 pub(super) fn load_menu_list(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     let width = s.pointer_bytes();
     let p = s.alloc_load(4, s.layout(sz::MENU_LIST, 24))?;
-    let count = s.i32_at(p, s.layout(4, 8))?.max(0) as usize;
+    let count = s.i32_at(p, s.layout(sz::MENU_LIST_COUNT_OFF, 8))?.max(0) as usize;
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
-    if let Some(menus) = always_array(s, p.at(s.layout(8, 16)), 4, width * count)? {
+    if let Some(menus) = always_array(
+        s,
+        p.at(s.layout(sz::MENU_LIST_MENUS_OFF, 16)),
+        4,
+        width * count,
+    )? {
         for i in 0..count {
             asset_ptr_at(s, links, AssetType::Menu, menus.at(i * width))?;
         }
     }
+    links.capture_menu_list(s, p)?;
     s.pop()
 }
 
@@ -51,7 +57,8 @@ pub(super) fn load_menu_def_asset(
     links: &mut dyn AssetLinkSink,
 ) -> Result<()> {
     let p = s.alloc_load(4, s.layout(sz::MENU_DEF, 200))?;
-    load_menu_def(s, links, p)
+    load_menu_def(s, links, p)?;
+    links.capture_menu_def(s, p)
 }
 
 fn load_menu_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
@@ -62,9 +69,16 @@ fn load_menu_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) 
         s.fixup_slot(p.at(0), data)?;
         load_menu_data(s, links, data)?;
     }
-    load_window_def(s, links, p.at(s.layout(4, 8)))?;
-    let item_count = s.i32_at(p, s.layout(168, 184))?.max(0) as usize;
-    if let Some(items) = always_array(s, p.at(s.layout(172, 192)), 4, width * item_count)? {
+    load_window_def(s, links, p.at(s.layout(sz::MENU_DEF_WINDOW_OFF, 8)))?;
+    let item_count = s
+        .i32_at(p, s.layout(sz::MENU_DEF_ITEM_COUNT_OFF, 184))?
+        .max(0) as usize;
+    if let Some(items) = always_array(
+        s,
+        p.at(s.layout(sz::MENU_DEF_ITEMS_OFF, 192)),
+        4,
+        width * item_count,
+    )? {
         for i in 0..item_count {
             load_item_def_ptr(s, links, items.at(i * width))?;
         }
@@ -73,7 +87,7 @@ fn load_menu_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) 
 }
 
 fn load_menu_data(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
-    let expression_data = s.layout(204, 272);
+    let expression_data = s.layout(sz::MENU_DATA_EXPRESSION_DATA_OFF, 272);
     if s.begin_body(p.at(expression_data))? {
         let expr = s.alloc_load(4, s.layout(sz::EXPRESSION_SUPPORTING_DATA, 48))?;
         s.fixup_slot(p.at(expression_data), expr)?;
@@ -92,15 +106,15 @@ fn load_menu_data(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr)
             load_menu_event_handler_set(s, links, set)?;
         }
     }
-    let on_key = s.layout(44, 64);
+    let on_key = s.layout(sz::MENU_DATA_ON_KEY_OFF, 64);
     if always_alloc(s, p.at(on_key))? {
         let key = s.alloc_load(4, s.layout(sz::ITEM_KEY_HANDLER, 24))?;
         s.fixup_slot(p.at(on_key), key)?;
         load_item_key_handler(s, links, key)?;
     }
-    load_statement_ptr(s, links, p.at(s.layout(48, 72)))?;
-    follow_name(s, p, s.layout(52, 80))?;
-    follow_name(s, p, s.layout(56, 88))?;
+    load_statement_ptr(s, links, p.at(s.layout(sz::MENU_DATA_VISIBLE_EXP_OFF, 72)))?;
+    follow_name(s, p, s.layout(sz::MENU_DATA_ALLOWED_BINDING_OFF, 80))?;
+    follow_name(s, p, s.layout(sz::MENU_DATA_SOUND_NAME_OFF, 88))?;
     for off in [
         s.layout(76, 112),
         s.layout(80, 120),
@@ -116,9 +130,14 @@ fn load_menu_data(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr)
 }
 
 fn load_window_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
-    follow_name(s, p, 0)?;
-    follow_name(s, p, s.layout(44, 48))?;
-    asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(160, 168)))
+    follow_name(s, p, sz::WINDOW_DEF_NAME_OFF)?;
+    follow_name(s, p, s.layout(sz::WINDOW_DEF_GROUP_OFF, 48))?;
+    asset_ptr_at(
+        s,
+        links,
+        AssetType::Material,
+        p.at(s.layout(sz::WINDOW_DEF_BACKGROUND_OFF, 168)),
+    )
 }
 
 fn load_item_def_ptr(
@@ -136,7 +155,7 @@ fn load_item_def_ptr(
 
 fn load_item_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
     load_window_def(s, links, p)?;
-    follow_name(s, p, s.layout(228, 240))?;
+    follow_name(s, p, s.layout(sz::ITEM_DEF_TEXT_OFF, 240))?;
     for off in [
         s.layout(240, 264),
         s.layout(244, 272),
@@ -164,13 +183,20 @@ fn load_item_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) 
     }
     follow_name(s, p, s.layout(288, 360))?;
     follow_name(s, p, s.layout(292, 368))?;
-    asset_ptr_at(s, links, AssetType::Sound, p.at(s.layout(300, 384)))?;
+    asset_ptr_at(
+        s,
+        links,
+        AssetType::Sound,
+        p.at(s.layout(sz::ITEM_DEF_FOCUS_SOUND_OFF, 384)),
+    )?;
     load_item_def_data(s, links, p)?;
     let float_expression = s.layout(sz::ITEM_FLOAT_EXPRESSION, 16);
-    let float_count = s.i32_at(p, s.layout(316, 408))?.max(0) as usize;
+    let float_count = s
+        .i32_at(p, s.layout(sz::ITEM_DEF_FLOAT_EXPRESSION_COUNT_OFF, 408))?
+        .max(0) as usize;
     if let Some(arr) = always_array(
         s,
-        p.at(s.layout(320, 416)),
+        p.at(s.layout(sz::ITEM_DEF_FLOAT_EXPRESSIONS_OFF, 416)),
         4,
         float_expression * float_count,
     )? {
@@ -191,8 +217,8 @@ fn load_item_def(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) 
 }
 
 fn load_item_def_data(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink, p: Ptr) -> Result<()> {
-    let ty = s.i32_at(p, s.layout(184, 196))?;
-    let type_data = p.at(s.layout(312, 400));
+    let ty = s.i32_at(p, s.layout(sz::ITEM_DEF_TYPE_OFF, 196))?;
+    let type_data = p.at(s.layout(sz::ITEM_DEF_TYPE_DATA_OFF, 400));
     match ty {
         ITEM_TYPE_LISTBOX => {
             if always_alloc(s, type_data)? {

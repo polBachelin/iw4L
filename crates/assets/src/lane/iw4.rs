@@ -3,8 +3,9 @@ use std::path::Path;
 use fastfile_iw4::load_zone;
 
 use super::helpers::{
-    decode_reflection_probes, report_dpvs, report_ffa_spawns, report_intermission,
-    report_map_models, report_world_batches, smodel_lighting_samples,
+    decode_reflection_probes, report_combat_tables, report_dpvs, report_ffa_spawns,
+    report_intermission, report_map_models, report_world_batches, resolve_film_vision,
+    smodel_lighting_samples,
 };
 use super::{
     CommonCensus, CommonWalkSink, LaneGap, LoadedWorld, MaterialPopulation, MaterialPopulationSink,
@@ -164,40 +165,8 @@ impl ZoneLane for Iw4Lane {
         let script_sound = std::mem::take(&mut sink.script_sound).finish();
         let exp_fog = sink.exp_fog.take();
         let createart_name = sink.createart_name.take();
-        let vision_name = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .map(|stem| format!("vision/{}.vision", stem.to_ascii_lowercase()));
-        let mut film_visions = common_film_visions.clone();
-        film_visions.extend(sink.film_visions.clone());
-        let film_result = select_film_vision(
-            vision_name.as_deref(),
-            &sink.film_visions,
-            common_film_visions,
-        );
-        let film_vision = match film_result {
-            Ok(Some((vision, source))) => {
-                report.push(format!(
-                    "film vision: READY source={source} enable={} contrast={:.4} brightness={:.4} desaturation={:.5}",
-                    vision.enable,
-                    vision.contrast,
-                    vision.brightness,
-                    vision.desaturation,
-                ));
-                Some(vision)
-            }
-            Ok(None) => {
-                report.push(format!(
-                    "film vision: RED missing `{}` in map and common_mp fastfiles",
-                    vision_name.as_deref().unwrap_or("<invalid map stem>")
-                ));
-                None
-            }
-            Err(error) => {
-                report.push(format!("film vision: RED {error}"));
-                None
-            }
-        };
+        let (film_vision, film_visions) =
+            resolve_film_vision(&mut report, path, &sink.film_visions, common_film_visions);
         report.push(match (&compass.script, &compass.material, &compass.image) {
             (Some(script), Some(material), Some(image)) => format!(
                 "compass: {script} declares `{material}` -> image `{image}` range={}",
@@ -922,19 +891,11 @@ impl ZoneLane for Iw4Lane {
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
-        if sink.pen_table.is_some() {
-            report.push("common_mp bullet_penetration_mp: loaded (4x31)".into());
-        } else {
-            report.push(
-                "common_mp bullet_penetration_mp: missing — FirePenetrate depths are 0".into(),
-            );
-        }
-        if sink.lochit_table.is_some() {
-            report.push("common_mp mp_lochit_dmgtable: loaded (20)".into());
-        } else {
-            report
-                .push("common_mp mp_lochit_dmgtable: missing — location scale is identity".into());
-        }
+        report_combat_tables(
+            &mut report,
+            sink.pen_table.is_some(),
+            sink.lochit_table.is_some(),
+        );
         report.extend(sink.world_weapons.report_lines());
         report.push(format!(
             "common_mp XAnim catalog: {} clips captured ({} gaps)",
@@ -1281,21 +1242,4 @@ fn decode_map_material_images(
     );
     stage.done();
     report
-}
-
-fn select_film_vision(
-    name: Option<&str>,
-    map: &super::FilmVisionCatalog,
-    common: &super::FilmVisionCatalog,
-) -> Result<Option<(asset_world::FilmVision, &'static str)>, String> {
-    let name = name.ok_or_else(|| "map path has no UTF-8 stem".to_owned())?;
-    let candidate = map
-        .get(name)
-        .map(|vision| (vision, "fastfile"))
-        .or_else(|| common.get(name).map(|vision| (vision, "common_mp")));
-    match candidate {
-        Some((Ok(vision), source)) => Ok(Some((*vision, source))),
-        Some((Err(error), source)) => Err(format!("{source} parse error {error:?}")),
-        None => Ok(None),
-    }
 }

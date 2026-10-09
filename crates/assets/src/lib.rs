@@ -11,6 +11,7 @@ mod match_load;
 pub mod plugin;
 pub mod prepared;
 pub mod session_load;
+mod survival;
 mod teardown;
 
 pub use artifact_cache::{cache_flight, cache_get, cache_put, fnv1a64, fnv1a64_more};
@@ -33,8 +34,9 @@ pub use lighting_iw4::MODEL_LIGHTING_TILE_BYTES;
 pub use loading_screen::{LoadingPreviewSource, LoadingScreen};
 pub use map_load_process::MapLoadProcess;
 pub use match_load::{
-    MapLoadApproval, MatchLoadAbort, MatchLoadAccepted, MatchLoadBusy, MatchLoadDispatch,
-    MatchLoadRequest, PreparedMatchReady, PreparedMatchSound,
+    HostNamespace, MapLoadApproval, MatchLoadAbort, MatchLoadAccepted, MatchLoadBusy,
+    MatchLoadDispatch, MatchLoadRequest, MatchModeZones, MatchRuntimeProfile, PreparedMatchReady,
+    PreparedMatchSound,
 };
 pub use plugin::AssetPlugin;
 pub use prepared::{
@@ -47,6 +49,9 @@ pub use session_load::{
     MatchLoadOutcome, MatchMaterialSeed, PreparedMatch, PreparedWorld, ShellCommon,
     apply_match_material_map, load_match_material_catalog, load_match_material_seed, load_pool,
     load_prepared_match, load_shell_common, load_workers, publish_process_cpus,
+};
+pub use survival::{
+    survival_data_check, survival_mode_zones, survival_setting, survival_team_rules,
 };
 
 pub mod image_handles;

@@ -298,7 +298,9 @@ pub(crate) fn update_splash(
     input: Option<Res<frame::HudInputView>>,
     presented: Res<net::PresentedSnapshot>,
     local: Res<net::LocalPresentClient>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() {
         return;
     }
@@ -412,6 +414,7 @@ pub(crate) fn update_splash(
         ChromeAssets {
             catalog: catalog.as_deref(),
             localize: strings.as_ref().map(|s| &s.0),
+            host: chrome,
         },
         anim,
         &mut exprs,
@@ -426,11 +429,7 @@ pub(crate) fn update_splash(
 
     let mut fonts: HashMap<String, &asset_game::FontDef> = HashMap::new();
     for cmd in &list.cmds {
-        let _ = hud_images.get(
-            crate::images::HUD_CHROME_NAMESPACE,
-            &cmd.material,
-            &mut images,
-        );
+        let _ = hud_images.get(chrome, &cmd.material, &mut images);
     }
     if let Some(cat) = catalog.as_deref() {
         for cmd in &list.cmds {
@@ -445,11 +444,7 @@ pub(crate) fn update_splash(
         }
     }
     let mut image_missing = false;
-    if !material.is_empty()
-        && hud_images
-            .get(crate::images::HUD_CHROME_NAMESPACE, material, &mut images)
-            .is_none()
-    {
+    if !material.is_empty() && hud_images.get(chrome, material, &mut images).is_none() {
         image_missing = true;
         gaps.raise(GapCause::SplashImageMissing {
             name: material.to_owned(),

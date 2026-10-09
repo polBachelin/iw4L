@@ -113,9 +113,8 @@ fn hide(pass: &mut HudTessPass) {
 fn pick_kill_icon(
     payload: &sim::EntityEventPayload,
     weapons: Option<&assets::BoundWeapons<'_>>,
+    chrome: asset_core::AssetNamespace,
 ) -> KillIconPick {
-    let chrome = crate::images::HUD_CHROME_NAMESPACE;
-
     if let Some(mod_) = obituary_mod(payload.event_parm) {
         let Some(stem) = obituary_mod_killicon(mod_) else {
             return KillIconPick {
@@ -209,6 +208,7 @@ pub(crate) fn obituary(
     weapons: Option<Res<PreparedWeapons>>,
     presented: Res<net::PresentedSnapshot>,
     clock: Res<FrameClock>,
+    host_namespace: assets::HostNamespace,
 ) {
     if obituary.in_killcam {
         return;
@@ -217,7 +217,7 @@ pub(crate) fn obituary(
     let bound = weapons
         .as_deref()
         .and_then(|weapons| weapons.for_event(obituary.event.world).ok());
-    let pick = pick_kill_icon(&payload, bound.as_ref());
+    let pick = pick_kill_icon(&payload, bound.as_ref(), host_namespace.get());
     let attacker = snapshot_client_name(&presented, payload.attacker_entity_num);
     let victim = snapshot_client_name(&presented, payload.other_entity_num);
     let attacker_team = snapshot_client_team(&presented, payload.attacker_entity_num);
@@ -254,9 +254,10 @@ fn text_cmd(
     text: String,
     color: [f32; 4],
     site: &'static str,
+    chrome: asset_core::AssetNamespace,
 ) -> Draw2dCmd {
     Draw2dCmd {
-        material_namespace: crate::images::HUD_CHROME_NAMESPACE,
+        material_namespace: chrome,
         x: (x + 0.5).floor(),
         y: (y + 0.5).floor(),
         w: cmd_w,
@@ -297,7 +298,9 @@ pub(crate) fn update_killfeed(
     mut pass: ResMut<HudTessPass>,
     mut notifies: MessageReader<net::SvcGameNotify>,
     view: Option<Res<frame::ViewSubject>>,
+    host_namespace: assets::HostNamespace,
 ) {
+    let chrome = host_namespace.get();
     if !surface.is_ready() {
         hide(&mut pass);
         return;
@@ -438,11 +441,7 @@ pub(crate) fn update_killfeed(
     let font_tex_ok = if let Some(def) = font {
         fonts.insert(font_name.to_owned(), def);
         hud_images
-            .get(
-                crate::images::HUD_CHROME_NAMESPACE,
-                &font_material,
-                &mut images,
-            )
+            .get(chrome, &font_material, &mut images)
             .is_some()
     } else {
         false
@@ -504,6 +503,7 @@ pub(crate) fn update_killfeed(
                             1.0,
                         ],
                         "killfeed_game_msg",
+                        chrome,
                     ));
                 }
             }
@@ -546,6 +546,7 @@ pub(crate) fn update_killfeed(
                             attacker.clone(),
                             obituary_name_color(local_team, *attacker_team),
                             "killfeed_obituary",
+                            chrome,
                         ));
                         x_virtual += attacker_w + icon_spacing;
                     }
@@ -610,6 +611,7 @@ pub(crate) fn update_killfeed(
                         victim.clone(),
                         obituary_name_color(local_team, *victim_team),
                         "killfeed_obituary",
+                        chrome,
                     ));
                 }
             }
@@ -626,11 +628,7 @@ pub(crate) fn update_killfeed(
         let font_material = asset_core::AssetRef::bare_name(&def.material).to_owned();
         fonts.insert(HUD_SMALL_FONT.to_owned(), def);
         let bold_font_tex_ok = hud_images
-            .get(
-                crate::images::HUD_CHROME_NAMESPACE,
-                &font_material,
-                &mut images,
-            )
+            .get(chrome, &font_material, &mut images)
             .is_some();
         let scale = normalized_text_scale(def.pixel_height, BOLD_TEXT_SCALE);
         for (i, (start, text)) in window.bold.iter().enumerate().filter(|_| bold_font_tex_ok) {
@@ -657,6 +655,7 @@ pub(crate) fn update_killfeed(
                 text.clone(),
                 [1.0, 1.0, 1.0, alpha],
                 "killfeed_bold_msg",
+                chrome,
             ));
         }
     }

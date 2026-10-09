@@ -19,6 +19,7 @@ pub(crate) fn update_script_music(
     loading: Option<Res<assets::LoadingScreen>>,
     mut events: MessageReader<net::SvcScriptAudio>,
     bank: Option<Res<SoundBank>>,
+    host: assets::HostNamespace,
     mut playback: ResMut<ScriptMusicPlayback>,
     mut mix: ResMut<crate::script_mix::ScriptAudioMix>,
     mut feedback: ResMut<crate::clip_store::CueFeedback>,
@@ -75,7 +76,7 @@ pub(crate) fn update_script_music(
     let Some(alias) = playback.pending.take() else {
         return;
     };
-    let (namespace, name) = namespace_alias(&alias);
+    let (namespace, name) = namespace_alias(host.get(), &alias);
     let handle = runtime.trigger_cue(CueTrigger {
         event: None,
         bank: bank.0.clone(),

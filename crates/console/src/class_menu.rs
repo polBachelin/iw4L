@@ -332,7 +332,7 @@ pub(crate) fn route(
                         } else if let Some(at) = chosen.iter().position(|name| name == &value) {
                             chosen.remove(at);
                         } else {
-                            if candidate.loadout_rules().max_attachments == 1 {
+                            if candidate.loadout_rules(row).max_attachments == 1 {
                                 chosen.clear();
                             }
                             chosen.push(value);
@@ -341,7 +341,7 @@ pub(crate) fn route(
                             .check_attachments(
                                 candidate.row_value(row),
                                 &chosen,
-                                candidate.loadout_rules(),
+                                candidate.loadout_rules(row),
                             )
                             .map_err(|error| format!("{error:?}"))?;
                         if row == ClassEditRow::Primary {
@@ -351,11 +351,14 @@ pub(crate) fn route(
                         }
                     } else {
                         candidate.set_row(row, value);
-                        let rules = candidate.loadout_rules();
-                        for (weapon, chosen) in [
+                        let rules = [
+                            candidate.loadout_rules(ClassEditRow::Primary),
+                            candidate.loadout_rules(ClassEditRow::Secondary),
+                        ];
+                        for (rules, (weapon, chosen)) in rules.into_iter().zip([
                             (&candidate.primary, &mut candidate.primary_attachments),
                             (&candidate.secondary, &mut candidate.secondary_attachments),
-                        ] {
+                        ]) {
                             while !chosen.is_empty()
                                 && catalog.check_attachments(weapon, chosen, rules).is_err()
                             {
@@ -430,11 +433,15 @@ pub(crate) fn route(
                             .0
                             .as_deref()
                             .ok_or("Weapon catalog is not ready")?;
-                        let mut default = ui::SessionClassStore::from_showcase(0, registry)
-                            .slots
-                            .into_iter()
-                            .nth(selected)
-                            .ok_or("No available default class")?;
+                        let mut default = ui::SessionClassStore::from_showcase(
+                            0,
+                            registry,
+                            &catalog.class_catalog,
+                        )
+                        .slots
+                        .into_iter()
+                        .nth(selected)
+                        .ok_or("No available default class")?;
                         default.name.clone_from(&slot.name);
                         default
                     };

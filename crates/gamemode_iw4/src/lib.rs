@@ -22,6 +22,7 @@ pub mod radius_damage;
 mod score;
 pub mod stuck_in_client;
 pub mod suicide;
+pub mod survival;
 pub mod teams;
 pub mod visuals;
 

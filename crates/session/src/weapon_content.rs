@@ -119,11 +119,12 @@ fn compile_combat(
 
 pub struct ClassWeaponAdmission<'a> {
     registry: &'a WeaponRegistry,
+    catalog: &'a sim::ClassCatalog,
     compiled: PreparedSimWeapons,
 }
 
 impl<'a> ClassWeaponAdmission<'a> {
-    pub fn prepare(registry: &'a WeaponRegistry) -> Self {
+    pub fn prepare(registry: &'a WeaponRegistry, catalog: &'a sim::ClassCatalog) -> Self {
         let compiled = compile(
             registry,
             &asset_model::WorldWeaponCatalog::default(),
@@ -133,11 +134,15 @@ impl<'a> ClassWeaponAdmission<'a> {
             false,
         )
         .expect("published weapon registry has dense rows and a sentinel");
-        Self { registry, compiled }
+        Self {
+            registry,
+            catalog,
+            compiled,
+        }
     }
 
     pub fn allows(&self, row: &crate::ClassRow) -> bool {
-        !crate::project_class(0, row, self.registry, &self.compiled)
+        !crate::project_class(0, row, self.registry, &self.compiled, self.catalog)
             .def
             .locked
     }

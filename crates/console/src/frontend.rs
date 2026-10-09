@@ -124,7 +124,16 @@ pub(crate) fn route(
     }
     if returned_from_world {
         commands.remove_resource::<frame::HostMatchRules>();
-        commands.remove_resource::<sim::HostGameModeSelection>();
+        // The lobby's selection ends with its match; a mode the launch fixed
+        // (survival's) stays for the next one.
+        commands.queue(|world: &mut World| {
+            if world
+                .get_resource::<sim::HostGameModeSelection>()
+                .is_some_and(|mode| mode.is_lobby_choice())
+            {
+                world.remove_resource::<sim::HostGameModeSelection>();
+            }
+        });
         *party = UiPartyState::default();
         state.public = false;
     } else if returned_in_menu && state.public {
