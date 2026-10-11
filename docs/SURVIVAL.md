@@ -90,12 +90,12 @@ a weapon themselves.
   carry under that exact script name (an `_mp` spelling does not stand in
   for the SP one), and the install log says `survival weapons:` with the picks;
   a cell with none refuses the match. `remote_missile` names the detonator
-  the player holds in c1 and the missile it launches in c2. SP names come
-  only from the weapons the zones are seen to carry (the `IW5 weapons
-  captured:` debug line of each zone walked): `fraggrenade` and
-  `flash_grenade` of SP `common`, `rpg_survival` of `common_survival`. The
-  juggernaut guns (`m60jugg`, `riotshieldjugg`) have no captured SP weapon
-  and name the MP one alone.
+  the player holds in c1 and the missile it launches in c2. The SP names
+  (`fraggrenade`, `flash_grenade`, `rpg_survival`) are not yet confirmed
+  against the `IW5 weapons captured:` debug line of the zones `mode_zones`
+  loads; until they are, a wrong one falls back to the MP name, which the
+  `survival weapons:` line shows. The juggernaut guns (`m60jugg`,
+  `riotshieldjugg`) name the MP weapon alone.
 * `archetypes.csv` — `ref,weapon,body,trait,speed`: fill-ins for archetype
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
   classnames), and what sets an archetype apart. The weapon resolves through
