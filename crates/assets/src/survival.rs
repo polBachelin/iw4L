@@ -347,15 +347,27 @@ fn required_setting(key: &str) -> Result<&'static str, String> {
     survival_setting(key).ok_or_else(|| format!("{SETTINGS_TABLE} has no `{key}` row"))
 }
 
-/// The MW3 zones survival loads after `common_mp`, in load order. Survival
-/// reads its tables, menus, weapons and sounds from them, so a settings file
-/// that names none is refused rather than read as a mode without zones.
+/// The MW3 zones survival loads right after the map, in load order, ahead of
+/// its mode zones. A settings file that names none is refused rather than
+/// read as the multiplayer default.
+pub fn survival_base_zones() -> Result<asset_transport::BaseZones, String> {
+    let zones = asset_transport::BaseZones::parse(required_setting("base_zones")?);
+    if zones.is_empty() {
+        return Err(format!("{SETTINGS_TABLE}: `base_zones` names no zone"));
+    }
+    Ok(zones)
+}
+
+/// The MW3 zones survival loads after its base zones, in load order, over
+/// those base zones. Survival reads its tables, menus, weapons and sounds
+/// from them, so a settings file that names none is refused rather than read
+/// as a mode without zones.
 pub fn survival_mode_zones() -> Result<asset_transport::ModeZones, String> {
     let zones = asset_transport::ModeZones::parse(required_setting("mode_zones")?);
     if zones.is_empty() {
         return Err(format!("{SETTINGS_TABLE}: `mode_zones` names no zone"));
     }
-    Ok(zones)
+    Ok(zones.with_base(survival_base_zones()?))
 }
 
 /// The sides survival is played on. The gametype script reads the same rows,

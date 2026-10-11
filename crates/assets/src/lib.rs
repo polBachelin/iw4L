@@ -51,8 +51,8 @@ pub use session_load::{
     load_prepared_match, load_shell_common, load_workers, publish_process_cpus,
 };
 pub use survival::{
-    survival_data_check, survival_mode_zones, survival_pick_weapons, survival_setting,
-    survival_team_rules,
+    survival_base_zones, survival_data_check, survival_mode_zones, survival_pick_weapons,
+    survival_setting, survival_team_rules,
 };
 
 pub mod image_handles;

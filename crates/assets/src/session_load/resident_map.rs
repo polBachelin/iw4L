@@ -39,7 +39,7 @@ fn resident_copy(zone: &ZoneStamp, key: &CommonKey) -> Option<PreparedMatch> {
 pub async fn load_prepared_match(
     profile: asset_transport::RuntimeProfile,
     zone_ff: Result<PathBuf, String>,
-    common_mp: Result<PathBuf, String>,
+    base_zones: Result<Vec<PathBuf>, String>,
     mode_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> MatchLoadOutcome {
@@ -48,7 +48,7 @@ pub async fn load_prepared_match(
         let key = CommonKey::for_match(
             profile,
             Some(&stamp.path),
-            common_mp.as_deref().ok(),
+            base_zones.as_deref().unwrap_or(&[]),
             &mode_zones,
             &mut Vec::new(),
         );
@@ -82,7 +82,7 @@ pub async fn load_prepared_match(
         );
     }
     let (outcome, common) =
-        walk_prepared_match(profile, zone_ff, common_mp, mode_zones, progress.clone()).await;
+        walk_prepared_match(profile, zone_ff, base_zones, mode_zones, progress.clone()).await;
     let MatchLoadOutcome::Ready(mut prepared) = outcome else {
         return outcome;
     };

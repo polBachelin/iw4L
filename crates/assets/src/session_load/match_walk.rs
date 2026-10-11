@@ -5,7 +5,7 @@ static NEXT_PRODUCTS_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 pub(super) async fn walk_prepared_match(
     profile: asset_transport::RuntimeProfile,
     zone_ff: Result<PathBuf, String>,
-    common_mp: Result<PathBuf, String>,
+    base_zones: Result<Vec<PathBuf>, String>,
     mode_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> (MatchLoadOutcome, Option<Arc<CommonSet>>) {
@@ -42,7 +42,7 @@ pub(super) async fn walk_prepared_match(
     let key = CommonKey::for_match(
         profile,
         zone_ff.as_ref().ok().map(PathBuf::as_path),
-        common_mp.as_ref().ok().map(PathBuf::as_path),
+        base_zones.as_deref().unwrap_or(&[]),
         &mode_zones,
         &mut donor_report,
     );

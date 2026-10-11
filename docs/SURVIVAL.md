@@ -4,8 +4,8 @@
 `survival`) under the IW5 runtime: no score or time limit, players on
 `human_team`, waves on `enemy_team`. The gametype is ours
 (`crates/assets/src/survival/survival.gsc.txt`). It reads MW3's own survival
-tables from the user's zones (`mode_zones` in `settings.csv`, later zones winning)
-and our files only for what those tables lack.
+tables from the user's zones (`base_zones`, then `mode_zones` in `settings.csv`,
+later zones winning) and our files only for what those tables lack.
 
 ## MW3 tables (read at runtime, never copied)
 
@@ -22,7 +22,9 @@ a weapon themselves.
 
 ## Our files (`crates/assets/src/survival/`, no header rows)
 
-* `settings.csv` — `key,value`: zones, table names, teams, `friendly_fire`
+* `settings.csv` — `key,value`: zones (`base_zones`, loaded right after the
+  map, the first anchoring the census, today `common_mp` as every other mode;
+  `mode_zones`, laid over them), table names, teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
   `unsimulated_archetypes` (archetypes no bot can play: the waves skip them),
