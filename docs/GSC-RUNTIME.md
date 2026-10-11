@@ -149,6 +149,31 @@ and table lookup in `script/host/tables.rs`. All three use the one `Runtime`
 `Token`/`lex` and the call, expression, assignment, and statement methods sit in child
 modules, and `Parser` stays in the parent.
 
+Anim trees on script entities live in `script/host/script_anim.rs`. Their methods
+are not in the generated catalogs; `script/profile/anim_tree_catalog.rs` declares
+them for both realms. `UseAnimTree(#animtree)` gives an entity with a model a blend
+state bound to that tree; the other methods fail on an entity without one, or when
+the animation literal belongs to another tree.
+- `SetAnim(anim, [weight=1], [blendTime=0.2], [rate=1])` ramps the animation to
+  `weight` over `blendTime` seconds. `SetAnimKnob` also ramps every other animation
+  to zero over the same time.
+- `SetFlaggedAnim(flag, anim, ...)` and `SetFlaggedAnimKnob` do the same and notify
+  `flag` on the entity with each notetrack name the animation crosses, then `"end"`
+  when a non-looping animation reaches its end or a looping one wraps. An unflagged
+  call drops the flag.
+- `ClearAnim(anim, blendTime)` ramps one animation to zero. An animation that is not
+  a loaded clip (a branch such as `%root`) clears all of them.
+- `SetAnimTime(anim, time)` and `GetAnimTime(anim)` use normalized time in `[0, 1]`;
+  an animation that is not playing reads 0. `GetAnimLength(anim)` falls back to the
+  match's clip table when the player tree does not hold the animation.
+
+The tree is flat: one blend root with a leaf per weighted animation. An animation
+whose weight and goal weight both reach zero leaves the tree and restarts from 0 the
+next time it is set. Times, weight ramps and notetracks advance once per tick before
+scripts run; notifies are delivered in that tick's scheduler pass. Presence copies the
+tree to the entity's DObj every tick it holds an animation, so it takes over from
+`ScriptModelPlayAnim`.
+
 `SoundExists(alias)` checks the composed match sound-alias catalog, installed
 before script entry points run even when audio output is disabled. Host aliases
 resolve case-insensitively; imported aliases use an explicit `t5:` or `iw5:`

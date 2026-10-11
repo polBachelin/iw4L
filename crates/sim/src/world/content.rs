@@ -1,6 +1,8 @@
 use crate::player_anim_script::PlayerAnimScript;
 use std::sync::Arc;
 
+pub(crate) type Notetracks = Arc<[(Arc<str>, f32)]>;
+
 #[derive(Clone, Debug)]
 pub struct SimBrush {
     pub planes: Vec<[f32; 4]>,
@@ -126,6 +128,7 @@ struct ContentData {
     player_anim_properties: Vec<xmodel_runtime::PlayerAnimProperties>,
     player_body_branches: Option<xmodel_runtime::PlayerBodyBranches>,
     script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
+    script_anim_notetracks: std::collections::BTreeMap<String, Notetracks>,
     xanims: Arc<crate::MantleXAnimBind>,
     vehicle_turrets: std::collections::BTreeMap<String, String>,
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
@@ -164,6 +167,7 @@ impl SimContentBuilder {
                 player_anim_properties: Default::default(),
                 player_body_branches: Default::default(),
                 script_model_anims: Default::default(),
+                script_anim_notetracks: Default::default(),
                 xanims: Default::default(),
                 vehicle_turrets: Default::default(),
                 vehicle_compass: Default::default(),
@@ -206,6 +210,23 @@ impl SimContentBuilder {
         self.data.script_model_anims = anims
             .into_iter()
             .map(|(name, facts)| (name.to_ascii_lowercase(), facts))
+            .collect();
+    }
+
+    pub fn set_script_anim_notetracks(
+        &mut self,
+        notetracks: impl IntoIterator<Item = (String, Vec<(String, f32)>)>,
+    ) {
+        self.data.script_anim_notetracks = notetracks
+            .into_iter()
+            .map(|(name, mut notes)| {
+                notes.sort_by(|a, b| a.1.total_cmp(&b.1));
+                let notes = notes
+                    .into_iter()
+                    .map(|(note, at)| (Arc::from(note), at))
+                    .collect();
+                (name.to_ascii_lowercase(), notes)
+            })
             .collect();
     }
 
@@ -344,6 +365,9 @@ impl SimContent {
         &self,
     ) -> &std::collections::BTreeMap<String, crate::ScriptModelPlayAnim> {
         &self.data.script_model_anims
+    }
+    pub(super) fn script_anim_notetracks(&self) -> &std::collections::BTreeMap<String, Notetracks> {
+        &self.data.script_anim_notetracks
     }
     pub(super) fn xanims(&self) -> &Arc<crate::MantleXAnimBind> {
         &self.data.xanims
