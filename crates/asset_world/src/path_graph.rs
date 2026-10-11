@@ -49,6 +49,9 @@ impl PathGraph {
     }
 }
 
+// pathnode_constant_t x86 (OpenAssetTools IW5_Assets.h): nodeType is a 4-byte
+// enum, then u16 spawnflags, targetname, script_linkName, script_noteworthy,
+// target, animscript, so names sit at 6 and 10; the walk pins 56 and 60.
 const NODE_TYPE: usize = 0;
 const NODE_TARGETNAME: usize = 6;
 const NODE_SCRIPT_NOTEWORTHY: usize = 10;
