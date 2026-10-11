@@ -48,7 +48,9 @@ a weapon themselves.
   (`armory_replacement_menu`, `armory_replacement_continue`,
   `armory_replacement_grants`: `survival_armory_replacement_warning`,
   `continue`, `launcher`), `primary_slots` (how many primaries a player
-  carries, 2), pause menu. Credits, bonus, start rank, timings, squad sizes
+  carries, 2), pause menu, `player_viewhands` (the players' first-person
+  hands, `viewhands_player_delta` of `common_survival`: used ahead of the
+  map kit's hands while the loaded zones hold the model, the kit's otherwise). Credits, bonus, start rank, timings, squad sizes
   and primary slots are provisional values: MW3's data has no starting
   credits, no wave-end bonus rule, no starting rank (SP kept the player's),
   no bleed-out or shock time, no squad size, no slot count. That only the
@@ -81,14 +83,24 @@ a weapon themselves.
   purchase adds, empty to fill up to all it can hold; an `explosive` waits
   on the action slot in c4. The counts are ours: claymore and C4 add 5
   (slots 1 and 2), the RPG 2, a self-revive 1; grenades and armor fill up.
-* `weapon_aliases.csv` — `ref,weapon [weapon...]`: a table ref that is not a
-  weapon of the user's data, mapped to the ones that are. The first weapon is
-  the one given; `remote_missile` names the detonator the player holds, then
-  the missile it launches.
+* `weapon_aliases.csv` — `ref,weapon [weapon...][,missile [missile...]]`: a
+  table ref mapped to the weapon it is given as, each cell a list of
+  candidates, SP weapon names first and today's MP name last. When the match
+  is installed every cell is narrowed to its first candidate the loaded zones
+  carry under that exact script name (an `_mp` spelling does not stand in
+  for the SP one), and the install log says `survival weapons:` with the picks;
+  a cell with none refuses the match. `remote_missile` names the detonator
+  the player holds in c1 and the missile it launches in c2. SP names come
+  only from the weapons the zones are seen to carry (the `IW5 weapons
+  captured:` debug line of each zone walked): `fraggrenade` and
+  `flash_grenade` of SP `common`, `rpg_survival` of `common_survival`. The
+  juggernaut guns (`m60jugg`, `riotshieldjugg`) have no captured SP weapon
+  and name the MP one alone.
 * `archetypes.csv` — `ref,weapon,body,trait,speed`: fill-ins for archetype
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
-  classnames), and what sets an archetype apart. An empty weapon keeps the
-  table's. The body is read only as a chopper's vehicle model (see Heavy
+  classnames), and what sets an archetype apart. The weapon resolves through
+  `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
+  body is read only as a chopper's vehicle model (see Heavy
   archetypes). The trait is one of
   `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is the
   bot's move speed in percent (`setmovespeedscale`), empty for 100. Traits

@@ -43,6 +43,12 @@ const fn game_default_hands_name(ns: AssetNamespace) -> &'static str {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FpvHands {
+    /// The hands a mode names for its players, ahead of the kit's.
+    FromMode {
+        namespace: AssetNamespace,
+        name: String,
+    },
+
     FromKit {
         namespace: AssetNamespace,
         name: String,
@@ -63,7 +69,8 @@ pub enum FpvHands {
 impl FpvHands {
     pub fn key(&self) -> Option<(AssetNamespace, &str)> {
         match self {
-            Self::FromKit { namespace, name }
+            Self::FromMode { namespace, name }
+            | Self::FromKit { namespace, name }
             | Self::FromWeaponDef { namespace, name }
             | Self::GameDefault { namespace, name } => Some((*namespace, name.as_str())),
             Self::Unresolved => None,
@@ -80,10 +87,17 @@ impl FpvHands {
     pub fn resolve(
         catalog: &FpvMeshCatalog,
         map_ns: AssetNamespace,
+        mode_hands: Option<&str>,
         kit: Option<&crate::SoldierKit>,
         weapon_hand: Option<&str>,
         weapon_ns: AssetNamespace,
     ) -> Self {
+        if let Some(name) = mode_hands.filter(|name| catalog.contains(map_ns, name)) {
+            return Self::FromMode {
+                namespace: map_ns,
+                name: name.to_owned(),
+            };
+        }
         if let Some(kit) = kit {
             if let Some(name) = kit.arms.as_deref() {
                 if catalog.contains(map_ns, name) {

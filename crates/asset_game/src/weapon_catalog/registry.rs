@@ -31,6 +31,7 @@ impl WeaponRegistry {
     pub(super) fn rebuild_name_maps(&mut self) {
         self.by_name.clear();
         self.by_namespaced.clear();
+        self.by_script.clear();
         for (id, row) in self.rows.iter().enumerate().skip(1) {
             if row.iw5_configuration.is_some() {
                 continue;
@@ -38,6 +39,11 @@ impl WeaponRegistry {
             self.by_namespaced
                 .insert((row.namespace, row.name.clone()), id as u32);
             self.by_name.entry(row.name.clone()).or_insert(id as u32);
+            if !row.script_name.is_empty() {
+                self.by_script
+                    .entry(row.script_name.clone())
+                    .or_insert(id as u32);
+            }
         }
         for row in &mut self.rows {
             if let Some(name) = row.alternate_weapon.as_deref() {
@@ -541,11 +547,20 @@ impl WeaponRegistry {
                 }
             }
         }
+        if let Some(id) = self.resolve_script_name(name) {
+            return Ok(Some(id));
+        }
         let norm = normalize_weapon_name(name);
         match self.by_name.get(&norm).copied() {
             Some(id) => Ok(Some(id)),
             None => Err(UnknownWeaponName { name: norm }),
         }
+    }
+
+    /// The row a weapon is captured under by this exact script name, with no
+    /// `_mp` spelling standing in for it.
+    pub fn resolve_script_name(&self, name: &str) -> Option<u32> {
+        self.by_script.get(&name.to_ascii_lowercase()).copied()
     }
 
     pub fn resolve_key(&self, key: &crate::AssetKey) -> Result<Option<u32>, UnknownWeaponName> {

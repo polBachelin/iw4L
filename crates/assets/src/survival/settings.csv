@@ -35,3 +35,4 @@ armory_replacement_continue,continue
 armory_replacement_grants,launcher
 primary_slots,2
 pause_menu,iw4l_pause
+player_viewhands,viewhands_player_delta

@@ -357,6 +357,10 @@ impl WeaponCatalog {
         self.entries.len()
     }
 
+    pub fn captured_names(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|entry| entry.name.as_str())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

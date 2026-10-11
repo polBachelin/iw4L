@@ -797,6 +797,10 @@ fn census_common_zone(
     ));
     sink.weapons.resolve_reticles(&sink.materials);
     let captured = sink.weapons.len();
+    let mut names: Vec<&str> = sink.weapons.captured_names().collect();
+    names.sort_unstable();
+    names.dedup();
+    diag::debug!(Zone, "{zone} IW5 weapons captured: {}", names.join(" "));
     let mut weapons = sink.weapons.into_build();
     weapons.apply_stats_tables(sink.stats_tables.values());
     weapons.resolve_sz_xanim_edges(&sink.xanims);

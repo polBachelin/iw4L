@@ -622,9 +622,16 @@ pub(super) async fn walk_prepared_match(
     weapons.resolve_fpv_mesh_edges(&fpv_meshes);
     let bodies = Arc::new(bodies.publish());
     let xanims = Arc::new(xanims.publish());
+    let mode_hands = match runtime_namespace {
+        Some(asset_core::AssetNamespace::Iw5) => {
+            crate::survival::survival_setting("player_viewhands")
+        }
+        _ => None,
+    };
     let soldiers = asset_game::SoldierPresentations::prepare(
         &bodies,
         &fpv_meshes,
+        mode_hands,
         &player_anim_sources,
         &xanims,
     );

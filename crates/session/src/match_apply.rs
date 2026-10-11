@@ -986,7 +986,13 @@ fn preflight_match_install(
             }
         }
     }
-    let sources = Sources(std::mem::take(&mut prepared.scripts));
+    let mut sources = Sources(std::mem::take(&mut prepared.scripts));
+    if kind == gamemode_iw4::GameModeKind::Survival {
+        let picks = assets::survival_pick_weapons(&mut sources.0, |name| {
+            weapons.registry().resolve_script_name(name).is_some()
+        });
+        diag::info!(Sim, "survival weapons: {}", picks.join(" "));
+    }
     let gametype = kind
         .script_tokens()
         .iter()

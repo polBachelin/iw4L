@@ -1,7 +1,7 @@
-jug_regular,iw5_m60jugg_mp,fullbody_juggernaut_novisor_b,,75
-jug_riotshield,iw5_riotshieldjugg_mp,fullbody_juggernaut_novisor_b,,75
-jug_explosive,iw5_m60jugg_mp,fullbody_juggernaut_explosive_so,explosive,75
-jug_minigun,iw5_m60jugg_mp,fullbody_juggernaut_novisor_b,,75
+jug_regular,m60jugg,fullbody_juggernaut_novisor_b,,75
+jug_riotshield,riotshieldjugg,fullbody_juggernaut_novisor_b,,75
+jug_explosive,m60jugg,fullbody_juggernaut_explosive_so,explosive,75
+jug_minigun,m60jugg,fullbody_juggernaut_novisor_b,,75
 martyrdom,,,martyrdom,
 claymore,,,claymore,
 chemical,,fullbody_chemwar_russian_assault_a,gas,

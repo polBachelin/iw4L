@@ -14,17 +14,20 @@ setting( key )
 	return tablelookup( "survival/settings.csv", 0, key, 1 );
 }
 
-weaponsfor( ref )
-{
-	weapons = tablelookup( "survival/weapon_aliases.csv", 0, ref, 1 );
-	if ( weapons == "" )
-		weapons = ref;
-	return strtok( weapons, " " );
-}
-
+// The engine narrows each survival/weapon_aliases.csv cell to its first
+// loaded candidate before the script starts.
 weaponfor( ref )
 {
-	return weaponsfor( ref )[ 0 ];
+	weapon = tablelookup( "survival/weapon_aliases.csv", 0, ref, 1 );
+	if ( weapon == "" )
+		return ref;
+	return weapon;
+}
+
+// The missile a predator ref launches (survival/weapon_aliases.csv c2).
+missilefor( ref )
+{
+	return tablelookup( "survival/weapon_aliases.csv", 0, ref, 2 );
 }
 
 support( key )
@@ -1351,8 +1354,8 @@ purchaseblock( ref, kind, price, rank, most )
 		return "action slot " + support( "action_slot" ) + " holds " + self.slotitem;
 	if ( grant == "sentry" && isdefined( self.carriedsentry ) )
 		return "carries a " + self.carriedsentry + " still to place";
-	if ( grant == "predator" && weapontype( weaponsfor( ref )[ 1 ] ) != "projectile" )
-		return weaponsfor( ref )[ 1 ] + " is a " + weapontype( weaponsfor( ref )[ 1 ] ) + " weapon, no missile to steer";
+	if ( grant == "predator" && weapontype( missilefor( ref ) ) != "projectile" )
+		return missilefor( ref ) + " is a " + weapontype( missilefor( ref ) ) + " weapon, no missile to steer";
 	if ( grant == "squad" && allyroom() < int( setting( "squad_" + ref ) ) )
 		return "only " + allyroom() + " client slots are left for allies";
 	return "";
@@ -1729,7 +1732,7 @@ slotitem( ref, grant )
 		if ( grant == "airstrike" )
 			used = self airstrikeitem();
 		else
-			used = self predatoritem( weaponsfor( ref )[ 1 ] );
+			used = self predatoritem( missilefor( ref ) );
 		if ( self hasweapon( self.returnweapon ) )
 			self switchtoweapon( self.returnweapon );
 		if ( used )
