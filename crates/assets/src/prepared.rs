@@ -46,6 +46,9 @@ pub struct MapFacts {
     pub t5_teamset: Option<String>,
 
     pub objective_visuals: asset_game::ObjectiveVisuals,
+
+    /// AI path nodes from the zone's `PathData`; empty when it ships none.
+    pub path_graph: asset_world::PathGraph,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -273,6 +273,7 @@ pub struct ZoneStream<'a> {
     light_def_count: usize,
     clip_map: Option<ClipMapGeometry>,
     map_ents: Option<MapEntsGeometry>,
+    addon_map_ents: Option<MapEntsGeometry>,
     latest_image: Option<GfxImageGeometry>,
     latest_material: Option<MaterialGeometry>,
     latest_technique_set: Option<TechniqueSetGeometry>,
@@ -464,6 +465,16 @@ pub struct XModelGeometry {
     pub contents: u32,
 
     pub radius: Option<f32>,
+}
+
+/// `PathData` node array as laid out in the zone. Each node's link slot is
+/// fixed up by the walk, so `ptr_at` on it resolves to the link array.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PathDataGeometry {
+    pub nodes: Option<Ptr>,
+    pub node_count: usize,
+    pub node_stride: usize,
+    pub link_field: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1051,6 +1062,7 @@ impl<'a> ZoneStream<'a> {
             light_def_count: 0,
             clip_map: None,
             map_ents: None,
+            addon_map_ents: None,
             latest_image: None,
             latest_material: None,
             latest_technique_set: None,
@@ -1183,6 +1195,14 @@ impl<'a> ZoneStream<'a> {
 
     pub fn map_ents(&self) -> Option<MapEntsGeometry> {
         self.map_ents
+    }
+
+    pub fn record_addon_map_ents(&mut self, geometry: MapEntsGeometry) {
+        self.addon_map_ents = Some(geometry);
+    }
+
+    pub fn addon_map_ents(&self) -> Option<MapEntsGeometry> {
+        self.addon_map_ents
     }
 
     pub fn record_image(&mut self, image: GfxImageGeometry) {

@@ -402,8 +402,8 @@ fn load_client_triggers(s: &mut ZoneStream<'_>, ct: Ptr) -> Result<()> {
 }
 
 /// `AddonMapEnts`: the `MapEnts` head (name, entity string, triggers) plus a
-/// shared `ClipInfo` and per-sub-model clip infos and brush models. Exists so
-/// SP/SO zones (blocker at asset 0) walk past it.
+/// shared `ClipInfo` and per-sub-model clip infos and brush models. Only the
+/// entity string is recorded; the rest is walked past.
 pub(super) fn load_addonmapents(s: &mut ZoneStream<'_>) -> Result<()> {
     s.walk_stage = "addon_map_ents";
     let p = s.alloc_load(4, s.layout(sz::ADDON_MAP_ENTS, 104))?;
@@ -412,7 +412,12 @@ pub(super) fn load_addonmapents(s: &mut ZoneStream<'_>) -> Result<()> {
 
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
-    s.plain_array(p, s.layout(4, 8), 1, 1, entity_chars)?;
+    let entity_string = s.plain_array(p, s.layout(4, 8), 1, 1, entity_chars)?;
+    s.record_addon_map_ents(crate::zone::MapEntsGeometry {
+        entity_string,
+        entity_chars,
+        ..Default::default()
+    });
 
     load_map_triggers(s, p.at(s.layout(0xc, 24)))?;
     // Asset-level ClipInfo contents stay in VIRTUAL with the rest of the
@@ -439,7 +444,7 @@ pub(super) fn load_addonmapents(s: &mut ZoneStream<'_>) -> Result<()> {
 /// T5/Map variant — node `Links`, runtime basenodes, chain maps, vis bytes,
 /// node tree — with IW5's own node stride (136/160). Script strings inside
 /// `pathnode_constant_t` are u16 indices, never followed.
-pub(super) fn load_pathdata(s: &mut ZoneStream<'_>) -> Result<()> {
+pub(super) fn load_pathdata(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     s.walk_stage = "path_data";
     let p = s.alloc_load(4, s.layout(sz::PATH_DATA, 88))?;
     let node_count = s.u32_at(p, s.layout(4, 8))? as usize;
@@ -452,14 +457,24 @@ pub(super) fn load_pathdata(s: &mut ZoneStream<'_>) -> Result<()> {
     s.push(XFILE_BLOCK_VIRTUAL)?;
     follow_name(s, p, 0)?;
 
-    if let Some(nodes) = s.follow_array(p, s.layout(8, 16), 4, node_stride, node_count)? {
-        let link_field = s.layout(60, 64);
+    let link_field = s.layout(60, 64);
+    let nodes = s.follow_array(p, s.layout(8, 16), 4, node_stride, node_count)?;
+    if let Some(nodes) = nodes {
         for i in 0..node_count {
             let node = nodes.at(i * node_stride);
             let link_count = s.u16_at(node, 56)? as usize;
             s.follow_array(node, link_field, 4, sz::PATH_LINK, link_count)?;
         }
     }
+    links.capture_path_data(
+        s,
+        crate::zone::PathDataGeometry {
+            nodes,
+            node_count,
+            node_stride,
+            link_field,
+        },
+    )?;
 
     runtime_array(s, p, s.layout(12, 24), 16, sz::PATH_BASENODE, node_count)?;
     s.plain_array(p, s.layout(20, 40), 2, 2, node_count)?;
