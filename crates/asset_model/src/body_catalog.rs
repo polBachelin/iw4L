@@ -205,10 +205,7 @@ impl BodyMeshCatalog {
     }
 
     pub fn by_name(&self, name: &str) -> Option<&BodyMeshEntry> {
-        if crate::model_kind(name) != Some(crate::ModelKind::Soldier) {
-            return None;
-        }
-        self.entries.get(name)
+        self.get(name)
     }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
