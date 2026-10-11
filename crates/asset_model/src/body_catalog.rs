@@ -12,7 +12,6 @@ use crate::soldiers::{SoldierKits, body_has_tp_attach_bones, is_body_model, sold
 use asset_material::{MaterialCatalog, MaterialDefinitions};
 
 pub const BODY_SPINE_BONES: &[&str] = &[
-    "torso_stabilizer",
     "pelvis",
     "j_spinelower",
     "j_spineupper",
@@ -202,6 +201,13 @@ impl BodyMeshCatalog {
     }
 
     pub fn get(&self, name: &str) -> Option<&BodyMeshEntry> {
+        self.entries.get(name)
+    }
+
+    pub fn by_name(&self, name: &str) -> Option<&BodyMeshEntry> {
+        if crate::model_kind(name) != Some(crate::ModelKind::Soldier) {
+            return None;
+        }
         self.entries.get(name)
     }
 
