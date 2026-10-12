@@ -35,6 +35,18 @@ differently is an override, not a duplicate, and `load_jobs.csv`
 `assets::lane` (`ZoneGame` → iw4/iw5/t5/t6); a lane gap is a typed `LaneGap`, never
 silence.
 
+An IW5 zone's `PathData` is captured through `AssetLinkSink::capture_path_data`
+into `asset_world::PathGraph`: one `PathNode` per zone node (type, origin, yaw
+as angles, targetname and script_noteworthy when set) and a flat `links` list
+(neighbor index, distance) that each node slices with `first_link`/`link_count`.
+Node indices are the zone's, so link targets index `nodes` directly; a link
+pointing past the node array is dropped and counted. It travels as
+`MapFacts::path_graph` into `PreparedMap`, empty when the zone ships no
+`PathData`. Capture only: nothing paths on it yet. An `AddonMapEnts` entity
+string is appended after the zone's `MapEnts` string, and every IW5
+entity-string reader (spawns, script structs, triggers, the map script
+entities) parses the merged text.
+
 `ZoneLane::load_common_mp` returns owned common builders and diagnostics. A lane whose preparation needs already assembled donors can retain a private, consumed-once `CommonFamilyCompiler` inside that result. The shared loader supplies owned weapon, material, FPV, world-model, projectile, animation and effect builders; compilation returns them together with dependency refusals. This stage finishes before the common set is published or cloned for a match. It is not invoked by frame execution.
 
 T6 model/material/effect captures stay private to the T6 lane. Its compiler owns stand-in donor lookup, native technique linking, named texture adaptations, animation admission, weapon dressing and projectile binding. Missing model/effect donors return typed refusals, while accepted contributions and existing builders remain available; source conversion diagnostics remain in the load report. Other lanes finish these products within their existing common walk. All lanes publish through the same common-set and match installation path.

@@ -54,7 +54,7 @@ fn load_asset_body_observed(
         ClipMap => clipmap::load_clipmap(s, links),
         MapEnts => clipmap::load_mapents(s),
         AddonMapEnts => clipmap::load_addonmapents(s),
-        PathData => clipmap::load_pathdata(s),
+        PathData => clipmap::load_pathdata(s, links),
         VehicleTrack => clipmap::load_vehicletrack(s),
         Sound => sound::load_sound(s, links),
         LoadedSound => sound::load_loaded_sound(s, links),
@@ -87,6 +87,15 @@ pub trait AssetLinkSink {
         &mut self,
         s: &ZoneStream<'_>,
         geometry: crate::zone::XAnimPartsGeometry,
+    ) -> Result<()> {
+        let _ = (s, geometry);
+        Ok(())
+    }
+
+    fn capture_path_data(
+        &mut self,
+        s: &ZoneStream<'_>,
+        geometry: crate::zone::PathDataGeometry,
     ) -> Result<()> {
         let _ = (s, geometry);
         Ok(())

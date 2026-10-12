@@ -202,6 +202,7 @@ pub(crate) struct ZoneWalkSink {
 
     pub script_sound: asset_audio::MapScriptSoundSource,
     pub iw5_map: asset_world::MapDeclarations,
+    pub path_graph: asset_world::PathGraph,
 
     pub t5_teamset: Option<String>,
 
@@ -494,6 +495,15 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
 
     fn xmodel_name_ptr(&self, slot: fastfile_iw5::Ptr) -> Option<fastfile_iw5::Ptr> {
         self.xmodel_names_iw5.get(&slot).copied()
+    }
+
+    fn capture_path_data(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::PathDataGeometry,
+    ) -> fastfile_iw5::Result<()> {
+        self.path_graph = asset_world::capture_path_graph_iw5(s, &self.strings_iw5, geometry);
+        Ok(())
     }
 
     fn alias(
