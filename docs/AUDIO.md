@@ -40,16 +40,19 @@ rear/center at -3 dB and LFE at -6 dB. IW5 pointer-based speaker maps,
 cross-channel routes and multichannel output remain unsupported; WMA seek/tail
 semantics need corpus validation.
 
-The match sound bank is laid in load order: the runtime's startup zones, each
-of the launch mode's base zones (`ModeZones::base`) followed by its `localized_`
+The match sound bank is laid in load order: the base set's startup zones
+(`BaseZones::startup`, each with its `localized_` sibling) and patch zones
+(`BaseZones::patch`), each of the launch mode's base zones (`ModeZones::base`) followed by its `localized_`
 sibling where the tree has one, then the mode's zones, each replacing the aliases
 before it. A map of the runtime game overrides them; other games' banks only fill
 missing aliases. A base zone is walked as a named sound source
 (`ZoneSoundCapture::claim_source`), so no fixed zone name gates its capture;
 the localize walk claims a base zone's `localized_` sibling the same way, so
 the sound bank reuses that walk instead of reading the zone again. The startup
-zones (`code_post_gfx_mp`, `localized_code_post_gfx_mp`, `patch_mp`) are still
-a fixed multiplayer list and are not yet read from data.
+census walks claim the default set's startup and patch zones
+(`ZoneSoundCapture::claim_common`). A donor game's rows come from the default
+base set: its startup zones, base zones and their `localized_` siblings, or the
+base zones alone for T6.
 Clips from the startup and base zones stay in the resident clip cache across a
 bank change; mode and map clips do not.
 

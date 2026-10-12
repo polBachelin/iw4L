@@ -667,53 +667,113 @@ impl RuntimeProfile {
 /// The base zone of a launch mode whose settings name no base set of its own.
 pub const DEFAULT_BASE_ZONE: &str = "common_mp";
 
+/// The startup zones that go with the default base zone: loaded ahead of it,
+/// read only through their `localized_` sibling, and loaded after it.
+const DEFAULT_STARTUP_ZONES: &str = "code_post_gfx_mp";
+const DEFAULT_UI_ZONES: &str = "ui_mp";
+const DEFAULT_PATCH_ZONES: &str = "patch_mp";
+
+fn zone_names(row: &str) -> Vec<String> {
+    row.split_whitespace().map(str::to_owned).collect()
+}
+
 /// The zones a launch mode loads right after the map, in load order. The
 /// first carries the census every later base and mode zone is laid over.
+/// The set also names the startup, UI and patch zones that go with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BaseZones(Vec<String>);
+pub struct BaseZones {
+    names: Vec<String>,
+    startup: Vec<String>,
+    ui: Vec<String>,
+    patch: Vec<String>,
+}
 
 impl Default for BaseZones {
     fn default() -> Self {
-        Self(vec![DEFAULT_BASE_ZONE.to_owned()])
+        Self::parse(DEFAULT_BASE_ZONE)
     }
 }
 
 impl BaseZones {
-    /// Zone stems separated by whitespace, as a settings row spells them.
+    /// Zone stems separated by whitespace, as a settings row spells them,
+    /// with the default startup, UI and patch zones.
     pub fn parse(row: &str) -> Self {
-        Self(row.split_whitespace().map(str::to_owned).collect())
+        Self {
+            names: zone_names(row),
+            startup: zone_names(DEFAULT_STARTUP_ZONES),
+            ui: zone_names(DEFAULT_UI_ZONES),
+            patch: zone_names(DEFAULT_PATCH_ZONES),
+        }
     }
 
     /// The set `paths` were found for, named by their stems.
     pub fn from_paths(paths: &[PathBuf]) -> Self {
-        Self(
-            paths
+        Self {
+            names: paths
                 .iter()
                 .filter_map(|path| path.file_stem())
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .collect(),
-        )
+            ..Self::default()
+        }
     }
 
     pub fn names(&self) -> &[String] {
-        &self.0
+        &self.names
     }
 
     /// Each base zone's `localized_` sibling, in load order. The data has
     /// none for some base zones, so a caller skips one it cannot find.
     pub fn localized(&self) -> impl DoubleEndedIterator<Item = String> + '_ {
-        self.0.iter().map(|name| localized_zone(name))
+        self.names.iter().map(|name| localized_zone(name))
+    }
+
+    /// The zones loaded ahead of the base zones, in load order.
+    pub fn startup(&self) -> &[String] {
+        &self.startup
+    }
+
+    /// Each startup zone followed by its `localized_` sibling, which a
+    /// caller skips where the tree has none.
+    pub fn startup_with_localized(&self) -> impl Iterator<Item = String> + '_ {
+        self.startup
+            .iter()
+            .flat_map(|name| [name.clone(), localized_zone(name)])
+    }
+
+    /// The startup zones' `localized_` siblings, in load order.
+    pub fn startup_localized(&self) -> impl Iterator<Item = String> + '_ {
+        self.startup.iter().map(|name| localized_zone(name))
+    }
+
+    /// The UI zones' `localized_` siblings, which carry the UI's menus and
+    /// strings; the UI zones themselves are not read.
+    pub fn ui_localized(&self) -> impl Iterator<Item = String> + '_ {
+        self.ui.iter().map(|name| localized_zone(name))
+    }
+
+    /// The zones loaded after the base zones, in load order.
+    pub fn patch(&self) -> &[String] {
+        &self.patch
     }
 
     /// Whether `stem` names a base zone or a base zone's `localized_` sibling.
     pub fn carries(&self, stem: &str) -> bool {
-        self.0.iter().any(|name| {
+        self.names.iter().any(|name| {
             stem.eq_ignore_ascii_case(name) || stem.eq_ignore_ascii_case(&localized_zone(name))
         })
     }
 
+    /// Whether `stem` names a startup zone, its `localized_` sibling or a
+    /// patch zone.
+    pub fn carries_startup(&self, stem: &str) -> bool {
+        self.startup_with_localized()
+            .chain(self.patch.iter().cloned())
+            .any(|name| stem.eq_ignore_ascii_case(&name))
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.names.is_empty()
     }
 }
 

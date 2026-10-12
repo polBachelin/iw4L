@@ -100,6 +100,7 @@ fn start_match_load(
     mut commands: Commands,
     identity: Option<Res<LaunchIdentity>>,
     profile: Option<Res<MatchRuntimeProfile>>,
+    launch_mode: Option<Res<MatchModeZones>>,
     request: Option<Res<MatchLoadRequest>>,
     busy: Option<Res<MatchLoadTask>>,
     retiring: Option<Res<frame::Retiring>>,
@@ -188,6 +189,7 @@ fn start_match_load(
 
     let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
     let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let zones = launch_mode.map_or_else(Default::default, |mode| mode.0.base().clone());
     let task = crate::session_load::load_pool().spawn(async move {
         let sound_path = zone_ff.clone();
         match load_prepared_match(
@@ -209,6 +211,7 @@ fn start_match_load(
                             profile,
                             &games,
                             &path,
+                            &zones,
                             &sound_base,
                             &mode_zones,
                         );

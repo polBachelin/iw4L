@@ -7,7 +7,8 @@ use fastfile_iw4::{
 };
 
 use crate::discover::{
-    GamesRoot, ModeZones, RuntimeProfile, find_zone_file, find_zone_file_version, localized_zone,
+    BaseZones, GamesRoot, ModeZones, RuntimeProfile, find_zone_file, find_zone_file_version,
+    localized_zone,
 };
 use crate::sound_catalog::SoundCatalog;
 use crate::zone::{ZoneMemory, open_zone_shared};
@@ -179,6 +180,7 @@ fn sound_sources(
     profile: RuntimeProfile,
     games: &GamesRoot,
     map: &Path,
+    zones: &BaseZones,
     base: Result<&[PathBuf], String>,
     mode: Result<&[PathBuf], String>,
 ) -> (Vec<SoundSource>, Vec<SoundSource>) {
@@ -206,20 +208,21 @@ fn sound_sources(
         merge: Merge::Override,
         absent: Absent::Gap,
     };
-    let donor = |namespace, name: &'static str, version| SoundSource {
+    let donor = |namespace, name: String, version| SoundSource {
         namespace,
-        name: name.to_owned(),
-        found: find_zone_file_version(games, name, version).map(|zone| zone.path),
+        found: find_zone_file_version(games, &name, version).map(|zone| zone.path),
+        name,
         merge: Merge::Missing,
         absent: Absent::Skip,
     };
-    let mut before_map: Vec<_> = ["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"]
-        .into_iter()
-        .map(|name| runtime(name.to_owned(), Merge::Override, Absent::Skip))
+    let mut before_map: Vec<_> = zones
+        .startup_with_localized()
+        .chain(zones.patch().iter().cloned())
+        .map(|name| runtime(name, Merge::Override, Absent::Skip))
         .collect();
     match base {
-        Ok(zones) => {
-            for path in zones {
+        Ok(paths) => {
+            for path in paths {
                 before_map.push(found(path));
                 before_map.push(runtime(
                     localized_zone(&zone_stem(path)),
@@ -236,45 +239,27 @@ fn sound_sources(
         Ok(zones) => before_map.extend(zones.iter().map(found)),
         Err(error) => before_map.push(unfound("mode zones", error)),
     }
-    let after_map = vec![
-        donor(
-            AssetNamespace::Iw5,
-            "code_post_gfx_mp",
-            fastfile_iw5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::Iw5,
-            "common_mp",
-            fastfile_iw5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::Iw5,
-            "localized_common_mp",
-            fastfile_iw5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::T5,
-            "code_post_gfx_mp",
-            fastfile_t5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::T5,
-            "common_mp",
-            fastfile_t5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::T5,
-            "localized_common_mp",
-            fastfile_t5::ZONE_VERSION_PC,
-        ),
-        donor(
-            AssetNamespace::T6,
-            "common_mp",
-            fastfile_t6::ZONE_VERSION_PC,
-        ),
-    ];
-    let after_map = after_map
-        .into_iter()
+    // A donor game's sounds come from its own multiplayer base set; T6 is
+    // read for its base zones alone.
+    let donor_zones = BaseZones::default();
+    let donor_set = |namespace, version| {
+        donor_zones
+            .startup()
+            .iter()
+            .chain(donor_zones.names())
+            .cloned()
+            .chain(donor_zones.localized())
+            .map(move |name| donor(namespace, name, version))
+    };
+    let after_map = donor_set(AssetNamespace::Iw5, fastfile_iw5::ZONE_VERSION_PC)
+        .chain(donor_set(AssetNamespace::T5, fastfile_t5::ZONE_VERSION_PC))
+        .chain(donor_zones.names().iter().map(|name| {
+            donor(
+                AssetNamespace::T6,
+                name.clone(),
+                fastfile_t6::ZONE_VERSION_PC,
+            )
+        }))
         .filter(|source| source.namespace != runtime_namespace)
         .collect();
     (before_map, after_map)
@@ -294,17 +279,18 @@ fn origin_label(origin: ZoneSoundOrigin) -> String {
     }
 }
 
-/// `base` and `mode` are the launch mode's base and mode zones, found beside
-/// the map and in their load order.
+/// `zones` is the launch mode's base set; `base` and `mode` are its base and
+/// mode zones, found beside the map and in their load order.
 pub fn gather_sound_sources(
     profile: RuntimeProfile,
     games: &GamesRoot,
     map: &Path,
+    zones: &BaseZones,
     base: &[PathBuf],
     mode: &[PathBuf],
 ) -> SoundSources {
     gather_sources(
-        sound_sources(profile, games, map, Ok(base), Ok(mode)),
+        sound_sources(profile, games, map, zones, Ok(base), Ok(mode)),
         profile,
     )
 }
@@ -449,14 +435,15 @@ pub fn load_mp_sound_bank(
 ) -> Result<LoadedSoundBank, String> {
     let zone_ff = find_zone_file(games, zone)?;
     let base = profile.find_base_zones(games, &zone_ff.path, mode);
-    let mode = profile.find_mode_zones(games, &zone_ff.path, mode);
+    let found_mode = profile.find_mode_zones(games, &zone_ff.path, mode);
     let sources = gather_sources(
         sound_sources(
             profile,
             games,
             &zone_ff.path,
+            mode.base(),
             base.as_deref().map_err(Clone::clone),
-            mode.as_deref().map_err(Clone::clone),
+            found_mode.as_deref().map_err(Clone::clone),
         ),
         profile,
     );

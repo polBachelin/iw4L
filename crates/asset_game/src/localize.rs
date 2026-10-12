@@ -580,9 +580,9 @@ impl fastfile_t5::AssetSink for T5LocalizeSink {
 /// order their strings are read: the first one carrying a key keeps it, so a
 /// later base zone's sibling is read ahead of an earlier one's.
 pub fn localized_zones(base: &BaseZones) -> Vec<String> {
-    std::iter::once("localized_code_post_gfx_mp".to_owned())
+    base.startup_localized()
         .chain(base.localized().rev())
-        .chain(std::iter::once("localized_ui_mp".to_owned()))
+        .chain(base.ui_localized())
         .collect()
 }
 

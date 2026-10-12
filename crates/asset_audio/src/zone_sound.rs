@@ -173,12 +173,7 @@ fn is_sound_source(path: &Path, game: ZoneGame) -> bool {
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return false;
     };
-    let names: &[&str] = match game {
-        ZoneGame::Iw4 => &["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"],
-        ZoneGame::Iw5 | ZoneGame::T5 => &["code_post_gfx_mp"],
-        ZoneGame::T6 => &[],
-    };
-    names.iter().any(|name| stem.eq_ignore_ascii_case(name))
+    game != ZoneGame::T6 && crate::BaseZones::default().carries_startup(stem)
 }
 
 type Stored = Result<Arc<SoundCatalog>, String>;

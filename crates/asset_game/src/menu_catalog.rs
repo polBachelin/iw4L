@@ -523,14 +523,6 @@ impl MenuCatalog {
     }
 }
 
-/// The runtime's UI zones loaded ahead of its base zones, then after them.
-const UI_ZONES_BEFORE_BASE: &[&str] = &[
-    "code_post_gfx_mp",
-    "localized_code_post_gfx_mp",
-    "localized_ui_mp",
-];
-const UI_ZONES_AFTER_BASE: &[&str] = &["patch_mp"];
-
 pub const HUD_CHROME_MENUS: &[&str] = &[
     "scorebar_hd",
     "scorebar_sd",
@@ -592,14 +584,16 @@ pub fn load_ui_menu_catalog(
         profile.game().prefix().to_ascii_uppercase(),
         games.0.display()
     ));
-    let runtime_zones = UI_ZONES_BEFORE_BASE
-        .iter()
-        .copied()
-        .chain(mode.base().names().iter().map(String::as_str))
-        .chain(UI_ZONES_AFTER_BASE.iter().copied())
+    let base = mode.base();
+    let runtime_zones = base
+        .startup_with_localized()
+        .chain(base.ui_localized())
+        .chain(base.names().iter().cloned())
+        .chain(base.patch().iter().cloned())
         .map(|zone| (zone, false));
-    let mode_zones = mode.names().iter().map(|zone| (zone.as_str(), true));
+    let mode_zones = mode.names().iter().map(|zone| (zone.clone(), true));
     for (zone, mode_zone) in runtime_zones.chain(mode_zones) {
+        let zone = zone.as_str();
         match find_zone_file(&games, &ui_zone_key(profile, zone)) {
             Ok(found) => match load_menu_catalog_with_iwd(&found.path, Some(&games.0)) {
                 Ok(part) => {

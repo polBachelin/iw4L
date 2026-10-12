@@ -221,8 +221,11 @@ fn start_menu_strings_prepare(
         return;
     };
     let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
-    let zone = format!("{}:code_post_gfx_mp", profile.game().prefix());
     let base = mode.map_or_else(Default::default, |mode| mode.0.base().clone());
+    let Some(anchor) = base.names().first() else {
+        return;
+    };
+    let zone = format!("{}:{anchor}", profile.game().prefix());
     let task = AsyncComputeTaskPool::get().spawn(async move {
         match load_mp_localized_strings(&GamesRoot(root), &zone, &base) {
             Ok(catalog) => Some(catalog),

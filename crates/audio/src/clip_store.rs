@@ -145,10 +145,8 @@ fn resident_clip_key(
     if sound.sab_media.is_some() {
         return None;
     }
-    let common = matches!(
-        sound.zone.as_str(),
-        "code_post_gfx_mp" | "localized_code_post_gfx_mp" | "patch_mp"
-    ) || base.carries(sound.zone.as_str());
+    let zone = sound.zone.as_str();
+    let common = base.carries_startup(zone) || base.carries(zone);
     Some((
         LoadedClipKey {
             content: sound.encoded_content_id(),
