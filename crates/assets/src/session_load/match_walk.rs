@@ -76,6 +76,7 @@ pub(super) async fn walk_prepared_match(
         s1_common_bytes,
         teamsets,
         film_visions: common_film_visions,
+        path_graph: common_path_graph,
         mut weapons,
         mut fpv_meshes,
         mut world_weapons,
@@ -186,6 +187,14 @@ pub(super) async fn walk_prepared_match(
     } = loaded;
     world.source_namespace = map_namespace;
     report.append(&mut common_report);
+    // A Special Ops layer carries the graph its map's own zone lacks.
+    if facts.path_graph.is_empty() && !common_path_graph.is_empty() {
+        report.push(format!(
+            "path graph: the map has none; the loaded zones' {}",
+            common_path_graph.report_line()
+        ));
+        facts.path_graph = common_path_graph;
+    }
 
     if facts.team_settings.allies.is_none() && facts.team_settings.axis.is_none() {
         if let Some(name) = facts.t5_teamset.as_ref() {

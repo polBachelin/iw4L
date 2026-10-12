@@ -129,6 +129,9 @@ pub struct CommonCensus {
 
     pub teamsets: std::collections::HashMap<String, asset_game::MapTeamSettings>,
     pub film_visions: FilmVisionCatalog,
+    /// The `PathData` a zone of the set carries: a Special Ops layer ships
+    /// the graph its map's own zone lacks.
+    pub path_graph: asset_world::PathGraph,
 
     pub pending_images: Option<asset_material::material_images::ImageDemandPlan>,
 
@@ -166,6 +169,7 @@ impl CommonCensus {
             s1_common_bytes,
             teamsets,
             film_visions,
+            path_graph,
             pending_images,
             preparation,
         } = later;
@@ -227,6 +231,9 @@ impl CommonCensus {
         self.s1_common_bytes += s1_common_bytes;
         self.teamsets.extend(teamsets);
         self.film_visions.extend(film_visions);
+        if !path_graph.is_empty() {
+            self.path_graph = path_graph;
+        }
         if pending_images.is_some() {
             gaps.push("its image plan was dropped (mode zones decode with the merged pool)");
         }

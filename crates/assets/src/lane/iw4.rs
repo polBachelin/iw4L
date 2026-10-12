@@ -1063,6 +1063,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                path_graph: sink.path_graph,
                 preparation: None,
             }
         } else {
@@ -1100,6 +1101,7 @@ impl ZoneLane for Iw4Lane {
                 teamsets: std::collections::HashMap::new(),
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
+                path_graph: sink.path_graph,
                 preparation: None,
             }
         }

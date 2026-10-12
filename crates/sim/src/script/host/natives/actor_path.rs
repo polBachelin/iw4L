@@ -308,6 +308,15 @@ fn nearest_node(world: &mut World, graph: &SimPathGraph, at: [f32; 3]) -> Option
 /// goal is a node. The walk starts once the search finishes.
 pub(crate) fn set_goal(world: &mut World, id: u64, goal: [f32; 3], goal_node: Option<u32>) -> Nav {
     let graph = FrameWorld::from_world(world).path_graph();
+    if graph.nodes.is_empty() {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            diag::warn!(
+                Sim,
+                "actor path gap: the match has no path graph, so no actor can move (`setgoalpos` answers bad_path)"
+            );
+        }
+    }
     let origin = vector_field(&mut world.resource_mut::<Runtime>(), id, "origin");
     let start = nearest_node(world, &graph, origin);
     let end = goal_node.or_else(|| nearest_node(world, &graph, goal));
@@ -363,7 +372,13 @@ pub(crate) fn advance(
                     .map(|&node| graph.nodes[node as usize].origin)
                     .collect();
                 points.push(nav.goal);
-                nav.plan = Plan::Walk { points, next: 0 };
+                // The route starts at the node nearest the actor, which it
+                // may already have left for the next one; walking back to it
+                // on every replan would hold the actor in place.
+                let next = usize::from(
+                    distance_xy(origin, points[1]) <= distance_xy(points[0], points[1]),
+                );
+                nav.plan = Plan::Walk { points, next };
             }
         }
     }

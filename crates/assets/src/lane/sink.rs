@@ -278,6 +278,8 @@ pub(crate) struct CommonWalkSink {
     pub film_visions:
         BTreeMap<String, Result<asset_world::FilmVision, asset_world::FilmVisionParseError>>,
 
+    pub path_graph: asset_world::PathGraph,
+
     pub sound: Option<asset_audio::ZoneSoundCapture>,
 }
 
@@ -767,6 +769,15 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
     ) -> fastfile_iw5::Result<()> {
         self.xanims
             .capture_xanim_iw5(s, &self.strings_iw5, geometry);
+        Ok(())
+    }
+
+    fn capture_path_data(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::PathDataGeometry,
+    ) -> fastfile_iw5::Result<()> {
+        self.path_graph = asset_world::capture_path_graph_iw5(s, &self.strings_iw5, geometry);
         Ok(())
     }
 

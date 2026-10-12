@@ -116,6 +116,7 @@ pub(super) struct CommonProducts {
         String,
         Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
     >,
+    pub(super) path_graph: asset_world::PathGraph,
     pub(super) weapons: WeaponBuild,
     pub(super) fpv_meshes: FpvMeshBuild,
     pub(super) world_weapons: WorldWeaponBuild,
@@ -534,6 +535,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let mut teamsets = t5_teamsets;
     let mut scripts = startup_scripts;
     let mut common_film_visions = std::collections::BTreeMap::new();
+    let mut common_path_graph = asset_world::PathGraph::default();
     let mut fpv_plan = None;
     let mut iw4_census_stats = Vec::new();
 
@@ -624,6 +626,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             s1_common_bytes = census.s1_common_bytes;
             teamsets.extend(census.teamsets);
             common_film_visions = census.film_visions;
+            common_path_graph = census.path_graph;
             scripts = census.scripts;
             iw4_census_stats = census.cac_tables;
             (
@@ -925,6 +928,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             s1_common_bytes,
             teamsets,
             film_visions: common_film_visions,
+            path_graph: common_path_graph,
             weapons,
             fpv_meshes,
             world_weapons,

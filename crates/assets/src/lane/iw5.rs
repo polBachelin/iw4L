@@ -899,6 +899,9 @@ fn census_common_zone(
         let names: Vec<&str> = sink.film_visions.keys().map(String::as_str).collect();
         report.push(format!("{zone} film visions: {}", names.join(" ")));
     }
+    if !sink.path_graph.is_empty() {
+        report.push(format!("{zone} {}", sink.path_graph.report_line()));
+    }
     if let Err(error) = walk {
         report.push(format!(
             "{zone} IW5 walk: stopped after {} assets — {error}",
@@ -1035,6 +1038,7 @@ fn census_common_zone(
         pen_table_loaded: sink.pen_table.is_some(),
         lochit_table: sink.lochit_table,
         film_visions: sink.film_visions,
+        path_graph: sink.path_graph,
         report,
         ..Default::default()
     }
