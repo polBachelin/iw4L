@@ -4,8 +4,9 @@
 //! script writes the player data MW3's armory menus read into the client's
 //! match player data.
 
-use super::super::args::{arg, int, kind, string};
+use super::super::args::{arg, int, kind, optional, string};
 use super::super::tables::{table, table_search};
+use super::engine::entity_id;
 use super::player::player;
 use crate::ClientId;
 use crate::frame::FrameWorld;
@@ -41,6 +42,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         request(world, args, Ally)
     });
     registry.register(Method, "survival_setplayerdata", set_player_data);
+    registry.register(Method, "setcharacter", set_character);
     registry.register(Method, "survival_archetype", |world, receiver, args| {
         if !args.is_empty() {
             return Err("survival_archetype expects no arguments".into());
@@ -51,6 +53,33 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             .archetype(ClientId(client))
             .map_or(Value::Undefined, |archetype| Value::string(archetype)))
     });
+}
+
+/// `self setcharacter( body, [head,] [hat] )`: the models the entity is drawn
+/// in instead of its team's kit. Names are checked against the bodies only
+/// where they are drawn.
+fn set_character(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 3 {
+        return Err("expects a body, an optional head and an optional hat".into());
+    }
+    let name = |index| -> Result<Option<String>, String> {
+        let name = optional(args, index, string)?.filter(|name| !name.is_empty());
+        match name {
+            Some(name) if name.len() > usize::from(u8::MAX) => {
+                Err(format!("model name `{name}` is longer than 255 bytes"))
+            }
+            name => Ok(name),
+        }
+    };
+    let selection = crate::CharacterSelection {
+        body: name(0)?.ok_or("the body model name is empty")?,
+        head: name(1)?,
+        hat: name(2)?,
+    };
+    let id = entity_id(world, receiver)?;
+    let entnum = world.resource::<Runtime>().entities[&id].number;
+    FrameWorld::from_world(world).set_character(entnum, selection);
+    Ok(Value::Undefined)
 }
 
 /// `self survival_setplayerdata( field, [key,] value )`: a whole number into

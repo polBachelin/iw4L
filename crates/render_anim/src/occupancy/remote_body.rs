@@ -42,13 +42,35 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone)]
 #[require(RemoteFxBolts)]
 pub struct RemotePlayer {
     pub ffa_team: Option<u8>,
 
     pub client_state_team: i32,
     pub shield: Option<sim::ShieldAttachment>,
+    pub character: Option<asset_model::SoldierKit>,
+}
+
+impl RemotePlayer {
+    fn soldier<'a>(
+        &self,
+        soldiers: &'a asset_game::SoldierPresentations,
+    ) -> Result<&'a Arc<asset_game::SoldierPresentation>, &'a str> {
+        soldiers.soldier(
+            asset_model::kit_assignment_is_axis(self.client_state_team, self.ffa_team),
+            self.character.as_ref(),
+        )
+    }
+}
+
+fn character_kit(selection: &sim::CharacterSelection) -> asset_model::SoldierKit {
+    asset_model::SoldierKit {
+        body: selection.body.clone(),
+        head: selection.head.clone(),
+        hat: selection.hat.clone(),
+        arms: None,
+    }
 }
 
 #[derive(Component, Default)]
@@ -180,7 +202,9 @@ fn prepare_remote_kits(
         return;
     };
     for (runtime, remote) in &remotes {
-        let axis = asset_model::kit_assignment_is_axis(remote.client_state_team, remote.ffa_team);
+        let Ok(soldier) = remote.soldier(&soldiers) else {
+            continue;
+        };
         let sample = remote_pose_sample(runtime);
         let Some(weapon) = owner.row(sample.weapon) else {
             continue;
@@ -188,11 +212,10 @@ fn prepare_remote_kits(
         for camo in [0, sample.weapon_model] {
             kits.prepare(
                 &bodies,
-                &soldiers,
+                soldier,
                 &weapons,
                 &world,
                 &mut compositions,
-                axis,
                 weapon.handle(),
                 camo,
             );
@@ -222,7 +245,7 @@ fn occupy_remote_scene_ents(
     prepared_kits: Res<PreparedRemoteKits>,
     compositions: Res<PreparedItemCompositions>,
     remotes: Query<
-        (&CEntity, &CEntityRuntime, &Transform),
+        (&CEntity, &CEntityRuntime, &Transform, Option<&RemotePlayer>),
         (
             Without<WorldScriptModelInstance>,
             Without<FpvLens>,
@@ -266,7 +289,7 @@ fn occupy_remote_scene_ents(
             settings.third_person,
         ),
     };
-    for (identity, runtime, transform) in &remotes {
+    for (identity, runtime, transform, remote) in &remotes {
         if !remote_body_submits(identity.number(), runtime, gate) {
             continue;
         }
@@ -279,7 +302,8 @@ fn occupy_remote_scene_ents(
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
         let axis = asset_model::kit_assignment_is_axis(client_state_team, ffa_team);
-        let Ok(soldier) = soldiers.side(axis) else {
+        let character = remote.and_then(|remote| remote.character.as_ref());
+        let Ok(soldier) = soldiers.soldier(axis, character) else {
             continue;
         };
         if !soldier.owns_bodies(&bodies.0) {
@@ -289,7 +313,7 @@ fn occupy_remote_scene_ents(
         let held = remote_pose_sample(runtime).weapon;
         let (kit_models, radius, hide_part_bits) = match live_kits.filter(|_| shield.is_none()) {
             Some((kits, _world)) => {
-                let Some(kit) = kits.get(axis, held, 0) else {
+                let Some(kit) = kits.get(soldier.kit(), held, 0) else {
                     continue;
                 };
                 let Some(models) = kit.models() else {
@@ -364,14 +388,14 @@ fn sync_remote_bodies(
     subject: Option<Res<ViewSubject>>,
     settings: Res<frame::GameSettings>,
     bodies: Option<Res<PreparedBodies>>,
-    soldiers: Option<Res<asset_game::SoldierPresentations>>,
+    soldiers: Option<ResMut<asset_game::SoldierPresentations>>,
     existing: Query<(Entity, &CEntity, &CEntityRuntime, Option<&RemotePlayer>)>,
 ) {
     let Some(bodies) = bodies else {
         return;
     };
 
-    let Some(soldiers) = soldiers else {
+    let Some(mut soldiers) = soldiers else {
         return;
     };
 
@@ -418,10 +442,20 @@ fn sync_remote_bodies(
             .and_then(|snap| snap.meta.for_client(client));
         let ffa_team = meta.and_then(|m| m.ffa_team);
         let client_state_team = meta.map(|m| m.client_state_team).unwrap_or(0);
-        let Ok(soldier) = soldiers.side(asset_model::kit_assignment_is_axis(
-            client_state_team,
+        let character = i32::try_from(client.0)
+            .ok()
+            .and_then(|entnum| presented.snapshot()?.meta.character(entnum))
+            .map(character_kit);
+        if let Some(character) = &character {
+            soldiers.dress(character);
+        }
+        let marker = RemotePlayer {
             ffa_team,
-        )) else {
+            client_state_team,
+            shield: meta.and_then(|meta| meta.shield),
+            character,
+        };
+        let Ok(soldier) = marker.soldier(&soldiers) else {
             if remote.is_some() {
                 commands
                     .entity(entity)
@@ -454,11 +488,6 @@ fn sync_remote_bodies(
             rotation: Quat::from_rotation_z(yaw.to_radians()),
             scale: Vec3::ONE,
         };
-        let marker = RemotePlayer {
-            ffa_team,
-            client_state_team,
-            shield: meta.and_then(|meta| meta.shield),
-        };
         if remote.is_some() {
             commands.entity(entity).insert((pose, marker));
         } else {
@@ -473,9 +502,11 @@ struct PendingBodySkin<'a> {
     matrices: Vec<Mat4>,
     body: &'a asset_model::BodyMeshEntry,
     head: Option<(&'a asset_model::BodyMeshEntry, usize)>,
+    hat: Option<(&'a asset_model::BodyMeshEntry, usize, u16)>,
     gun: Option<PendingGunSkin<'a>>,
     body_lod: u8,
     head_lod: Option<u8>,
+    hat_lod: Option<u8>,
     gun_lod: Option<u8>,
 
     skin_entries: &'a [dpvs_iw4::SceneEntSkinEntry],
@@ -830,7 +861,7 @@ impl<'a> RemotePoseFrame<'a> {
         let world_gun_gap = &mut self.world_gun_gap;
         let result = (|| {
             let origin = transform.translation.to_array();
-            let soldier = self.soldiers.side(axis).map_err(str::to_owned)?;
+            let soldier = remote.soldier(self.soldiers).map_err(str::to_owned)?;
             if !soldier.owns_bodies(&bodies.0) {
                 return Err("soldier body owner differs from prepared bodies".into());
             }
@@ -884,7 +915,7 @@ impl<'a> RemotePoseFrame<'a> {
                 return Ok(PoseOneOutcome::Posed);
             }
             let kit = kits
-                .and_then(|kits| kits.get(axis, weapon, sample.weapon_model))
+                .and_then(|kits| kits.get(soldier.kit(), weapon, sample.weapon_model))
                 .ok_or_else(|| format!("remote kit not prepared: axis={axis} weapon={weapon}"))?;
             let prepared_dobj = kit.dobj.as_ref();
             ensure_remote_dobj(&model_set, e_type, persist_key, trees, prepared_dobj)?;
@@ -978,9 +1009,11 @@ fn remote_skin_action<'a>(
             matrices,
             body: models.body,
             head: models.head,
+            hat: models.hat,
             gun: models.gun,
             body_lod: lods.body,
             head_lod: lods.head,
+            hat_lod: lods.hat,
             gun_lod: lods.gun,
             skin_entries,
             head_model: models.head_model,
@@ -1198,13 +1231,13 @@ struct AssembledMeshes {
     geom: CpuBodyGeom,
     radii: Vec<f32>,
     radius_parents: Vec<u8>,
-    lods: (Option<u8>, Option<u8>, Option<u8>),
+    lods: crate::anim::remote_body::RemoteLodTuple,
 }
 
 fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> {
     let persist_key = job.persist_key;
     let transform = job.transform;
-    let lods = (Some(job.body_lod), job.head_lod, job.gun_lod);
+    let lods = (Some(job.body_lod), job.head_lod, job.hat_lod, job.gun_lod);
     let mut geom = job.dest;
     skin_slot_into(
         &job.body.skel,
@@ -1234,6 +1267,20 @@ fn assemble_meshes(job: PendingBodySkin<'_>) -> Result<AssembledMeshes, String> 
                 false,
             )?;
         }
+    }
+    if let (Some((hat, base, model)), Some(lod)) = (job.hat, job.hat_lod) {
+        skin_slot_into(
+            &hat.skel,
+            &job.matrices,
+            base,
+            lod,
+            model,
+            job.skin_entries,
+            &hat.material_keys,
+            &hat.material_edges,
+            &mut geom,
+            false,
+        )?;
     }
     let gun_first = geom.surfaces.len();
     match (&job.gun, job.gun_lod) {

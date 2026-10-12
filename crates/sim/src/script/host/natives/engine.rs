@@ -936,6 +936,8 @@ fn register_entities(registry: &mut NativeRegistry) {
         if let Some(number) = item {
             crate::frame::FrameWorld::from_world(world).remove_dropped_item_by_number(number);
         }
+        let entnum = runtime(world).entities[&id].number;
+        crate::frame::FrameWorld::from_world(world).forget_character(entnum);
         // Script code can still read fields after delete() in the same frame
         // (for example UAV bookkeeping). Retire at the scheduler's frame boundary.
         runtime(world).pending_deletes.push(id);

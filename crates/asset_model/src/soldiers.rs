@@ -1,7 +1,8 @@
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SoldierKit {
     pub body: String,
     pub head: Option<String>,
+    pub hat: Option<String>,
 
     pub arms: Option<String>,
 }
@@ -127,6 +128,7 @@ fn choose_kit(
     Some(SoldierKit {
         body: body.to_owned(),
         head: choose_head(body, heads, side),
+        hat: None,
         arms: choose_arms(body, arms, side),
     })
 }

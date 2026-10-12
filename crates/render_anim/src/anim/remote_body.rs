@@ -151,6 +151,7 @@ pub struct PendingGunSkin<'a> {
 pub struct RemoteSkinModels<'a> {
     pub body: &'a asset_model::BodyMeshEntry,
     pub head: Option<(&'a asset_model::BodyMeshEntry, usize)>,
+    pub hat: Option<(&'a asset_model::BodyMeshEntry, usize, u16)>,
     pub gun: Option<PendingGunSkin<'a>>,
     pub head_model: Option<u16>,
     pub gun_model: Option<u16>,
@@ -164,6 +165,14 @@ pub fn bind_remote_skin_models<'a>(
     let head = match models.head {
         None => None,
         Some(head) => Some((head, remote_dobj_model_base(dobj, 1, "head")?)),
+    };
+    let hat = match models.hat {
+        None => None,
+        Some((hat, model)) => Some((
+            hat,
+            remote_dobj_model_base(dobj, model, "hat")?,
+            model as u16,
+        )),
     };
     let gun = match models.gun {
         None => None,
@@ -188,6 +197,7 @@ pub fn bind_remote_skin_models<'a>(
     Ok(RemoteSkinModels {
         body: models.body,
         head,
+        hat,
         gun,
         head_model: head.map(|_| 1),
         gun_model: models.gun.map(|_| models.gun_model_index as u16),
@@ -281,7 +291,7 @@ pub struct CachedSkinnedBody {
     pub radii: Vec<f32>,
     pub radius_parents: Vec<u8>,
 
-    pub lods: (Option<u8>, Option<u8>, Option<u8>),
+    pub lods: RemoteLodTuple,
 }
 
 pub struct RemoteBodySkinnedItem {
@@ -328,7 +338,7 @@ impl RemoteSkinPoseHashes {
         self.last_cache_hits.retain(|ent| live.contains(ent));
     }
 
-    pub fn has_lods(&self, persist_key: u32, lods: (Option<u8>, Option<u8>, Option<u8>)) -> bool {
+    pub fn has_lods(&self, persist_key: u32, lods: RemoteLodTuple) -> bool {
         self.skinned
             .get(&persist_key)
             .is_some_and(|cached| cached.lods == lods)
@@ -399,7 +409,7 @@ pub fn commit_assembled_body(
     geom: CpuBodyGeom,
     radii: Vec<f32>,
     radius_parents: Vec<u8>,
-    lods: (Option<u8>, Option<u8>, Option<u8>),
+    lods: RemoteLodTuple,
     submit: &mut RemoteBodySkinnedQueue,
     pose_hashes: &mut RemoteSkinPoseHashes,
 ) {

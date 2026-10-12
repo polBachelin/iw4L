@@ -202,6 +202,8 @@ pub struct SimState {
 
     hud_string_cs: crate::HudStringCs,
 
+    characters: std::collections::BTreeMap<i32, crate::CharacterSelection>,
+
     num_kills: u32,
 
     pub(crate) recent_kills: Vec<(ClientId, i32, u32)>,
@@ -287,6 +289,7 @@ impl Default for SimState {
             effect_name_cs: crate::EffectNameCs::default(),
             hud_material_cs: crate::HudMaterialCs::default(),
             hud_string_cs: crate::HudStringCs::default(),
+            characters: Default::default(),
             num_kills: 0,
             recent_kills: Vec::new(),
             weapon_notes: Vec::new(),
@@ -356,6 +359,7 @@ impl SimState {
         self.g_hudelems.clear();
         self.hud_material_cs = crate::HudMaterialCs::default();
         self.hud_string_cs = crate::HudStringCs::default();
+        self.characters.clear();
         self.bind_required_hud_materials();
         self.num_kills = 0;
         self.recent_kills.clear();
@@ -1088,6 +1092,17 @@ impl SimState {
         self.last_pmove_walking.remove(&id);
         self.last_anim_movement.remove(&id);
         self.anim_command_buttons.remove(&id);
+        if let Ok(entnum) = i32::try_from(id.0) {
+            self.characters.remove(&entnum);
+        }
+    }
+
+    pub(crate) fn set_character(&mut self, entnum: i32, selection: crate::CharacterSelection) {
+        self.characters.insert(entnum, selection);
+    }
+
+    pub(crate) fn forget_character(&mut self, entnum: i32) {
+        self.characters.remove(&entnum);
     }
 
     pub(crate) fn area_entity_candidates(
@@ -2431,6 +2446,11 @@ impl SimState {
                 corpses: self.corpses,
                 item_ammo,
                 item_pickups: self.item_pickups.clone(),
+                characters: self
+                    .characters
+                    .iter()
+                    .map(|(entnum, selection)| (*entnum, selection.clone()))
+                    .collect(),
             },
         }
     }
@@ -2613,6 +2633,7 @@ impl SimState {
             .adopt_occupied(&snapshot.meta.hud_materials);
         self.hud_string_cs
             .adopt_occupied(&snapshot.meta.hud_strings);
+        self.characters = snapshot.meta.characters.iter().cloned().collect();
 
         self.corpses = snapshot.meta.corpses;
 
