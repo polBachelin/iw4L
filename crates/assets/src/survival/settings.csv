@@ -1,4 +1,5 @@
 map,iw5:mp_paris
+base_zones,common_mp
 mode_zones,common_specialops common_survival patch_specialops patch_survival
 waves_table,sp/survival_waves.csv
 armory_table,sp/survival_armories.csv

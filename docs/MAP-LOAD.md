@@ -75,16 +75,21 @@ Content-addressed leaf in `asset_transport::artifact_cache` (`cache_get` /
 — and a hit must be the **same bytes** a miss would have written. The key names
 every input; if the encoder changed, bump the format word. Live kinds: `mips`,
 `wgsl`, `localize`, `nav` and `xwma_pcm`, whose miss is decoded by the native Rust T5 WMA2 decoder.
-The launch's `RuntimeProfile` picks the `common_mp` that anchors the walk (IW4,
-or the map's own IW5 tree for `survival`); the startup zones come from beside it.
-Every zone loaded beside it (sound bank base rows, localized strings, the menu
-probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses a file of
-another game's envelope; the profile's own game is never also walked as a donor.
-A launch mode adds its own zones (`survival` names MW3's `common_specialops`,
-`common_survival`, `patch_specialops`, `patch_survival` in its `mode_zones`
-settings row). They are found the same way, are part of the `CommonKey`, and are
-walked by the common census after `common_mp` in that order, a later zone's asset
-replacing an earlier one's: weapons in their row, catalogs by name, scripts and
+The launch's `RuntimeProfile` picks the tree whose first base zone anchors the
+walk (IW4, or the map's own IW5 tree for `survival`); the startup zones come from
+beside it. Every zone loaded beside it (sound bank base rows, localized strings,
+the menu probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses a
+file of another game's envelope; the profile's own game is never also walked as a
+donor. A launch mode names its base zones, loaded right after the map
+(`ModeZones::base`; `survival` reads them from its `base_zones` settings row,
+every other mode keeps `common_mp`). They are found through
+`RuntimeProfile::find_base_zones` and are part of the `CommonKey`; the first one
+anchors the census and the rest are laid over it in their order. A launch mode
+adds its own zones (`survival` names MW3's `common_specialops`, `common_survival`,
+`patch_specialops`, `patch_survival` in its `mode_zones` settings row). They are
+found the same way, are part of the `CommonKey`, and are walked by the common
+census after the base zones in that order, a later zone's asset replacing an
+earlier one's: weapons in their row, catalogs by name, scripts and
 tables, menus, localized strings and sound aliases. Their census claims their
 sounds (`ZoneSoundCapture::claim_source`); their images decode with the merged
 pool. A material another zone holds is captured as a reference row that links to

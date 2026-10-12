@@ -283,14 +283,13 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
             game.prefix()
         ));
     }
-    let common_mp = RuntimeProfile::Iw4
-        .find_common_mp(&games, &found.path)
-        .map(|zone| zone.path);
+    let base_zones =
+        RuntimeProfile::Iw4.find_base_zones(&games, &found.path, &ModeZones::default());
 
     let prepared = match bevy::tasks::futures_lite::future::block_on(assets::load_prepared_match(
         RuntimeProfile::Iw4,
         Ok(found.path),
-        common_mp,
+        base_zones,
         Vec::new(),
         asset_transport::LoadProgress::default(),
     )) {
@@ -585,21 +584,22 @@ fn run_map(
         .as_ref()
         .map(|z| z.path.clone())
         .map_err(|e| e.clone());
-    let common_mp = match &zone_ff {
-        Ok(path) => frontend
-            .runtime()
-            .find_common_mp(&games, path)
-            .map(|z| z.path),
-        Err(e) => Err(e.clone()),
-    };
     let mode = frontend.mode_zones();
     let mode_selection = frontend.mode_selection();
     let survival_teams = frontend.survival_teams();
+    let base_zones = match &zone_ff {
+        Ok(path) => frontend.runtime().find_base_zones(&games, path, &mode),
+        Err(e) => Err(e.clone()),
+    };
     let mode_zones = match &zone_ff {
         Ok(path) => frontend.runtime().find_mode_zones(&games, path, &mode),
         Err(e) => Err(e.clone()),
     };
-    let probe = launch_report(zone.clone(), common_mp.clone(), zone_ff.clone(), zone_alias);
+    let base_anchor = base_zones
+        .as_ref()
+        .map(|zones| zones[0].clone())
+        .map_err(Clone::clone);
+    let probe = launch_report(zone.clone(), base_anchor, zone_ff.clone(), zone_alias);
     let game = parsed_game.or_else(|| {
         found
             .as_ref()
@@ -716,7 +716,7 @@ fn run_map(
             load_key: Default::default(),
             zone: zone.clone(),
             zone_ff,
-            common_mp,
+            base_zones,
             mode_zones,
             progress: progress.clone(),
         })
