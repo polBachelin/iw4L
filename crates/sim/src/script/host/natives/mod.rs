@@ -1,4 +1,5 @@
 pub(crate) mod actor;
+pub(crate) mod actor_path;
 pub mod engine;
 pub mod iw4;
 pub(super) mod local_profile;

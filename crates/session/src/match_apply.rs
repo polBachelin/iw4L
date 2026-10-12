@@ -281,6 +281,7 @@ pub fn apply_prepared_match(
 
         let facts = std::mem::take(&mut prepared_map.facts);
         let airstrike_height = facts.airstrike_height;
+        let path_graph = sim_path_graph(&facts.path_graph);
         stage_resource(
             &mut install,
             assets::SessionCompass {
@@ -322,6 +323,7 @@ pub fn apply_prepared_match(
         .map_err(|error| InstallRefusal::new(format!("Invalid simulation weapons: {error:?}")))?;
         let mut content = sim::SimContentBuilder::for_match(Arc::clone(sim_weapons.content()));
         content.set_script_sound_aliases(script_sound_aliases);
+        content.set_path_graph(path_graph);
         let class_catalog = Arc::new(crate::class_catalog(weapons.registry(), runtime_profile));
         diag::info!(Sim, "class catalog: {}", class_catalog.summary());
         content.set_class_catalog(Arc::clone(&class_catalog));
@@ -2003,4 +2005,26 @@ fn stage_resource<T: Resource>(queue: &mut bevy::ecs::world::CommandQueue, resou
     queue.push(move |world: &mut World| {
         world.insert_resource(resource);
     });
+}
+
+fn sim_path_graph(graph: &asset_world::PathGraph) -> sim::SimPathGraph {
+    sim::SimPathGraph {
+        nodes: graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| sim::SimPathNode {
+                node_type: node.node_type,
+                origin: node.origin,
+                angles: node.angles,
+                targetname: node.targetname.clone(),
+                script_noteworthy: node.script_noteworthy.clone(),
+                links: graph
+                    .links_of(i)
+                    .iter()
+                    .map(|link| (link.target, link.distance))
+                    .collect(),
+            })
+            .collect(),
+    }
 }

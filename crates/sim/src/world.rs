@@ -6,7 +6,7 @@ use bodies::{PlayerAnimInputs, PlayerBodyRuntime};
 use collision::{CollisionRuntime, LagcompPlan};
 pub use content::{
     PlayerKitCollision, SimBrush, SimClipBsp, SimClipCmodels, SimClipMesh, SimContent,
-    SimContentBuilder, SimStaticModel, SimTriggerHull,
+    SimContentBuilder, SimPathGraph, SimPathNode, SimStaticModel, SimTriggerHull,
 };
 use events::{EventJournal, PresentationQueue};
 pub use events::{PendingLocalSound, PendingPlayerCardEvent, PendingPlayerCardKind, PendingPrint};
@@ -2251,6 +2251,10 @@ impl SimState {
 
     pub(crate) fn script_anim_clips(&self) -> content::ScriptAnimClips {
         self.content.script_anim_clips().clone()
+    }
+
+    pub(crate) fn path_graph(&self) -> Arc<SimPathGraph> {
+        Arc::clone(self.content.path_graph())
     }
 
     pub(crate) fn player_anim_clip(&self, legs_anim: i32) -> Option<Arc<xmodel_runtime::AnimClip>> {

@@ -22,6 +22,23 @@ impl std::fmt::Debug for ScriptAnimClips {
     }
 }
 
+/// AI path nodes the map ships; links name their target by node index.
+#[derive(Clone, Debug, Default)]
+pub struct SimPathGraph {
+    pub nodes: Vec<SimPathNode>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SimPathNode {
+    pub node_type: u32,
+    pub origin: [f32; 3],
+    pub angles: [f32; 3],
+    pub targetname: Option<String>,
+    pub script_noteworthy: Option<String>,
+    /// `(target, distance)` pairs.
+    pub links: Vec<(u32, f32)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct SimBrush {
     pub planes: Vec<[f32; 4]>,
@@ -149,6 +166,7 @@ struct ContentData {
     script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
     script_anim_notetracks: std::collections::BTreeMap<String, Notetracks>,
     script_anim_clips: ScriptAnimClips,
+    path_graph: Arc<SimPathGraph>,
     xanims: Arc<crate::MantleXAnimBind>,
     vehicle_turrets: std::collections::BTreeMap<String, String>,
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
@@ -189,6 +207,7 @@ impl SimContentBuilder {
                 script_model_anims: Default::default(),
                 script_anim_notetracks: Default::default(),
                 script_anim_clips: Default::default(),
+                path_graph: Default::default(),
                 xanims: Default::default(),
                 vehicle_turrets: Default::default(),
                 vehicle_compass: Default::default(),
@@ -258,6 +277,10 @@ impl SimContentBuilder {
         resolve: impl Fn(&str) -> Option<Arc<xmodel_runtime::AnimClip>> + Send + Sync + 'static,
     ) {
         self.data.script_anim_clips = ScriptAnimClips(Some(Arc::new(resolve)));
+    }
+
+    pub fn set_path_graph(&mut self, graph: SimPathGraph) {
+        self.data.path_graph = Arc::new(graph);
     }
 
     pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
@@ -401,6 +424,9 @@ impl SimContent {
     }
     pub(super) fn script_anim_clips(&self) -> &ScriptAnimClips {
         &self.data.script_anim_clips
+    }
+    pub(super) fn path_graph(&self) -> &Arc<SimPathGraph> {
+        &self.data.path_graph
     }
     pub(super) fn xanims(&self) -> &Arc<crate::MantleXAnimBind> {
         &self.data.xanims

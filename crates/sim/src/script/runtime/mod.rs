@@ -1670,6 +1670,7 @@ impl Runtime {
             pending.extend(args.iter().cloned());
         }
         pending.extend(self.engine.world.map(Value::Object));
+        self.path_nodes.roots(pending);
         pending.extend(
             self.engine
                 .objectives
