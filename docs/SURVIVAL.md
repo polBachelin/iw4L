@@ -27,7 +27,9 @@ a weapon themselves.
   `mode_zones`, laid over them; `actor_anim_zones`, see Actors), table names, teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
-  `unsimulated_archetypes` (archetypes no actor can play: the waves skip them),
+  `unsimulated_archetypes` (archetypes no actor can play: the waves skip them;
+  empty in the tree), `dog_archetypes` (archetypes that run the dog behavior,
+  `dog_reg dog_splode`, see Dogs),
   `test_wave` (a development aid, empty in the tree: archetype refs that, when
   set, make wave 1 one enemy of each instead of the table's),
   health, `start_credits`, `wave_bonus` (the credits each player gets when a
@@ -108,7 +110,7 @@ a weapon themselves.
   `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
   characters are `characters.csv` ids, space separated; each spawn wears one
   of them at random (see Characters). The trait is one of
-  `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is an
+  `explosive`, `martyrdom`, `claymore`, `gas`, `chopper`, `splode` or empty; the speed is an
   actor's run rate in percent, empty for 100. Accuracy (percent of shots aimed true) and burst (shots
   per burst) are an actor's (see Actors), empty on the archetypes no actor
   plays. Traits, speeds, accuracies and bursts are ours: MW3's table has only the archetype descriptions they
@@ -135,7 +137,9 @@ a weapon themselves.
   its death effect, speed and acceleration in mph, the time between a wave's
   choppers entering, how long it holds at a node, its gun's range, the aim
   height above a player's feet, burst and rest times, and the spread in units
-  per 1000 of range (`chopper_*`). Durations are in milliseconds.
+  per 1000 of range (`chopper_*`); the exploding dog's effect, means of
+  death, radius and max/min damage (`splode_*`). Durations are in
+  milliseconds.
 * `hud.csv` — `ref,label,font,fontscale,horzalign,vertalign,alignx,aligny,x,y`:
   the hudelems of the survival HUD, refs `wave`, `enemies` and `credits`. The
   label is plain text with `&&1` where the number goes; the font scale is in
@@ -161,7 +165,8 @@ a weapon themselves.
 Every wave enemy is an actor (`spawnactor`), never a client: the waves use
 no bot and take no client slot. The script spawns it on `enemy_team` with
 its archetype's health (c7), dresses it (see Characters) and runs
-`actor_think( archetype )` on it (see Actors), which gives it its weapon
+`actor_think( archetype )` on it (see Actors), or `dog_think( archetype )`
+for one of `dog_archetypes` (see Dogs), which gives it its weapon
 (`archetypes.csv`, else c5) and speed. c6 (offhand), c8 and c11 are not read:
 an actor throws no offhand grenades, and its aim is its `archetypes.csv` accuracy. Its
 `death` notify is the wave's kill: the kill is counted, a player who dealt
@@ -234,8 +239,6 @@ Which archetype wears which character is ours:
 | `friendly_support_riotshield` | GIGN (`body_gign_paris_*`, `head_gign_a..d`) |
 | `dog_reg`, `dog_splode` | `german_sheperd_dog` |
 
-Dogs stay out (no dog body or movement).
-
 ## Actors
 
 `crates/assets/src/survival/actor.gsc.txt` (module `maps/mp/_survival_actor`)
@@ -266,15 +269,17 @@ It loops, every `actor_think_ms`, through these states:
 A hit's direction is the way it pushes the body against the actor's facing:
 `f` forward (hit from behind), `b` back, `l` left, `r` right.
 
-`actor_anims.csv` — `state,stance,direction,anims` — names the SP animation
-assets each state plays: the state (`idle`, `run`, `walk`, `aim`, `fire`,
-`pain`, `death`, `explode`), the stance (`stand`, `crouch`, empty for any),
-the direction (empty for any) and anim names, space separated, one drawn per
-play. The first row that fits the actor's stance and the direction is used,
-else the state's first row. Only SP `generic_human` anims belong there, never
-the MP `pb_*` ones: those twist a torso SP bodies do not have. When the
-match is installed each cell is narrowed to the anims the loaded zones hold,
-and a cell left with none takes its state's first row; the anims missing are
+`actor_anims.csv` — `set,state,stance,direction,anims` — names the SP
+animation assets each state plays: the anim set (`human`, or `dog`, see
+Dogs), the state (`human`: `idle`, `run`, `walk`, `aim`, `fire`, `pain`,
+`death`, `explode`), the stance (`stand`, `crouch`, empty for any), the
+direction (empty for any) and anim names, space separated, one drawn per
+play. The first row of the actor's set that fits its stance and the
+direction is used, else the state's first row. Only SP `generic_human` anims
+belong to the `human` set, never the MP `pb_*` ones: those twist a torso SP
+bodies do not have. When the match is installed each cell is narrowed to the
+anims the loaded zones hold, and a cell left with none takes its set's
+state's first row; the anims missing are
 logged once (`survival actor anims not loaded`). Anim-tree methods take the
 name as a string, resolved in the actor's tree.
 
@@ -286,13 +291,43 @@ A zone missing from the user's data is warned at launch (`mode anim zone
 gap`) and the actors play what the other zones hold. The row is temporary:
 the zone flip loads `common` in full and removes it.
 
+## Dogs
+
+`crates/assets/src/survival/dog.gsc.txt` (module `maps/mp/_survival_dog`)
+is our own behavior for a dog actor, on the actor helpers of
+`maps/mp/_survival_actor`. The gametype keeps its entry point in
+`level.dogthink` and calls `dog_think( archetype )` instead of `actor_think`
+on an actor of `dog_archetypes`. A dog has no weapon, so its archetype's
+weapon is neither read nor required of the loaded zones. Every
+`actor_think_ms` it:
+
+* idles (`idle`) when no living player or actor of the other side is left;
+* runs (`run`, at its archetype's speed) over the path nodes toward the
+  nearest one, seen or not;
+* within `dog_attack_range` of it, stops, faces it and plays `attack`;
+  `dog_bite_ms` in, a target still in range takes `dog_bite_damage`
+  (`MOD_MELEE`, a `dog_bite_radius` blast at the target's eye, clear of the
+  dog), and the dog rests `dog_attack_rest_ms`;
+* flinches (`pain`) and dies (`death`) as a human actor does, and is deleted
+  after `actor_corpse_ms`.
+
+A dog of the `splode` trait (`dog_splode`) explodes where it dies:
+`splode_fx` and a `splode_radius` blast of `splode_damage_max` to
+`splode_damage_min` (`splode_means`), in its own name.
+
+Its anims are the `dog` set of `actor_anims.csv` (states `idle`, `run`,
+`attack`, `pain`, `death`): SP `german_shepherd_*` anims of
+`common_survival`. The dog skeleton has no human bones, so it never plays
+the `human` set. The dog speed (130%) and the `dog_*` and `splode_*` numbers
+are ours.
+
 ## Waves
 
 The first wave starts once a player has connected. A wave's enemies are its
 squad (c3 × c4), its specials (each c5 ref × its c6 count), then one of each
 boss (c7) and vehicle (c8), in that order. An archetype in
 `unsimulated_archetypes` is left out of the wave and logged, never dropped
-silently: dogs have no actor body (out of scope). A chopper (c8 in MW3's
+silently. A chopper (c8 in MW3's
 table: two on waves 6 and 15, three on 21) is no actor: it counts toward the
 wave's total and its enemies left, and the wave ends only once it is
 destroyed.
@@ -545,19 +580,20 @@ zones, an archetype names no row of the waves table, or a placement's kind,
 origin, yaw or model is unreadable. The waves are held to the same: numbered
 1 to N with at least one c9 repeat row, every c3/c5/c7/c8 ref an archetype,
 c4 and each c6 count positive and c6 parallel to c5, c10 empty or an armory
-kind, every `unsimulated_archetypes` ref an archetype, and every archetype an
-actor plays given a weapon and offhand of the loaded zones and a positive
-health and a whole reward. `start_credits` and `wave_bonus` must be whole
+kind, every `unsimulated_archetypes` and `dog_archetypes` ref an archetype,
+and every archetype an actor plays given a positive health, a whole reward
+and, unless it is a dog, a weapon and offhand of the loaded zones. `start_credits` and `wave_bonus` must be whole
 credits, `hud.csv` must lay out `wave`, `enemies` and `credits` in full, and
 every `challenges.csv` ref must be a challenge of `challenge_table` with a
 positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
 1, every `test_wave` ref an archetype (held to what an actor plays like any
-wave's), every `archetypes.csv` trait one of the five, speed a whole
+wave's), every `archetypes.csv` trait one of the six, speed a whole
 percent above zero, accuracy a whole percent 0–100, burst a whole count
 above zero and character an id of `characters.csv`, every
-`actor_anims.csv` row a state, stance and direction the actor script picks
-by with every state given a row, every `actor_*` setting a whole number
+`actor_anims.csv` row a set, state, stance and direction the actor or dog
+script picks by with every state of a set given a row, every `actor_*` and
+`dog_*` setting a whole number
 (its percents 0–100, `actor_budget` above zero) and `actor_explosive_means` naming something, every
 `characters.csv` id named once with a body and no head on a `fullbody_*`
 body, and for each trait in use its `heavies.csv` rows: weapon
