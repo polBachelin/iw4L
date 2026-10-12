@@ -456,6 +456,7 @@ impl WeaponBuild {
             configurations: HashMap::new(),
             by_name: index_of,
             by_namespaced: HashMap::new(),
+            by_script: HashMap::new(),
             item_groups: HashMap::new(),
             families: crate::WeaponFamilies::default(),
             completion_names: Vec::new(),

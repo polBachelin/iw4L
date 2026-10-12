@@ -131,7 +131,7 @@ const ARMORY_KIND_COLUMN: usize = 2;
 /// How `GRANTS_TABLE` gives an armory item (c1): the two that wait on the
 /// action slot, and a sentry the player carries and places, whose model is
 /// c2. The predator's ref names, through `WEAPON_ALIASES_TABLE`, the
-/// detonator it is held as and then the missile it launches. The ammo refill
+/// detonator it is held as (c1) and the missile it launches (c2). The ammo refill
 /// tops up every weapon a launcher row does not name; a grenade, an
 /// explosive (held on the action slot in c4) and a launcher (a weapon that
 /// takes a primary slot) are counted in their weapon's ammo, armor in
@@ -368,6 +368,44 @@ pub fn survival_team_rules() -> Result<gamemode_iw4::survival::TeamRules, String
     .map_err(|error| format!("{SETTINGS_TABLE}: {error}"))
 }
 
+/// `WEAPON_ALIASES_TABLE`'s weapon columns: the weapon a ref is held as and,
+/// for the predator, the missile it launches. Each cell lists candidates, SP
+/// names first and the MP name last.
+mod alias_column {
+    pub(super) const HELD: usize = 1;
+    pub(super) const MISSILE: usize = 2;
+    pub(super) const WEAPONS: [usize; 2] = [HELD, MISSILE];
+}
+
+/// Narrows every `WEAPON_ALIASES_TABLE` cell to its first candidate
+/// `is_loaded` knows by its exact script name, so the script and
+/// `survival_data_check` read one weapon per ref. A cell with no loaded
+/// candidate is left whole for the check to refuse.
+pub fn survival_pick_weapons(
+    scripts: &mut crate::ScriptSources,
+    is_loaded: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let Some(aliases) = scripts.table_mut(WEAPON_ALIASES_TABLE) else {
+        return Vec::new();
+    };
+    let columns = aliases.columns.max(1);
+    let mut picks = Vec::new();
+    for row in aliases.cells.chunks_exact_mut(columns).take(aliases.rows) {
+        for column in alias_column::WEAPONS.into_iter().filter(|&c| c < columns) {
+            let Some(picked) = row[column]
+                .split_whitespace()
+                .find(|weapon| is_loaded(weapon))
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            picks.push(format!("{}->{picked}", row[0]));
+            row[column] = picked;
+        }
+    }
+    picks
+}
+
 /// Holds survival's own tables to the data loaded with the match: every
 /// weapon they name is one of its weapons, every archetype they fill in is
 /// one of the waves table's, and every armory placement on `zone` is
@@ -383,17 +421,21 @@ pub fn survival_data_check(
             .ok_or_else(|| format!("no loaded zone holds `{name}`"))
     };
     let mut gaps = Vec::new();
-    for row in table(WEAPON_ALIASES_TABLE)?.rows() {
+    let aliases = table(WEAPON_ALIASES_TABLE)?;
+    for row in aliases.rows() {
         let reference = cell(row, 0);
-        let weapons: Vec<&str> = cell(row, 1).split_whitespace().collect();
-        if weapons.is_empty() {
+        if cell(row, alias_column::HELD).is_empty() {
             gaps.push(format!(
                 "{WEAPON_ALIASES_TABLE}: `{reference}` names no weapon"
             ));
         }
-        for weapon in weapons.into_iter().filter(|weapon| !is_weapon(weapon)) {
+        for candidates in alias_column::WEAPONS
+            .map(|column| cell(row, column))
+            .into_iter()
+            .filter(|candidates| !candidates.is_empty() && !is_weapon(candidates))
+        {
             gaps.push(format!(
-                "{WEAPON_ALIASES_TABLE}: `{reference}` -> `{weapon}` is no weapon of the loaded zones"
+                "{WEAPON_ALIASES_TABLE}: `{reference}` -> `{candidates}` names no weapon of the loaded zones"
             ));
         }
     }
@@ -428,9 +470,10 @@ pub fn survival_data_check(
                 "{ARCHETYPES_TABLE}: `{archetype}` is no archetype of {waves_name}"
             ));
         }
-        if !weapon.is_empty() && !is_weapon(weapon) {
+        let resolved = alias_weapon(aliases, weapon);
+        if !weapon.is_empty() && !is_weapon(resolved) {
             gaps.push(format!(
-                "{ARCHETYPES_TABLE}: `{archetype}` -> `{weapon}` is no weapon of the loaded zones"
+                "{ARCHETYPES_TABLE}: `{archetype}` -> `{weapon}` (`{resolved}`) is no weapon of the loaded zones"
             ));
         }
     }
@@ -652,14 +695,6 @@ fn check_waves(
             played.push(reference);
         }
     }
-    let weapon_of = |reference: &str| {
-        aliases
-            .rows()
-            .find(|row| cell(row, 0).eq_ignore_ascii_case(reference))
-            .and_then(|row| cell(row, 1).split_whitespace().next())
-            .unwrap_or(reference)
-            .to_owned()
-    };
     for reference in played {
         let Some(row) = archetype_row(reference) else {
             continue;
@@ -683,8 +718,8 @@ fn check_waves(
             .into_iter()
             .filter(|named| !named.is_empty())
         {
-            let resolved = weapon_of(named);
-            if !is_weapon(&resolved) {
+            let resolved = alias_weapon(aliases, named);
+            if !is_weapon(resolved) {
                 gaps.push(format!(
                     "{waves_name}: archetype `{reference}` -> `{named}` (`{resolved}`) is no weapon of the loaded zones"
                 ));
@@ -916,11 +951,7 @@ fn check_heavies(
                 continue;
             };
             if HEAVIES_WEAPONS.contains(&key) {
-                let weapon = aliases
-                    .rows()
-                    .find(|row| cell(row, 0).eq_ignore_ascii_case(text))
-                    .and_then(|row| cell(row, 1).split_whitespace().next())
-                    .unwrap_or(text);
+                let weapon = alias_weapon(aliases, text);
                 if !is_weapon(weapon) {
                     gaps.push(format!(
                         "{HEAVIES_TABLE}: `{key}` -> `{text}` (`{weapon}`) is no weapon of the loaded zones"
@@ -985,13 +1016,17 @@ fn check_grants(
                 grant::ALL.join(", ")
             ));
         }
-        let weapons: Vec<&str> = aliases
-            .rows()
-            .find(|alias| cell(alias, 0) == reference)
-            .map_or_else(
-                || vec![reference],
-                |alias| cell(alias, 1).split_whitespace().collect(),
-            );
+        let alias = aliases.rows().find(|alias| cell(alias, 0) == reference);
+        let weapons: Vec<&str> = alias.map_or_else(
+            || vec![reference],
+            |alias| {
+                alias_column::WEAPONS
+                    .map(|column| cell(alias, column))
+                    .into_iter()
+                    .filter(|weapon| !weapon.is_empty())
+                    .collect()
+            },
+        );
         let hands_weapon = grant::WEAPONS.contains(&how);
         for weapon in weapons
             .iter()
@@ -1001,9 +1036,11 @@ fn check_grants(
                 "{GRANTS_TABLE}: `{reference}` -> `{weapon}` is no weapon of the loaded zones"
             ));
         }
-        if how == grant::PREDATOR && weapons.len() < 2 {
+        if how == grant::PREDATOR
+            && alias.is_none_or(|alias| cell(alias, alias_column::MISSILE).is_empty())
+        {
             gaps.push(format!(
-                "{GRANTS_TABLE}: predator `{reference}` names no missile after its detonator in {WEAPON_ALIASES_TABLE}"
+                "{GRANTS_TABLE}: predator `{reference}` names no missile in {WEAPON_ALIASES_TABLE} c2"
             ));
         }
         if how == grant::SENTRY && cell(row, grant::MODEL).is_empty() {
@@ -1068,14 +1105,7 @@ fn check_grants(
         {
             continue;
         }
-        let weapons: Vec<&str> = aliases
-            .rows()
-            .find(|alias| cell(alias, 0) == reference)
-            .map_or_else(
-                || vec![reference],
-                |alias| cell(alias, 1).split_whitespace().collect(),
-            );
-        if weapons.first().is_none_or(|weapon| !is_weapon(weapon)) {
+        if !is_weapon(alias_weapon(aliases, reference)) {
             gaps.push(format!(
                 "{armory_name}: {WEAPON_KIND} item `{reference}` has no {GRANTS_TABLE} row and is no weapon of the loaded zones (through {WEAPON_ALIASES_TABLE})"
             ));
@@ -1218,6 +1248,15 @@ fn check_ranks(rank_name: &str, ranks: &ScriptTable, gaps: &mut Vec<String>) -> 
         ));
     }
     Ok(())
+}
+
+/// The weapon `reference` is held as: its `WEAPON_ALIASES_TABLE` row's,
+/// else the reference itself.
+fn alias_weapon<'a>(aliases: &'a ScriptTable, reference: &'a str) -> &'a str {
+    aliases
+        .rows()
+        .find(|row| cell(row, 0).eq_ignore_ascii_case(reference))
+        .map_or(reference, |row| cell(row, alias_column::HELD))
 }
 
 fn cell(row: &[String], column: usize) -> &str {

@@ -214,6 +214,7 @@ impl SoldierPresentation {
         axis: bool,
         bodies: &Arc<BodyMeshCatalog>,
         meshes: &Arc<FpvMeshCatalog>,
+        mode_hands: Option<&str>,
         mounts: &Arc<[HandMounts]>,
         sources: &PlayerAnimSources,
         catalog: &Arc<XAnimCatalog>,
@@ -237,7 +238,7 @@ impl SoldierPresentation {
                 .map(Some)
                 .ok_or_else(|| "T6 soldier kit hands missing".to_owned())
         } else {
-            let choice = FpvHands::resolve(meshes, family, Some(&kit), None, family);
+            let choice = FpvHands::resolve(meshes, family, mode_hands, Some(&kit), None, family);
             Ok(choice.key().is_some().then_some(choice))
         };
         let mut presentation = Self {
@@ -370,9 +371,12 @@ pub struct SoldierPresentations {
 }
 
 impl SoldierPresentations {
+    /// `mode_hands` names the viewhands a mode gives its players; when the
+    /// meshes hold no such model, the kit's are used.
     pub fn prepare(
         bodies: &Arc<BodyMeshCatalog>,
         meshes: &Arc<FpvMeshCatalog>,
+        mode_hands: Option<&str>,
         sources: &PlayerAnimSources,
         catalog: &Arc<XAnimCatalog>,
     ) -> Self {
@@ -392,11 +396,15 @@ impl SoldierPresentations {
                     .any(|bone| bone == "tag_weapon1"),
             })
             .collect();
-        let allies = SoldierPresentation::prepare(false, bodies, meshes, &mounts, sources, catalog);
+        let allies = SoldierPresentation::prepare(
+            false, bodies, meshes, mode_hands, &mounts, sources, catalog,
+        );
         let axis = if bodies.kits().kit(false) == bodies.kits().kit(true) {
             allies.clone()
         } else {
-            SoldierPresentation::prepare(true, bodies, meshes, &mounts, sources, catalog)
+            SoldierPresentation::prepare(
+                true, bodies, meshes, mode_hands, &mounts, sources, catalog,
+            )
         };
         Self {
             sides: [allies, axis],
