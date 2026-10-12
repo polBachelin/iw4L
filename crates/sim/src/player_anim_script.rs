@@ -328,3 +328,145 @@ pub(crate) fn reset_stance_torso(ps: &mut PlayerState) {
     play_anim(ps, 0, false, 0, false, true, true);
     ps.torso_timer = 0;
 }
+
+/// A mode's own table from player state to the anims a player's third-person
+/// body plays, posed by an anim blend instead of the playeranim script.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayerBodyAnims {
+    rows: Vec<PlayerBodyAnimRow>,
+    blend_time: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PlayerBodyAnimRow {
+    state: Arc<str>,
+    stance: Arc<str>,
+    direction: Arc<str>,
+    anims: Vec<Arc<str>>,
+}
+
+/// What a player is doing, as `PlayerBodyAnims` picks by it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlayerBodyPose {
+    states: &'static [&'static str],
+    stance: &'static str,
+    direction: &'static str,
+}
+
+impl PlayerBodyAnims {
+    /// `rows`: state, stance (empty for any), direction (empty for any) and
+    /// the anims, one drawn per play.
+    pub fn new(rows: Vec<(String, String, String, Vec<String>)>, blend_ms: u32) -> Arc<Self> {
+        Arc::new(Self {
+            rows: rows
+                .into_iter()
+                .map(|(state, stance, direction, anims)| PlayerBodyAnimRow {
+                    state: state.into(),
+                    stance: stance.into(),
+                    direction: direction.into(),
+                    anims: anims.into_iter().map(Arc::from).collect(),
+                })
+                .collect(),
+            blend_time: blend_ms as f32 / 1000.0,
+        })
+    }
+
+    pub(crate) fn blend_time(&self) -> f32 {
+        self.blend_time
+    }
+
+    /// The row for `pose`: its states in order, each by stance and direction,
+    /// then any stance, then standing; a standing idle when none has anims.
+    pub(crate) fn select(&self, pose: PlayerBodyPose) -> Option<usize> {
+        let find = |state: &str, stance: &str, direction: &str| {
+            self.rows.iter().position(|row| {
+                &*row.state == state
+                    && &*row.stance == stance
+                    && &*row.direction == direction
+                    && !row.anims.is_empty()
+            })
+        };
+        let lookups = |state: &'static str| {
+            [
+                (state, pose.stance, pose.direction),
+                (state, pose.stance, ""),
+                (state, "", pose.direction),
+                (state, "", ""),
+            ]
+        };
+        pose.states
+            .iter()
+            .flat_map(|state| lookups(state))
+            .chain([("idle", "stand", ""), ("idle", "", "")])
+            .find_map(|(state, stance, direction)| find(state, stance, direction))
+    }
+
+    pub(crate) fn anim(&self, row: usize, draw: usize) -> Option<&Arc<str>> {
+        let anims = &self.rows.get(row)?.anims;
+        anims.get(draw % anims.len().max(1))
+    }
+}
+
+/// The pose of a live player from its stance, its anim move type and strafe,
+/// and whether it holds fire or reloads.
+pub(crate) fn player_body_pose(
+    ps: &PlayerState,
+    movetype: u8,
+    strafing: u8,
+    buttons: u32,
+) -> PlayerBodyPose {
+    let stance = player_body_stance(ps);
+    let name = anim_iw4::ANIM_MT_NAMES
+        .get(usize::from(movetype))
+        .copied()
+        .unwrap_or("");
+    let moving: &'static [&'static str] = if name == "SPRINT" {
+        &["sprint", "run", "walk", "idle"]
+    } else if name.starts_with("RUN") {
+        &["run", "walk", "idle"]
+    } else if name.starts_with("WALK") {
+        &["walk", "idle"]
+    } else {
+        &["idle"]
+    };
+    let direction = match (moving[0], strafing) {
+        ("idle", _) => "",
+        (_, 1) => "l",
+        (_, 2) => "r",
+        _ if name.ends_with("BK") => "b",
+        _ => "f",
+    };
+    let reloading = weapon_iw4::WeaponState::from_i32(ps.weaponstate_primary)
+        .is_ok_and(weapon_iw4::WeaponState::is_reload_family);
+    let firing = buttons & playerstate_iw4::buttons::ATTACK != 0;
+    // One leaf poses the whole body, so a moving player keeps its legs'
+    // anim while it fires or reloads.
+    let states: &'static [&'static str] = match moving[0] {
+        "idle" if reloading => &["reload", "idle"],
+        "idle" if firing => &["fire", "idle"],
+        _ => moving,
+    };
+    PlayerBodyPose {
+        states,
+        stance,
+        direction,
+    }
+}
+
+pub(crate) fn player_body_death_pose(ps: &PlayerState) -> PlayerBodyPose {
+    PlayerBodyPose {
+        states: &["death"],
+        stance: player_body_stance(ps),
+        direction: "",
+    }
+}
+
+fn player_body_stance(ps: &PlayerState) -> &'static str {
+    if ps.pm_flags & playerstate_iw4::pm_flags::PRONE != 0 {
+        "prone"
+    } else if ps.pm_flags & playerstate_iw4::pm_flags::CROUCH != 0 {
+        "crouch"
+    } else {
+        "stand"
+    }
+}

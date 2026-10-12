@@ -45,7 +45,12 @@ gap, not "ordinary blending".
 
 * `sim` — `player_anim_script.rs`, `mantle_xanim.rs`, `anim_script_gap.rs`:
   what animation the player is in, and it travels into the snapshot as
-  semantics, not as a tree;
+  semantics, not as a tree. Where the player anim tree, script and type list
+  are read from is a `PlayerAnimPaths` value the sources carry
+  (`PlayerAnimPaths::MULTIPLAYER` by default). A mode with its own player
+  body table (`PlayerBodyAnims`, survival's `player_anims.csv`) also picks a
+  row from the player state at the same place and plays it on an anim blend
+  per entity number; the corpse takes its player's blend over;
 * `assets` — `XAnimParts` → owning clips;
 * `render_frontend/adapters/anim/` + `render_anim` — the viewmodel (`fpv*.rs`,
   `viewmodel_controller.rs`), third person (`third_person.rs`, `remote_body.rs`),
@@ -66,5 +71,12 @@ animation, see [`GSC-RUNTIME.md`](GSC-RUNTIME.md)). `render_anim` resolves it li
 other tree: each leaf's tracks bind to the model's bones by name, tracks for bones the
 model lacks are skipped, and the leaves blend by weight. A leaf whose clip is not
 loaded on the client refuses the pose instead of falling back to the bind pose.
+
+Player bodies posed by a mode's body table are the other exception: their blend
+travels as `SnapshotMeta::player_bodies`, and `remote_body.rs` poses the body from
+it in place of the legs and torso tree, without the player controller (its stance
+offsets are made for the MP anims). The legs and torso anims are still written
+and still drive the authority's hit volumes. Only SP human anims belong in such
+a table, never `pb_*`: SP bodies have no `torso_stabilizer`.
 
 To watch it live: `IW4L_PERF=1` / [`PERF.md`](PERF.md).

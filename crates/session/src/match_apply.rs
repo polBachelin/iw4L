@@ -276,6 +276,7 @@ pub fn apply_prepared_match(
             impact_fx,
             mut authority_models,
             model_spawns,
+            player_body_anims,
         } = plan;
         let spawn_count = prepared_map.spawns.len();
 
@@ -466,6 +467,7 @@ pub fn apply_prepared_match(
             let events = map_event_items(&parsed.events, tree, &xanims.0);
             content.set_player_anim_script(Some(sim::PlayerAnimScript::from_tables(slots, events)));
         }
+        content.set_player_body_anims(player_body_anims);
         stage_resource(&mut install, xanims);
         stage_resource(&mut install, death);
         stage_resource(&mut install, player_anim_sources);
@@ -748,6 +750,7 @@ struct MatchInstallPlan {
     impact_fx: PreparedImpactFx,
     authority_models: AuthorityEntityModelInstall,
     model_spawns: Vec<(sim::ScriptModelId, [f32; 3], [f32; 3])>,
+    player_body_anims: Option<Arc<sim::PlayerBodyAnims>>,
 }
 
 /// A refusal of the whole request: the loading screen shows `error`, the swap
@@ -1018,11 +1021,19 @@ fn preflight_match_install(
         if !missing.is_empty() {
             diag::warn!(
                 Sim,
-                "survival actor anims not loaded, their state's first row plays instead: {}",
+                "survival actor and player anims not loaded, their state's first row plays instead: {}",
                 missing.join(" ")
             );
         }
     }
+    let player_body_anims = (kind == gamemode_iw4::GameModeKind::Survival).then(|| {
+        sim::PlayerBodyAnims::new(
+            assets::survival_player_anims(&sources.0),
+            assets::survival_setting("player_blend_ms")
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(0),
+        )
+    });
     let gametype = kind
         .script_tokens()
         .iter()
@@ -1266,6 +1277,7 @@ fn preflight_match_install(
         impact_fx,
         authority_models,
         model_spawns,
+        player_body_anims,
     })
 }
 

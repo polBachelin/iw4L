@@ -16,10 +16,11 @@ const HEAVIES_TABLE: &str = "survival/heavies.csv";
 const GRANTS_TABLE: &str = "survival/grants.csv";
 const PLAYER_DATA_TABLE: &str = "survival/playerdata.csv";
 const ACTOR_ANIMS_TABLE: &str = "survival/actor_anims.csv";
+const PLAYER_ANIMS_TABLE: &str = "survival/player_anims.csv";
 
 /// The tables survival authors itself, beside the MW3 tables it reads from
 /// the user's zones: only what those tables lack.
-const TABLES: [(&str, &str); 11] = [
+const TABLES: [(&str, &str); 12] = [
     (
         WEAPON_ALIASES_TABLE,
         include_str!("survival/weapon_aliases.csv"),
@@ -34,6 +35,10 @@ const TABLES: [(&str, &str); 11] = [
     (GRANTS_TABLE, include_str!("survival/grants.csv")),
     (PLAYER_DATA_TABLE, include_str!("survival/playerdata.csv")),
     (ACTOR_ANIMS_TABLE, include_str!("survival/actor_anims.csv")),
+    (
+        PLAYER_ANIMS_TABLE,
+        include_str!("survival/player_anims.csv"),
+    ),
 ];
 
 const MAP_TABLES: [(&str, &str); 1] = [("mp_paris", include_str!("survival/maps/mp_paris.csv"))];
@@ -241,8 +246,9 @@ mod fill_in_column {
     pub(super) const BURST: usize = 6;
 }
 
-/// `ACTOR_ANIMS_TABLE`: anim set, state, stance (empty for any), direction
-/// (empty for any), anim names (space separated, one drawn per play).
+/// `ACTOR_ANIMS_TABLE` and `PLAYER_ANIMS_TABLE`: state, stance (empty for
+/// any), direction (empty for any), anim names (space separated, one drawn
+/// per play).
 mod actor_anim_column {
     pub(super) const SET: usize = 0;
     pub(super) const STATE: usize = 1;
@@ -265,6 +271,11 @@ const ACTOR_ANIM_SETS: [(&str, &[&str]); 2] = [
 ];
 const ACTOR_STANCES: [&str; 2] = ["stand", "crouch"];
 const ACTOR_DIRECTIONS: [&str; 4] = ["f", "b", "l", "r"];
+
+/// The states and stances a player's third-person body is picked by; its
+/// directions are the actor's.
+const PLAYER_ANIM_STATES: [&str; 7] = ["idle", "walk", "run", "sprint", "fire", "reload", "death"];
+const PLAYER_STANCES: [&str; 3] = ["stand", "crouch", "prone"];
 
 /// Settings rows the actor script reads as whole numbers, and those of them
 /// that are percents.
@@ -524,23 +535,34 @@ pub fn survival_pick_weapons(
     picks
 }
 
-/// Narrows every `ACTOR_ANIMS_TABLE` anim cell to the anims `is_loaded`
-/// knows. A cell left with none takes its set's state's first row, so the actor
-/// script plays only loaded anims; a state whose first row has none plays
-/// nothing. Returns the anims missing, each once.
+/// Narrows every anim cell of `ACTOR_ANIMS_TABLE` and `PLAYER_ANIMS_TABLE`
+/// to the anims `is_loaded` knows. A cell left with none takes its state's
+/// first row, so actors and players play only loaded anims; a state whose
+/// first row has none plays nothing. Returns the anims missing, each once.
 pub fn survival_pick_anims(
     scripts: &mut crate::ScriptSources,
     is_loaded: impl Fn(&str) -> bool,
 ) -> Vec<String> {
-    let Some(anims) = scripts.table_mut(ACTOR_ANIMS_TABLE) else {
-        return Vec::new();
-    };
-    let columns = anims.columns.max(1);
-    if columns <= actor_anim_column::ANIMS {
-        return Vec::new();
-    }
     let mut missing = std::collections::BTreeSet::new();
-    let mut first: BTreeMap<(String, String), String> = BTreeMap::new();
+    for name in [ACTOR_ANIMS_TABLE, PLAYER_ANIMS_TABLE] {
+        if let Some(anims) = scripts.table_mut(name) {
+            missing.extend(pick_table_anims(anims, &is_loaded));
+        }
+    }
+    missing.into_iter().collect()
+}
+
+fn pick_table_anims(
+    anims: &mut ScriptTable,
+    is_loaded: &impl Fn(&str) -> bool,
+) -> std::collections::BTreeSet<String> {
+    let columns = anims.columns.max(1);
+    let mut missing = std::collections::BTreeSet::new();
+    if columns <= actor_anim_column::ANIMS {
+        return missing;
+    }
+    let mut first: BTreeMap<String, String> = BTreeMap::new();
+    let mut missing = std::collections::BTreeSet::new();
     for row in anims.cells.chunks_exact_mut(columns).take(anims.rows) {
         let state = (
             row[actor_anim_column::SET].clone(),
@@ -560,7 +582,33 @@ pub fn survival_pick_anims(
         }
         *cell = narrowed;
     }
-    missing.into_iter().collect()
+    missing
+}
+
+/// The rows of `PLAYER_ANIMS_TABLE` as the match narrowed them: state,
+/// stance (empty for any), direction (empty for any) and the anims, one
+/// drawn per play.
+pub fn survival_player_anims(
+    scripts: &crate::ScriptSources,
+) -> Vec<(String, String, String, Vec<String>)> {
+    use actor_anim_column as c;
+    let Some(anims) = scripts.table(PLAYER_ANIMS_TABLE) else {
+        return Vec::new();
+    };
+    anims
+        .rows()
+        .map(|row| {
+            (
+                cell(row, c::STATE).to_owned(),
+                cell(row, c::STANCE).to_owned(),
+                cell(row, c::DIRECTION).to_owned(),
+                cell(row, c::ANIMS)
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// Holds survival's own tables to the data loaded with the match: every
@@ -697,6 +745,7 @@ pub fn survival_data_check(
     check_armory_settings(&mut gaps)?;
     check_weapon_slots(&mut gaps)?;
     check_actor(table(ACTOR_ANIMS_TABLE)?, &mut gaps)?;
+    check_player_anims(table(PLAYER_ANIMS_TABLE)?, characters, &mut gaps)?;
     let def_name = required_setting("player_data_def")?;
     let schema = schemas
         .get(&def_name.to_ascii_lowercase())
@@ -1474,6 +1523,65 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
     if required_setting("actor_explosive_means")?.is_empty() {
         gaps.push(format!(
             "{SETTINGS_TABLE}: `actor_explosive_means` names nothing"
+        ));
+    }
+    Ok(())
+}
+
+/// Holds `PLAYER_ANIMS_TABLE` and the `player_*` settings to what the
+/// player's third-person body is picked and drawn by: every row a state,
+/// stance and direction it picks by, `idle` standing covered, a character of
+/// `CHARACTERS_TABLE` and a whole blend time. Anims are not checked: a missing
+/// one falls back to its state's first row.
+fn check_player_anims(
+    anims: &ScriptTable,
+    characters: &ScriptTable,
+    gaps: &mut Vec<String>,
+) -> Result<(), String> {
+    use actor_anim_column as c;
+    for row in anims.rows() {
+        let (state, stance, direction) = (
+            cell(row, c::STATE),
+            cell(row, c::STANCE),
+            cell(row, c::DIRECTION),
+        );
+        if !PLAYER_ANIM_STATES.contains(&state) {
+            gaps.push(format!(
+                "{PLAYER_ANIMS_TABLE}: `{state}` is no player state ({})",
+                PLAYER_ANIM_STATES.join(", ")
+            ));
+        }
+        if !stance.is_empty() && !PLAYER_STANCES.contains(&stance) {
+            gaps.push(format!(
+                "{PLAYER_ANIMS_TABLE}: `{state}` stance `{stance}` is none of {}",
+                PLAYER_STANCES.join(", ")
+            ));
+        }
+        if !direction.is_empty() && !ACTOR_DIRECTIONS.contains(&direction) {
+            gaps.push(format!(
+                "{PLAYER_ANIMS_TABLE}: `{state}` direction `{direction}` is none of {}",
+                ACTOR_DIRECTIONS.join(", ")
+            ));
+        }
+    }
+    if !anims
+        .rows()
+        .any(|row| cell(row, c::STATE) == "idle" && matches!(cell(row, c::STANCE), "" | "stand"))
+    {
+        gaps.push(format!(
+            "{PLAYER_ANIMS_TABLE}: no `idle` row for a standing player"
+        ));
+    }
+    let character = required_setting("player_character")?;
+    if !characters.rows().any(|row| cell(row, 0) == character) {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `player_character` `{character}` is no row of {CHARACTERS_TABLE}"
+        ));
+    }
+    let blend = required_setting("player_blend_ms")?;
+    if blend.parse::<u32>().is_err() {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `player_blend_ms` is not a whole number: `{blend}`"
         ));
     }
     Ok(())

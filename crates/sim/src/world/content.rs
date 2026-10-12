@@ -1,4 +1,4 @@
-use crate::player_anim_script::PlayerAnimScript;
+use crate::player_anim_script::{PlayerAnimScript, PlayerBodyAnims};
 use std::sync::Arc;
 
 pub(crate) type Notetracks = Arc<[(Arc<str>, f32)]>;
@@ -176,6 +176,7 @@ struct ContentData {
     map_custom: std::collections::BTreeMap<String, String>,
     shocks: std::collections::BTreeMap<String, hud_iw4::ShockParams>,
     player_anim_script: Option<Arc<PlayerAnimScript>>,
+    player_body_anims: Option<Arc<PlayerBodyAnims>>,
     class_catalog: Arc<crate::ClassCatalog>,
 }
 
@@ -217,6 +218,7 @@ impl SimContentBuilder {
                 map_custom: Default::default(),
                 shocks: Default::default(),
                 player_anim_script: Default::default(),
+                player_body_anims: Default::default(),
                 class_catalog: Default::default(),
             },
         }
@@ -285,6 +287,12 @@ impl SimContentBuilder {
 
     pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
         self.data.player_anim_script = script;
+    }
+
+    /// A mode's own table for players' third-person bodies; without one they
+    /// are posed by the playeranim script alone.
+    pub fn set_player_body_anims(&mut self, anims: Option<Arc<PlayerBodyAnims>>) {
+        self.data.player_body_anims = anims;
     }
 
     /// The class catalog the match's classes name their perks, deathstreak,
@@ -451,6 +459,9 @@ impl SimContent {
     }
     pub(super) fn player_anim_script(&self) -> &Option<Arc<PlayerAnimScript>> {
         &self.data.player_anim_script
+    }
+    pub(super) fn player_body_anims(&self) -> &Option<Arc<PlayerBodyAnims>> {
+        &self.data.player_body_anims
     }
     pub(super) fn class_catalog(&self) -> &crate::ClassCatalog {
         &self.data.class_catalog

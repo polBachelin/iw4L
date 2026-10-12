@@ -787,14 +787,19 @@ archetypetrait( archetype )
 }
 
 // One of the archetype's characters (archetypes.csv c2, rows of
-// characters.csv) at random: its body, one of its heads at random and its
-// hat, "" for no head or hat. Undefined when the archetype names none.
+// characters.csv) at random. Undefined when the archetype names none.
 archetypecharacter( archetype )
 {
 	ids = strtok( tablelookup( "survival/archetypes.csv", 0, archetype, 2 ), " " );
 	if ( ids.size == 0 )
 		return undefined;
-	id = ids[ randomint( ids.size ) ];
+	return charactermodels( ids[ randomint( ids.size ) ] );
+}
+
+// The characters.csv row `id`: its body, one of its heads at random and its
+// hat, "" for no head or hat.
+charactermodels( id )
+{
 	table = "survival/characters.csv";
 	character = spawnstruct();
 	character.body = tablelookup( table, 0, id, 1 );
@@ -980,6 +985,8 @@ spawnplayer()
 	self.maxhealth = int( setting( "max_health" ) );
 	self.health = self.maxhealth;
 	self spawn( spawnpoint.origin, spawnpoint.angles );
+	character = charactermodels( setting( "player_character" ) );
+	self setcharacter( character.body, character.head, character.hat );
 	self giveloadout();
 	self notify( "spawned_player" );
 	level notify( "player_spawned", self );

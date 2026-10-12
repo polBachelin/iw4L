@@ -762,8 +762,18 @@ pub(crate) fn play_death(
         ps.pm_type = playerstate_iw4::PM_TYPE_DEAD;
     }
     world.set_anim_event_seed(seed);
+    pose_dead_body(world, victim, &self_ps);
     world.client_meta_mut(victim).look_at_killer_yaw = yaw;
     true
+}
+
+fn pose_dead_body(world: &mut FrameWorld, victim: ClientId, ps: &playerstate_iw4::PlayerState) {
+    if let Ok(entnum) = i32::try_from(victim.0) {
+        world.pose_player_body(
+            entnum,
+            crate::player_anim_script::player_body_death_pose(ps),
+        );
+    }
 }
 
 pub(crate) fn force_death_anim(
@@ -829,6 +839,7 @@ pub(crate) fn force_death_anim(
         let _ = script.apply_event(ps, anim_iw4::ANIM_ET_DEATH, &conds, &mut seed, true);
     }
     world.set_anim_event_seed(seed);
+    pose_dead_body(world, victim, &self_ps);
 }
 
 fn anim_script_damagetype(

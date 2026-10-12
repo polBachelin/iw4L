@@ -56,6 +56,29 @@ impl AnimBlend {
         }
     }
 
+    /// A blend no script reaches: it names no anim tree.
+    pub(crate) fn unscripted() -> Self {
+        Self::new(Arc::from(""))
+    }
+
+    /// Ramps `anim` to full weight over `blend_time` and every other leaf to
+    /// none, raising no notetracks.
+    pub(crate) fn play(&mut self, anim: Arc<str>, looping: bool, frequency: f32, blend_time: f32) {
+        let clip = Clip {
+            looping,
+            frequency,
+            notetracks: Arc::from([]),
+        };
+        let goal = Goal {
+            weight: 1.0,
+            blend_time,
+            rate: 1.0,
+            flag: None,
+            knob: true,
+        };
+        self.set(anim, clip, goal);
+    }
+
     fn leaf_mut(&mut self, anim: &str) -> Option<&mut Leaf> {
         self.leaves.iter_mut().find(|leaf| &*leaf.anim == anim)
     }
@@ -126,7 +149,7 @@ impl AnimBlend {
         }
     }
 
-    fn advance(&mut self, dt: f32, fired: &mut Vec<(Arc<str>, Arc<str>)>) {
+    pub(crate) fn advance(&mut self, dt: f32, fired: &mut Vec<(Arc<str>, Arc<str>)>) {
         if self.leaves.is_empty() {
             return;
         }

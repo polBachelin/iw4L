@@ -449,6 +449,7 @@ pub fn encode_snapshot_meta_body(
     encode_hud_strings(out, &meta.hud_strings);
     encode_rng_debug(out, &meta.rng);
     encode_characters(out, &meta.characters);
+    encode_player_bodies(out, &meta.player_bodies);
     sizes.aliases = section_span(out, mark);
     mark = out.len();
     encode_entity_dobjs(out, &meta.entity_dobjs);
@@ -533,6 +534,7 @@ pub(super) fn decode_snapshot_meta_body(
     let hud_strings = decode_hud_strings(input)?;
     let rng = decode_rng_debug(input)?;
     let characters = decode_characters(input)?;
+    let player_bodies = decode_player_bodies(input)?;
     remaining_after[2] = input.remaining();
     let entity_dobjs = decode_entity_dobjs(input)?;
     remaining_after[3] = input.remaining();
@@ -584,6 +586,7 @@ pub(super) fn decode_snapshot_meta_body(
             item_ammo,
             item_pickups,
             characters,
+            player_bodies,
         },
         world_wire: wire,
         world_update,
@@ -795,6 +798,27 @@ fn decode_characters(
         characters.push((entnum, sim::CharacterSelection { body, head, hat }));
     }
     Ok(characters)
+}
+
+fn encode_player_bodies(out: &mut WireWriter, bodies: &[(i32, xmodel_runtime::XAnimTreeSnapshot)]) {
+    debug_assert!(bodies.len() <= u16::MAX as usize);
+    out.put_u16(bodies.len() as u16);
+    for (entnum, tree) in bodies {
+        out.put_i32(*entnum);
+        encode_anim_tree(out, tree);
+    }
+}
+
+fn decode_player_bodies(
+    input: &mut WireReader<'_>,
+) -> Result<Vec<(i32, xmodel_runtime::XAnimTreeSnapshot)>, WireError> {
+    let count = input.get_u16()? as usize;
+    let mut bodies = Vec::with_capacity(count.min(64));
+    for _ in 0..count {
+        let entnum = input.get_i32()?;
+        bodies.push((entnum, decode_anim_tree(input)?));
+    }
+    Ok(bodies)
 }
 
 fn decode_sound_alias_cs(input: &mut WireReader<'_>) -> Result<Vec<(u8, String)>, WireError> {
@@ -2699,32 +2723,83 @@ fn encode_entity_dobjs(
             None => out.put_u8(0),
             Some(tree) => {
                 out.put_u8(1);
-                out.put_u32(tree.definition_revision);
-                out.put_u32(tree.state_revision);
-                debug_assert!(tree.nodes.len() <= u16::MAX as usize);
-                out.put_u16(tree.nodes.len() as u16);
-                for node in &tree.nodes {
-                    out.put_u16(node.parent.map_or(u16::MAX, |id| id.0));
-                    out.put_u8(match node.kind {
-                        xmodel_runtime::XAnimSemanticNodeKind::Blend => 0,
-                        xmodel_runtime::XAnimSemanticNodeKind::Additive => 1,
-                        xmodel_runtime::XAnimSemanticNodeKind::Leaf => 2,
-                    });
-                    put_optional_text(out, node.clip.as_deref());
-                    put_optional_part_bits(out, node.parts);
-                    let state = node.state;
-                    out.put_f32(state.time);
-                    out.put_f32(state.old_time);
-                    out.put_i32(i32::from(state.cycle_count));
-                    out.put_i32(i32::from(state.old_cycle_count));
-                    out.put_f32(state.goal_time);
-                    out.put_f32(state.goal_weight);
-                    out.put_f32(state.weight);
-                    out.put_f32(state.rate);
-                }
+                encode_anim_tree(out, tree);
             }
         }
     }
+}
+
+fn encode_anim_tree(out: &mut WireWriter, tree: &xmodel_runtime::XAnimTreeSnapshot) {
+    out.put_u32(tree.definition_revision);
+    out.put_u32(tree.state_revision);
+    debug_assert!(tree.nodes.len() <= u16::MAX as usize);
+    out.put_u16(tree.nodes.len() as u16);
+    for node in &tree.nodes {
+        out.put_u16(node.parent.map_or(u16::MAX, |id| id.0));
+        out.put_u8(match node.kind {
+            xmodel_runtime::XAnimSemanticNodeKind::Blend => 0,
+            xmodel_runtime::XAnimSemanticNodeKind::Additive => 1,
+            xmodel_runtime::XAnimSemanticNodeKind::Leaf => 2,
+        });
+        put_optional_text(out, node.clip.as_deref());
+        put_optional_part_bits(out, node.parts);
+        let state = node.state;
+        out.put_f32(state.time);
+        out.put_f32(state.old_time);
+        out.put_i32(i32::from(state.cycle_count));
+        out.put_i32(i32::from(state.old_cycle_count));
+        out.put_f32(state.goal_time);
+        out.put_f32(state.goal_weight);
+        out.put_f32(state.weight);
+        out.put_f32(state.rate);
+    }
+}
+
+fn decode_anim_tree(
+    input: &mut WireReader<'_>,
+) -> Result<xmodel_runtime::XAnimTreeSnapshot, WireError> {
+    let definition_revision = input.get_u32()?;
+    let state_revision = input.get_u32()?;
+    let node_count = input.get_u16()? as usize;
+    let mut nodes = Vec::with_capacity(node_count.min(256));
+    for _ in 0..node_count {
+        let parent = input.get_u16()?;
+        let kind = match input.get_u8()? {
+            0 => xmodel_runtime::XAnimSemanticNodeKind::Blend,
+            1 => xmodel_runtime::XAnimSemanticNodeKind::Additive,
+            2 => xmodel_runtime::XAnimSemanticNodeKind::Leaf,
+            _ => return Err(WireError::Malformed("unknown XAnim node tag")),
+        };
+        let clip = get_optional_text(input)?;
+        let parts = get_optional_part_bits(input)?;
+        let time = input.get_f32()?;
+        let old_time = input.get_f32()?;
+        let cycle_count = i16::try_from(input.get_i32()?)
+            .map_err(|_| WireError::Malformed("XAnim cycle count overflow"))?;
+        let old_cycle_count = i16::try_from(input.get_i32()?)
+            .map_err(|_| WireError::Malformed("XAnim old cycle count overflow"))?;
+        nodes.push(xmodel_runtime::XAnimSemanticNode {
+            parent: (parent != u16::MAX).then_some(xmodel_runtime::XAnimNodeId(parent)),
+            kind,
+            clip,
+            parts,
+            state: xmodel_runtime::XAnimNodeState {
+                time,
+                old_time,
+                cycle_count,
+                old_cycle_count,
+                goal_time: input.get_f32()?,
+                goal_weight: input.get_f32()?,
+                weight: input.get_f32()?,
+                rate: input.get_f32()?,
+            },
+        });
+    }
+    Ok(xmodel_runtime::XAnimTreeSnapshot {
+        definition_revision,
+        state_revision,
+        nodes,
+    })
 }
 
 fn decode_entity_dobjs(
@@ -2760,50 +2835,7 @@ fn decode_entity_dobjs(
         }
         let tree = match input.get_u8()? {
             0 => None,
-            1 => {
-                let definition_revision = input.get_u32()?;
-                let state_revision = input.get_u32()?;
-                let node_count = input.get_u16()? as usize;
-                let mut nodes = Vec::with_capacity(node_count.min(256));
-                for _ in 0..node_count {
-                    let parent = input.get_u16()?;
-                    let kind = match input.get_u8()? {
-                        0 => xmodel_runtime::XAnimSemanticNodeKind::Blend,
-                        1 => xmodel_runtime::XAnimSemanticNodeKind::Additive,
-                        2 => xmodel_runtime::XAnimSemanticNodeKind::Leaf,
-                        _ => return Err(WireError::Malformed("unknown XAnim node tag")),
-                    };
-                    let clip = get_optional_text(input)?;
-                    let parts = get_optional_part_bits(input)?;
-                    let time = input.get_f32()?;
-                    let old_time = input.get_f32()?;
-                    let cycle_count = i16::try_from(input.get_i32()?)
-                        .map_err(|_| WireError::Malformed("XAnim cycle count overflow"))?;
-                    let old_cycle_count = i16::try_from(input.get_i32()?)
-                        .map_err(|_| WireError::Malformed("XAnim old cycle count overflow"))?;
-                    nodes.push(xmodel_runtime::XAnimSemanticNode {
-                        parent: (parent != u16::MAX).then_some(xmodel_runtime::XAnimNodeId(parent)),
-                        kind,
-                        clip,
-                        parts,
-                        state: xmodel_runtime::XAnimNodeState {
-                            time,
-                            old_time,
-                            cycle_count,
-                            old_cycle_count,
-                            goal_time: input.get_f32()?,
-                            goal_weight: input.get_f32()?,
-                            weight: input.get_f32()?,
-                            rate: input.get_f32()?,
-                        },
-                    });
-                }
-                Some(xmodel_runtime::XAnimTreeSnapshot {
-                    definition_revision,
-                    state_revision,
-                    nodes,
-                })
-            }
+            1 => Some(decode_anim_tree(input)?),
             _ => return Err(WireError::Malformed("unknown optional XAnim tree tag")),
         };
         rows.push((

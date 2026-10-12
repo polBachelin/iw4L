@@ -52,7 +52,7 @@ pub use session_load::{
 };
 pub use survival::{
     survival_base_zones, survival_data_check, survival_mode_zones, survival_pick_anims,
-    survival_pick_weapons, survival_setting, survival_team_rules,
+    survival_pick_weapons, survival_player_anims, survival_setting, survival_team_rules,
 };
 
 pub mod image_handles;

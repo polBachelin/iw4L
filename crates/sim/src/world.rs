@@ -122,6 +122,15 @@ pub(crate) struct PredictionRemoteBody {
     pub life_sequence: crate::LifeSequence,
 }
 
+/// A player's or corpse's third-person body as the mode's player body table
+/// poses it: the blend, the table row it plays and how many anims it drew.
+#[derive(Clone, Debug)]
+struct PlayerBodyAnim {
+    blend: crate::script::host::script_anim::AnimBlend,
+    row: Option<usize>,
+    plays: usize,
+}
+
 #[derive(Component, Clone, Debug)]
 pub struct SimState {
     content: Arc<SimContent>,
@@ -203,6 +212,8 @@ pub struct SimState {
     hud_string_cs: crate::HudStringCs,
 
     characters: std::collections::BTreeMap<i32, crate::CharacterSelection>,
+
+    player_body_anims: std::collections::BTreeMap<i32, PlayerBodyAnim>,
 
     num_kills: u32,
 
@@ -290,6 +301,7 @@ impl Default for SimState {
             hud_material_cs: crate::HudMaterialCs::default(),
             hud_string_cs: crate::HudStringCs::default(),
             characters: Default::default(),
+            player_body_anims: Default::default(),
             num_kills: 0,
             recent_kills: Vec::new(),
             weapon_notes: Vec::new(),
@@ -360,6 +372,7 @@ impl SimState {
         self.hud_material_cs = crate::HudMaterialCs::default();
         self.hud_string_cs = crate::HudStringCs::default();
         self.characters.clear();
+        self.player_body_anims.clear();
         self.bind_required_hud_materials();
         self.num_kills = 0;
         self.recent_kills.clear();
@@ -1094,6 +1107,85 @@ impl SimState {
         self.anim_command_buttons.remove(&id);
         if let Ok(entnum) = i32::try_from(id.0) {
             self.characters.remove(&entnum);
+            self.player_body_anims.remove(&entnum);
+        }
+    }
+
+    /// Plays the row of the mode's player body table `pose` picks on the
+    /// body of `entnum`, unless that row already plays there. Without such a
+    /// table the body is the playeranim script's alone.
+    pub(crate) fn pose_player_body(
+        &mut self,
+        entnum: i32,
+        pose: crate::player_anim_script::PlayerBodyPose,
+    ) {
+        let Some(table) = self.content.player_body_anims().clone() else {
+            return;
+        };
+        let Some(row) = table.select(pose) else {
+            return;
+        };
+        let body = self
+            .player_body_anims
+            .entry(entnum)
+            .or_insert_with(|| PlayerBodyAnim {
+                blend: crate::script::host::script_anim::AnimBlend::unscripted(),
+                row: None,
+                plays: usize::try_from(entnum).unwrap_or(0),
+            });
+        if body.row == Some(row) {
+            return;
+        }
+        let Some(anim) = table.anim(row, body.plays).cloned() else {
+            return;
+        };
+        let Some(clip) = self
+            .content
+            .script_model_anims()
+            .get(&anim.to_ascii_lowercase())
+            .copied()
+        else {
+            return;
+        };
+        body.plays = body.plays.wrapping_add(1);
+        body.row = Some(row);
+        body.blend
+            .play(anim, clip.looping, clip.frequency, table.blend_time());
+    }
+
+    /// Hands the body anims of `from` to the corpse `to`, which keeps
+    /// playing them where they were.
+    pub(crate) fn copy_player_body(&mut self, from: i32, to: i32) {
+        match self.player_body_anims.get(&from).cloned() {
+            Some(body) => self.player_body_anims.insert(to, body),
+            None => self.player_body_anims.remove(&to),
+        };
+    }
+
+    /// Advances every body by `dt` seconds, dropping those of clients gone
+    /// and of corpses taken back.
+    pub(crate) fn advance_player_bodies(&mut self, dt: f32) {
+        if self.player_body_anims.is_empty() {
+            return;
+        }
+        let corpses: Vec<i32> = self
+            .corpses
+            .slots
+            .iter()
+            .filter(|slot| slot.occupied)
+            .map(|slot| slot.entnum)
+            .collect();
+        let players: Vec<i32> = self
+            .clients
+            .iter()
+            .filter_map(|(id, _)| i32::try_from(id.0).ok())
+            .collect();
+        self.player_body_anims
+            .retain(|entnum, _| players.contains(entnum) || corpses.contains(entnum));
+        let mut quiet = Vec::new();
+        for body in self.player_body_anims.values_mut() {
+            body.blend.advance(dt, &mut quiet);
+            quiet.clear();
         }
     }
 
@@ -2458,6 +2550,11 @@ impl SimState {
                     .characters
                     .iter()
                     .map(|(entnum, selection)| (*entnum, selection.clone()))
+                    .collect(),
+                player_bodies: self
+                    .player_body_anims
+                    .iter()
+                    .filter_map(|(entnum, body)| Some((*entnum, body.blend.snapshot()?)))
                     .collect(),
             },
         }
