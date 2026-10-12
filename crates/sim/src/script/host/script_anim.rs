@@ -281,9 +281,11 @@ pub(crate) fn length(world: &mut World, name: &str) -> Option<f32> {
     (frequency > 0.0).then(|| 1.0 / frequency)
 }
 
-fn animation(args: &[Value], index: usize) -> Result<(Arc<str>, Arc<str>), String> {
+/// An animation literal, or an animation name the entity's own tree resolves.
+fn animation(args: &[Value], index: usize) -> Result<(Option<Arc<str>>, Arc<str>), String> {
     match arg(args, index)? {
-        Value::Animation { tree, name } => Ok((Arc::clone(tree), Arc::clone(name))),
+        Value::Animation { tree, name } => Ok((Some(Arc::clone(tree)), Arc::clone(name))),
+        Value::String(name) => Ok((None, name.to_ascii_lowercase().into())),
         other => Err(format!(
             "parameter {} is {}, not an animation",
             index + 1,
@@ -337,7 +339,7 @@ fn set_anim(
     if !goal.weight.is_finite() || !goal.blend_time.is_finite() || !goal.rate.is_finite() {
         return Err("animation weight, blend time and rate must be finite".into());
     }
-    with_blend(world, receiver, Some(&tree), |_| ())?;
+    with_blend(world, receiver, tree.as_deref(), |_| ())?;
     let clip = clip(world, &name)
         .ok_or_else(|| format!("animation '{name}' is not loaded in the simulation"))?;
     with_blend(world, receiver, None, |blend| blend.set(name, clip, goal))?;
@@ -386,7 +388,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             return Err("blend time must be finite".into());
         }
         let leaf = clip(world, &name).is_some();
-        with_blend(world, receiver, Some(&tree), |blend| {
+        with_blend(world, receiver, tree.as_deref(), |blend| {
             blend.clear(leaf.then_some(&*name), blend_time)
         })?;
         Ok(Value::Undefined)
@@ -397,14 +399,14 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         if !(0.0..=1.0).contains(&time) {
             return Err(format!("animation time {time} is not between 0 and 1"));
         }
-        with_blend(world, receiver, Some(&tree), |blend| {
+        with_blend(world, receiver, tree.as_deref(), |blend| {
             blend.set_time(&name, time)
         })?;
         Ok(Value::Undefined)
     });
     registry.register(Method, "getanimtime", |world, receiver, args| {
         let (tree, name) = animation(args, 0)?;
-        with_blend(world, receiver, Some(&tree), |blend| {
+        with_blend(world, receiver, tree.as_deref(), |blend| {
             Value::Float(blend.time(&name))
         })
     });

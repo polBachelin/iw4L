@@ -1,0 +1,22 @@
+idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
+idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
+run,stand,,run_lowready_f
+run,crouch,,crouch_fastwalk_f
+walk,stand,,walk_lowready_f
+walk,crouch,,crouch_fastwalk_f
+aim,stand,,exposed_aim_5
+aim,crouch,,exposed_crouch_aim exposed_crouch_aim_5
+fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
+fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
+pain,stand,b,exposed_pain_face exposed_pain_groin exposed_pain_right_arm exposed_pain_left_arm
+pain,stand,f,exposed_pain_back
+pain,stand,,exposed_pain_face exposed_pain_groin
+pain,crouch,,exposed_crouch_pain_chest exposed_crouch_pain_headsnap exposed_crouch_pain_flinch
+death,stand,b,death_stand_sniper_chest1 exposed_death_headshot exposed_death_neckgrab exposed_death_falltoknees
+death,stand,f,exposed_death_twist exposed_death_falltoknees
+death,stand,,death_stand_sniper_chest1 exposed_death_groin
+death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
+explode,,f,death_explosion_stand_f_v1
+explode,,b,death_explosion_stand_b_v1
+explode,,l,death_explosion_stand_l_v1
+explode,,r,death_explosion_stand_r_v1

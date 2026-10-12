@@ -107,6 +107,7 @@ onstartgametype()
 	level.armoryunlocked = [];
 	readplacements();
 	readchallenges();
+	level.actorthink = maps\mp\_survival_actor::actor_think;
 	level.unsimulated = strtok( setting( "unsimulated_archetypes" ), " " );
 	level.humans = [];
 	level.friendlies = 0;

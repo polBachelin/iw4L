@@ -1010,6 +1010,18 @@ fn preflight_match_install(
             weapons.registry().resolve_script_name(name).is_some()
         });
         diag::info!(Sim, "survival weapons: {}", picks.join(" "));
+        let missing = assets::survival_pick_anims(&mut sources.0, |name| {
+            prepared_map
+                .namespace
+                .is_some_and(|namespace| xanims.0.get(namespace, name).is_some())
+        });
+        if !missing.is_empty() {
+            diag::warn!(
+                Sim,
+                "survival actor anims not loaded, their state's first row plays instead: {}",
+                missing.join(" ")
+            );
+        }
     }
     let gametype = kind
         .script_tokens()
