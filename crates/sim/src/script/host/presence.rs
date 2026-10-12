@@ -20,6 +20,7 @@ pub(crate) struct Shown {
 
 struct Wanted {
     collision_only: bool,
+    hit_volumes: bool,
     object: u64,
     presence: ScriptModelId,
     origin: [f32; 3],
@@ -373,6 +374,7 @@ fn collect_wanted(world: &mut World) -> Vec<Wanted> {
         });
         let attachments = entity.attachments.clone();
         let collision_only = matches!(entity.kind, EntityKind::Missile(_));
+        let hit_volumes = entity.kind == EntityKind::Actor;
         let unchanged = part_ops.is_empty()
             && anim_op.is_none()
             && anim_tree.is_none()
@@ -391,6 +393,7 @@ fn collect_wanted(world: &mut World) -> Vec<Wanted> {
         }
         wanted.push(Wanted {
             collision_only,
+            hit_volumes,
             object,
             presence,
             origin,
@@ -418,6 +421,7 @@ fn present_model(frame: &mut FrameWorld, want: &Wanted) {
         .anim_op
         .as_ref()
         .and_then(|op| op.as_deref().and_then(|clip| frame.script_model_anim(clip)));
+    let clips = frame.script_anim_clips();
     let Some(row) = frame.collision_owner_mut(want.presence) else {
         return;
     };
@@ -441,6 +445,7 @@ fn present_model(frame: &mut FrameWorld, want: &Wanted) {
     let Some(dobj) = row.dobj.as_mut() else {
         return;
     };
+    dobj.hit_volumes = want.hit_volumes;
     let attachments: Vec<(&str, &str)> = want
         .attachments
         .iter()
@@ -461,7 +466,7 @@ fn present_model(frame: &mut FrameWorld, want: &Wanted) {
         Some(None) => dobj.clear_script_model_play_anim(),
         None => {
             if let Some(tree) = &want.anim_tree {
-                dobj.set_script_anim_tree(tree.clone());
+                dobj.set_script_anim_tree(tree.clone(), |name| clips.clip(name));
             }
         }
     }

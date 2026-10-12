@@ -55,6 +55,7 @@ impl Default for NativeRegistry {
         super::physics::register(&mut registry);
         natives::t5::register(&mut registry);
         natives::survival::register(&mut registry);
+        natives::actor::register(&mut registry);
         super::script_anim::register(&mut registry);
         super::controls::register(&mut registry);
         super::client_effects::register(&mut registry);

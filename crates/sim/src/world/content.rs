@@ -3,6 +3,25 @@ use std::sync::Arc;
 
 pub(crate) type Notetracks = Arc<[(Arc<str>, f32)]>;
 
+type ClipResolver = dyn Fn(&str) -> Option<Arc<xmodel_runtime::AnimClip>> + Send + Sync;
+
+#[derive(Clone, Default)]
+pub(crate) struct ScriptAnimClips(Option<Arc<ClipResolver>>);
+
+impl ScriptAnimClips {
+    pub(crate) fn clip(&self, name: &str) -> Option<Arc<xmodel_runtime::AnimClip>> {
+        self.0.as_ref()?(name)
+    }
+}
+
+impl std::fmt::Debug for ScriptAnimClips {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ScriptAnimClips")
+            .field(&self.0.is_some())
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SimBrush {
     pub planes: Vec<[f32; 4]>,
@@ -129,6 +148,7 @@ struct ContentData {
     player_body_branches: Option<xmodel_runtime::PlayerBodyBranches>,
     script_model_anims: std::collections::BTreeMap<String, crate::ScriptModelPlayAnim>,
     script_anim_notetracks: std::collections::BTreeMap<String, Notetracks>,
+    script_anim_clips: ScriptAnimClips,
     xanims: Arc<crate::MantleXAnimBind>,
     vehicle_turrets: std::collections::BTreeMap<String, String>,
     vehicle_compass: std::collections::BTreeMap<String, ([String; 2], [i32; 2])>,
@@ -168,6 +188,7 @@ impl SimContentBuilder {
                 player_body_branches: Default::default(),
                 script_model_anims: Default::default(),
                 script_anim_notetracks: Default::default(),
+                script_anim_clips: Default::default(),
                 xanims: Default::default(),
                 vehicle_turrets: Default::default(),
                 vehicle_compass: Default::default(),
@@ -228,6 +249,15 @@ impl SimContentBuilder {
                 (name.to_ascii_lowercase(), notes)
             })
             .collect();
+    }
+
+    /// The clips script anim trees name, so the sim poses their collision
+    /// as the client draws them.
+    pub fn set_script_anim_clips(
+        &mut self,
+        resolve: impl Fn(&str) -> Option<Arc<xmodel_runtime::AnimClip>> + Send + Sync + 'static,
+    ) {
+        self.data.script_anim_clips = ScriptAnimClips(Some(Arc::new(resolve)));
     }
 
     pub fn set_player_anim_script(&mut self, script: Option<Arc<PlayerAnimScript>>) {
@@ -368,6 +398,9 @@ impl SimContent {
     }
     pub(super) fn script_anim_notetracks(&self) -> &std::collections::BTreeMap<String, Notetracks> {
         &self.data.script_anim_notetracks
+    }
+    pub(super) fn script_anim_clips(&self) -> &ScriptAnimClips {
+        &self.data.script_anim_clips
     }
     pub(super) fn xanims(&self) -> &Arc<crate::MantleXAnimBind> {
         &self.data.xanims

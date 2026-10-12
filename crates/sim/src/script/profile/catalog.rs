@@ -16,6 +16,7 @@ pub enum Owner {
     PlayerCommand,
     Helicopter,
     Vehicle,
+    Actor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +51,11 @@ impl Catalog {
     pub fn iw4() -> Self {
         Self::from_lists(
             crate::script::Realm::Iw4,
-            &[super::iw4_catalog::IW4, super::anim_tree_catalog::ANIM_TREE],
+            &[
+                super::iw4_catalog::IW4,
+                super::anim_tree_catalog::ANIM_TREE,
+                super::actor_catalog::ACTOR,
+            ],
         )
     }
     /// The IW4 builtins plus the survival gametype's own.

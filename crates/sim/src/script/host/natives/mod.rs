@@ -1,3 +1,4 @@
+pub(crate) mod actor;
 pub mod engine;
 pub mod iw4;
 pub(super) mod local_profile;

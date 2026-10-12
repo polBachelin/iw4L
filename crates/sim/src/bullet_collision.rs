@@ -197,6 +197,9 @@ pub struct AuthorityDObjState {
         String,
         Option<std::sync::Arc<xmodel_runtime::RetainedModelCapability>>,
     )>,
+    /// Collide by the model's per-bone hit volumes, posed, whatever its
+    /// contents say: character models carry no collision surfaces.
+    pub hit_volumes: bool,
 }
 
 fn iw_angles_to_mat4(origin: glam::Vec3, angles: [f32; 3]) -> glam::Mat4 {
@@ -332,6 +335,7 @@ impl AuthorityDObjState {
             apos: None,
             t5_destructible: None,
             swap_capabilities: Vec::new(),
+            hit_volumes: false,
         }
     }
 
@@ -546,7 +550,12 @@ impl AuthorityDObjState {
         self.materialize_error = None;
     }
 
-    pub fn set_script_anim_tree(&mut self, tree: Option<xmodel_runtime::XAnimTreeSnapshot>) {
+    /// A leaf `resolve_clip` cannot find leaves collision in the bind pose.
+    pub fn set_script_anim_tree(
+        &mut self,
+        tree: Option<xmodel_runtime::XAnimTreeSnapshot>,
+        resolve_clip: impl FnMut(&str) -> Option<std::sync::Arc<xmodel_runtime::AnimClip>>,
+    ) {
         self.play_anim = None;
         self.pose_revision = self.pose_revision.wrapping_add(1);
         let state_revision = self.pose_revision;
@@ -555,6 +564,11 @@ impl AuthorityDObjState {
             state_revision,
             ..tree
         });
+        self.pose_request.tree = self
+            .semantic_state
+            .tree
+            .as_ref()
+            .and_then(|tree| tree.resolve(resolve_clip).ok());
         self.current_collision = None;
         self.materialized_pose_revision = None;
     }
@@ -638,6 +652,10 @@ impl AuthorityDObjState {
             ));
             return;
         };
+        if self.hit_volumes {
+            self.materialize_hit_volumes();
+            return;
+        }
         let uncollidable = capability.contents == Some(0) && capability.coll_surfs.is_empty();
         if uncollidable || !contents_match_mask(capability.contents, MASK_BULLET_WORLD) {
             self.current_collision = None;
@@ -673,6 +691,37 @@ impl AuthorityDObjState {
                 self.materialize_error = Some(error);
             }
         }
+    }
+
+    fn materialize_hit_volumes(&mut self) {
+        let Some(capability) = &self.capability else {
+            return;
+        };
+        match capability.collision(&self.pose_request, self.world_from_model) {
+            Ok(bones) => {
+                self.current_collision = Some(AuthorityDObjCollision { bones, coll: None });
+                self.materialized_model_revision = Some(self.model_revision);
+                self.materialized_pose_revision = Some(self.pose_revision);
+                self.materialize_error = None;
+                if self
+                    .current_collision
+                    .as_ref()
+                    .is_some_and(|collision| collision.bones.is_empty())
+                {
+                    self.current_collision = None;
+                    self.ensure_bounds_collision();
+                }
+            }
+            Err(error) => self.materialize_error = Some(error),
+        }
+    }
+
+    /// The hit location class of a bone's hit volume, 0 when it has none.
+    pub fn bone_hitloc(&self, bone: usize) -> u8 {
+        self.capability
+            .as_ref()
+            .and_then(|capability| capability.bone_collision.get(bone)?.as_ref())
+            .map_or(0, |collision| collision.part_classification)
     }
 
     pub fn tag_bone(&self, tag: &str) -> Option<usize> {
@@ -844,12 +893,16 @@ impl EntityCollisionCapabilities {
                 .dobj
                 .as_ref()
                 .and_then(|state| state.current_collision.clone()),
-            dobj_contents: self.dobj.as_ref().and_then(|state| {
-                state
-                    .capability
-                    .as_ref()
-                    .and_then(|capability| capability.contents)
-            }),
+            dobj_contents: self
+                .dobj
+                .as_ref()
+                .filter(|state| !state.hit_volumes)
+                .and_then(|state| {
+                    state
+                        .capability
+                        .as_ref()
+                        .and_then(|capability| capability.contents)
+                }),
             model_key: self.dobj.as_ref().map(|state| state.current_model.clone()),
             linked_brushes: self.linked_brushes.clone(),
         }

@@ -1,3 +1,4 @@
+pub mod actor_catalog;
 pub mod anim_tree_catalog;
 pub mod catalog;
 pub mod iw4_catalog;

@@ -399,6 +399,10 @@ pub fn apply_prepared_match(
                 )
             })
         }));
+        let script_anim_clips = Arc::clone(&xanims.0);
+        content.set_script_anim_clips(move |name| {
+            script_anim_clips.clip(asset_core::AssetNamespace::Iw4, name)
+        });
         content.set_mantle_xanims(sim::MantleXAnimBind::from_clips(|fast, i| {
             let name = sim::MantleXAnimBind::clip_name(fast, i)?;
             xanims
