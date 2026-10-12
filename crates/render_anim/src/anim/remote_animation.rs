@@ -17,6 +17,9 @@ pub struct PersistentRemoteTree {
     pub(crate) legs_rate_sample: ClientAnimSample,
 
     pub(crate) torso_rate_sample: ClientAnimSample,
+
+    /// The runtime is an authority blend, not the binding's tree.
+    pub(crate) blended: bool,
 }
 
 pub struct PoseClips {
@@ -132,7 +135,7 @@ pub fn advance_remote_tree(
     let torso_restart = torso.restart_toggle();
     let previous = trees.by_ent.remove(&persist_key);
     let occupation_tr_time = previous.as_ref().and_then(|slot| slot.occupation_tr_time);
-    let prev = previous.filter(|slot| Arc::ptr_eq(&slot.binding, binding));
+    let prev = previous.filter(|slot| Arc::ptr_eq(&slot.binding, binding) && !slot.blended);
     let prev_restart_changed_legs = prev
         .as_ref()
         .is_some_and(|slot| slot.legs_restart != legs_restart);
@@ -220,6 +223,7 @@ pub fn advance_remote_tree(
                 occupation_tr_time,
                 legs_rate_sample: ClientAnimSample::default(),
                 torso_rate_sample: ClientAnimSample::default(),
+                blended: false,
             },
         };
         slot.namespace = body.namespace;
@@ -317,6 +321,47 @@ pub fn advance_remote_tree(
         runtime: slot.runtime.clone(),
         clips,
         reused,
+    })
+}
+
+/// Takes the blend the authority advanced for this body as its tree; the
+/// slot keeps its DObj while the binding is the same.
+pub fn adopt_blended_tree(
+    binding: &Arc<asset_game::SoldierBodyAnimation>,
+    tree: &xmodel_runtime::XAnimTreeSnapshot,
+    persist_key: u32,
+    trees: &mut RemoteBodyTrees,
+) -> Result<AdvancedRemoteTree, String> {
+    let runtime = tree
+        .resolve(|name| binding.clip(name))
+        .map_err(|error| format!("player body blend: {error:?}"))?;
+    let previous = trees.by_ent.remove(&persist_key);
+    let occupation_tr_time = previous.as_ref().and_then(|slot| slot.occupation_tr_time);
+    let mut slot = match previous.filter(|slot| Arc::ptr_eq(&slot.binding, binding)) {
+        Some(slot) => slot,
+        None => PersistentRemoteTree {
+            binding: binding.clone(),
+            runtime: runtime.clone(),
+            namespace: binding.body().namespace,
+            dobj: None,
+            reuse_key: None,
+            legs: 0,
+            torso: 0,
+            legs_restart: false,
+            torso_restart: false,
+            occupation_tr_time,
+            legs_rate_sample: ClientAnimSample::default(),
+            torso_rate_sample: ClientAnimSample::default(),
+            blended: true,
+        },
+    };
+    slot.runtime = runtime.clone();
+    slot.blended = true;
+    trees.by_ent.insert(persist_key, slot);
+    Ok(AdvancedRemoteTree {
+        runtime,
+        clips: None,
+        reused: false,
     })
 }
 

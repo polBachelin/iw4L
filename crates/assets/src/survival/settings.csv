@@ -61,3 +61,5 @@ actor_crouch_eye_height,40
 actor_corpse_ms,10000
 actor_explosive_means,MOD_GRENADE MOD_GRENADE_SPLASH MOD_EXPLOSIVE MOD_PROJECTILE MOD_PROJECTILE_SPLASH
 player_viewhands,viewhands_player_delta
+player_character,delta_a
+player_blend_ms,200

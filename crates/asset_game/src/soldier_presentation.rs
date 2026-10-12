@@ -106,6 +106,11 @@ impl SoldierBodyAnimation {
         self.runtime.as_ref().map_err(String::as_str)
     }
 
+    /// The clip `name` in the body's namespace.
+    pub fn clip(&self, name: &str) -> Option<Arc<AnimClip>> {
+        self.catalog.clip(self.body().namespace, name)
+    }
+
     pub fn decode_leaf(&self, index: u16) -> Result<Arc<AnimClip>, String> {
         let leaf = self
             .tree

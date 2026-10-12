@@ -1,12 +1,12 @@
 use crate::anim::remote_body::{
     AdvancedRemoteTree, CpuBodyGeom, CpuSurfMeta, PendingGunSkin, PreparedRemoteKits,
     RemoteBodySkinnedItem, RemoteBodySkinnedQueue, RemoteBodyTrees, RemoteModelLods,
-    RemoteSkinModels, RemoteSkinPoseHashes, SkinAfterPose, WorldGunGap, advance_remote_tree,
-    bind_remote_skin_models, clone_corpse_tree_from_victim, commit_assembled_body,
-    ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte, occupy_remote_kit_dobj, packed_anim,
-    pose_remote_dobj, push_cached_surfaces, radii, remote_player_controller, select_remote_lods,
-    select_remote_models, skin_after_pose, skin_slot_need, skip_frozen_corpse_dobj,
-    take_unique_geom, validate_remote_tracks, zero_anim,
+    RemoteSkinModels, RemoteSkinPoseHashes, SkinAfterPose, WorldGunGap, adopt_blended_tree,
+    advance_remote_tree, bind_remote_skin_models, clone_corpse_tree_from_victim,
+    commit_assembled_body, ensure_remote_dobj, hash_skin_matrices, occupy_lod_byte,
+    occupy_remote_kit_dobj, packed_anim, pose_remote_dobj, push_cached_surfaces, radii,
+    remote_player_controller, select_remote_lods, select_remote_models, skin_after_pose,
+    skin_slot_need, skip_frozen_corpse_dobj, take_unique_geom, validate_remote_tracks, zero_anim,
 };
 use crate::anim::scene_submission::{AnimDObjSceneSkels, AnimDObjSceneSubmission, AnimSceneSubmit};
 use crate::anim::world_weapon::PreparedItemCompositions;
@@ -50,6 +50,9 @@ pub struct RemotePlayer {
     pub client_state_team: i32,
     pub shield: Option<sim::ShieldAttachment>,
     pub character: Option<asset_model::SoldierKit>,
+    /// The authority's blend for this body when the mode poses it from its
+    /// own table instead of the legs and torso anims.
+    pub blended: Option<xmodel_runtime::XAnimTreeSnapshot>,
 }
 
 impl RemotePlayer {
@@ -449,11 +452,16 @@ fn sync_remote_bodies(
         if let Some(character) = &character {
             soldiers.dress(character);
         }
+        let blended = presented
+            .snapshot()
+            .and_then(|snap| snap.meta.player_body(i32::from(identity.number())))
+            .cloned();
         let marker = RemotePlayer {
             ffa_team,
             client_state_team,
             shield: meta.and_then(|meta| meta.shield),
             character,
+            blended,
         };
         let Ok(soldier) = marker.soldier(&soldiers) else {
             if remote.is_some() {
@@ -777,6 +785,14 @@ fn pose_remote_bodies(
     }
 }
 
+enum BodyAnim<'a> {
+    Packed {
+        legs: PlayerAnimValue,
+        torso: PlayerAnimValue,
+    },
+    Blended(&'a xmodel_runtime::XAnimTreeSnapshot),
+}
+
 #[derive(Clone, Copy)]
 enum PoseOneOutcome {
     Posed,
@@ -824,11 +840,19 @@ impl<'a> RemotePoseFrame<'a> {
                     .and_then(|index| self.tree.node(index).map(|n| n.name.as_str()));
             perf::corpse(1, None, Some(i64::from(ET_PLAYER_CORPSE)), legs_leaf);
         }
-        let Some(legs) = packed_anim(sample.anim.legs_anim) else {
-            self.trees.remove(persist_key);
-            return Ok(PoseOneOutcome::NoAnim);
+        let body_anim = match &remote.blended {
+            Some(tree) => BodyAnim::Blended(tree),
+            None => {
+                let Some(legs) = packed_anim(sample.anim.legs_anim) else {
+                    self.trees.remove(persist_key);
+                    return Ok(PoseOneOutcome::NoAnim);
+                };
+                BodyAnim::Packed {
+                    legs,
+                    torso: packed_anim(sample.anim.torso_anim).unwrap_or_else(zero_anim),
+                }
+            }
         };
-        let torso = packed_anim(sample.anim.torso_anim).unwrap_or_else(zero_anim);
         let e_type = if is_corpse {
             ET_PLAYER_CORPSE
         } else {
@@ -877,16 +901,19 @@ impl<'a> RemotePoseFrame<'a> {
                     .and_then(|(w, c)| self.compositions.get(w, c, weapon, sample.weapon_model)),
             )?;
             let binding = soldier.animation().map_err(str::to_owned)?;
-            let advanced = advance_remote_tree(
-                binding,
-                legs,
-                torso,
-                persist_key,
-                dt,
-                sample.rate_origin,
-                sample.rate_time_ms,
-                trees,
-            )?;
+            let advanced = match body_anim {
+                BodyAnim::Blended(tree) => adopt_blended_tree(binding, tree, persist_key, trees)?,
+                BodyAnim::Packed { legs, torso } => advance_remote_tree(
+                    binding,
+                    legs,
+                    torso,
+                    persist_key,
+                    dt,
+                    sample.rate_origin,
+                    sample.rate_time_ms,
+                    trees,
+                )?,
+            };
 
             if scene_ent_hidden {
                 return Ok(PoseOneOutcome::SceneHidden);
@@ -925,11 +952,13 @@ impl<'a> RemotePoseFrame<'a> {
                 .expect("composed");
             validate_remote_tracks(dobj, clips.as_ref(), body, &model_set.body_name)?;
 
-            let world = pose_remote_dobj(
-                dobj,
-                anim_runtime,
-                remote_player_controller(is_corpse, view_pitch_deg, prone, crouch),
-            )?;
+            // The controller's stance offsets are made for the multiplayer
+            // anims; a blended body's anims carry their own stance.
+            let controller = match remote.blended {
+                Some(_) => None,
+                None => remote_player_controller(is_corpse, view_pitch_deg, prone, crouch),
+            };
+            let world = pose_remote_dobj(dobj, anim_runtime, controller)?;
             let skin = publish_remote_dobj(
                 dobj,
                 kit.bolt_bones,
