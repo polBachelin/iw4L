@@ -743,7 +743,7 @@ impl ZoneLane for Iw4Lane {
         sink.seed_materials(material_seed);
         sink.set_capture_zone(asset_core::ZoneOwner::intern(&zone_name));
         sink.set_capture_ns(asset_core::AssetNamespace::Iw4);
-        sink.sound = asset_audio::ZoneSoundCapture::claim_common(
+        sink.sound = asset_audio::ZoneSoundCapture::claim_source(
             path,
             asset_audio::ZoneGame::Iw4,
             "common census",

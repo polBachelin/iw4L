@@ -14,8 +14,8 @@ use asset_core::AssetRef;
 use asset_iw4::size as sz;
 use asset_material::{TS_2D, TS_COLOR_MAP, decode_zone_image_rgba};
 use asset_transport::{
-    GamesRoot, ModeZones, RuntimeProfile, ZoneGame, ZoneMemory, find_zone_file, game_root_for_zone,
-    open_zone,
+    BaseZones, GamesRoot, ModeZones, RuntimeProfile, ZoneGame, ZoneMemory, find_zone_file,
+    game_root_for_zone, open_zone,
 };
 
 mod iw5;
@@ -523,14 +523,6 @@ impl MenuCatalog {
     }
 }
 
-pub const UI_MENU_ZONES: &[&str] = &[
-    "code_post_gfx_mp",
-    "localized_code_post_gfx_mp",
-    "localized_ui_mp",
-    "common_mp",
-    "patch_mp",
-];
-
 pub const HUD_CHROME_MENUS: &[&str] = &[
     "scorebar_hd",
     "scorebar_sd",
@@ -559,13 +551,23 @@ fn ui_zone_key(profile: RuntimeProfile, zone: &str) -> String {
     format!("{}:{zone}", profile.game().prefix())
 }
 
-pub fn ui_games_root(profile: RuntimeProfile, games: &GamesRoot) -> Result<GamesRoot, String> {
-    let anchor = find_zone_file(games, &ui_zone_key(profile, "common_mp"))?;
+/// The tree holding the first of `base`, which the UI's zones are read from.
+pub fn ui_games_root(
+    profile: RuntimeProfile,
+    games: &GamesRoot,
+    base: &BaseZones,
+) -> Result<GamesRoot, String> {
+    let anchor = base
+        .names()
+        .first()
+        .ok_or("the launch mode names no base zone")?;
+    let anchor = find_zone_file(games, &ui_zone_key(profile, anchor))?;
     game_root_for_zone(&anchor.path).map(GamesRoot)
 }
 
-/// The runtime's UI zones, then the launch mode's zones in their load order:
-/// a menu a later zone carries replaces the one an earlier zone had.
+/// The runtime's UI zones with the launch mode's base zones among them, then
+/// the mode's zones in their load order: a menu a later zone carries replaces
+/// the one an earlier zone had.
 pub fn load_ui_menu_catalog(
     profile: RuntimeProfile,
     games: &GamesRoot,
@@ -573,7 +575,7 @@ pub fn load_ui_menu_catalog(
 ) -> (MenuCatalog, Vec<String>) {
     let mut catalog = MenuCatalog::default();
     let mut report = Vec::new();
-    let games = match ui_games_root(profile, games) {
+    let games = match ui_games_root(profile, games, mode.base()) {
         Ok(root) => root,
         Err(error) => return (catalog, vec![format!("menu catalog unavailable: {error}")]),
     };
@@ -582,9 +584,16 @@ pub fn load_ui_menu_catalog(
         profile.game().prefix().to_ascii_uppercase(),
         games.0.display()
     ));
-    let mode_zones = mode.names().iter().map(String::as_str);
-    for (index, zone) in UI_MENU_ZONES.iter().copied().chain(mode_zones).enumerate() {
-        let mode_zone = index >= UI_MENU_ZONES.len();
+    let base = mode.base();
+    let runtime_zones = base
+        .startup_with_localized()
+        .chain(base.ui_localized())
+        .chain(base.names().iter().cloned())
+        .chain(base.patch().iter().cloned())
+        .map(|zone| (zone, false));
+    let mode_zones = mode.names().iter().map(|zone| (zone.clone(), true));
+    for (zone, mode_zone) in runtime_zones.chain(mode_zones) {
+        let zone = zone.as_str();
         match find_zone_file(&games, &ui_zone_key(profile, zone)) {
             Ok(found) => match load_menu_catalog_with_iwd(&found.path, Some(&games.0)) {
                 Ok(part) => {

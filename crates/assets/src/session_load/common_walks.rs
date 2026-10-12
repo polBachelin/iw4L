@@ -1036,6 +1036,7 @@ pub(super) async fn walk_startup_material_zones(
 pub(super) fn load_localized_strings_beside(
     profile: asset_transport::RuntimeProfile,
     zone_ff: &std::path::Path,
+    base: &asset_transport::BaseZones,
     mode: &[PathBuf],
     report: &mut Vec<String>,
     stage: &asset_transport::progress::StageHandle,
@@ -1048,36 +1049,45 @@ pub(super) fn load_localized_strings_beside(
             return catalog;
         }
     };
-    let mut lanes: [(asset_core::AssetNamespace, u32, &[&str]); 4] = [
+    let runtime_namespace = asset_core::AssetNamespace::from_zone_game(profile.game());
+    // A donor game's strings come from its own multiplayer base set.
+    let donor_base = asset_transport::BaseZones::default();
+    let base_for = |namespace| {
+        if namespace == runtime_namespace {
+            base
+        } else {
+            &donor_base
+        }
+    };
+    let localized = |namespace| localized_zones(base_for(namespace));
+    let mut lanes: [(asset_core::AssetNamespace, u32, Vec<String>); 4] = [
         (
             asset_core::AssetNamespace::Iw4,
             fastfile_iw4::ZONE_VERSION_PC,
-            MP_LOCALIZED_ZONES,
+            localized(asset_core::AssetNamespace::Iw4),
         ),
         (
             asset_core::AssetNamespace::T5,
             fastfile_t5::ZONE_VERSION_PC,
-            &["code_post_gfx_mp", "common_mp", "ui_mp"],
+            Vec::new(),
         ),
         (
             asset_core::AssetNamespace::Iw5,
             fastfile_iw5::ZONE_VERSION_PC,
-            MP_LOCALIZED_ZONES,
+            localized(asset_core::AssetNamespace::Iw5),
         ),
         (
             asset_core::AssetNamespace::T6,
             fastfile_t6::ZONE_VERSION_PC,
-            &[],
+            Vec::new(),
         ),
     ];
     // The runtime game's strings are absorbed first, so its text wins a key
     // every other lane also carries.
-    let runtime_namespace = asset_core::AssetNamespace::from_zone_game(profile.game());
     lanes.sort_by_key(|(namespace, _, _)| *namespace != runtime_namespace);
-    let runtime_language = profile
-        .find_common_mp(&root, zone_ff)
-        .ok()
-        .and_then(|zone| zone.path.parent()?.file_name()?.to_str().map(str::to_owned));
+    let runtime_language = zone_ff
+        .parent()
+        .and_then(|dir| dir.file_name()?.to_str().map(str::to_owned));
     let mut plan = Vec::new();
     for (namespace, version, names) in lanes {
         // A key keeps the text of the first zone that carries it, and the
@@ -1138,7 +1148,7 @@ pub(super) fn load_localized_strings_beside(
     stage.set_total(plan.len() as u64);
     for (namespace, found) in plan {
         let name = &found.zone_name;
-        match load_localize_catalog_in_lane(&found.path) {
+        match load_localize_catalog_in_lane(&found.path, base_for(namespace)) {
             Ok(part) if part.is_empty() => {}
             Ok(part) => {
                 report.push(format!(

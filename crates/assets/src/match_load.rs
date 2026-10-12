@@ -100,6 +100,7 @@ fn start_match_load(
     mut commands: Commands,
     identity: Option<Res<LaunchIdentity>>,
     profile: Option<Res<MatchRuntimeProfile>>,
+    launch_mode: Option<Res<MatchModeZones>>,
     request: Option<Res<MatchLoadRequest>>,
     busy: Option<Res<MatchLoadTask>>,
     retiring: Option<Res<frame::Retiring>>,
@@ -149,13 +150,13 @@ fn start_match_load(
         );
     }
     *waiting_for_retirement = None;
-    let mode_zones = match request
+    let (sound_base, mode_zones) = match request
         .zone_ff
         .as_ref()
         .and(request.base_zones.as_ref())
-        .and(request.mode_zones.as_ref())
+        .and_then(|base| Ok((base, request.mode_zones.as_ref()?)))
     {
-        Ok(mode_zones) => mode_zones.clone(),
+        Ok((base, mode_zones)) => (base.clone(), mode_zones.clone()),
         Err(error) => {
             failed.write(MapLoadFailed {
                 request_id: request.request_id,
@@ -188,6 +189,7 @@ fn start_match_load(
 
     let games = identity.map(|identity| asset_transport::GamesRoot(identity.games_root.clone()));
     let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
+    let zones = launch_mode.map_or_else(Default::default, |mode| mode.0.base().clone());
     let task = crate::session_load::load_pool().spawn(async move {
         let sound_path = zone_ff.clone();
         match load_prepared_match(
@@ -205,8 +207,14 @@ fn start_match_load(
                 }
                 prepared.sound = Some(match (games, sound_path) {
                     (Some(games), Ok(path)) => {
-                        let sources =
-                            asset_audio::gather_sound_sources(profile, &games, &path, &mode_zones);
+                        let sources = asset_audio::gather_sound_sources(
+                            profile,
+                            &games,
+                            &path,
+                            &zones,
+                            &sound_base,
+                            &mode_zones,
+                        );
                         let map = prepared
                             .sound
                             .take()

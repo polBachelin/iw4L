@@ -408,6 +408,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let localize_walk = {
         let anchor = anchor.clone();
         let profile = key.profile;
+        let base = asset_transport::BaseZones::from_paths(&key.base);
         let mode = key.mode.clone();
         let progress = progress.clone();
         pool.spawn(async move {
@@ -415,8 +416,14 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             let strings = match &anchor {
                 Some(path) => {
                     let stage = progress.begin(StageId::Localization, None);
-                    let catalog =
-                        load_localized_strings_beside(profile, path, &mode, &mut report, &stage);
+                    let catalog = load_localized_strings_beside(
+                        profile,
+                        path,
+                        &base,
+                        &mode,
+                        &mut report,
+                        &stage,
+                    );
                     stage.done();
                     catalog
                 }

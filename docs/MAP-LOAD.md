@@ -94,9 +94,22 @@ the menu probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses 
 file of another game's envelope; the profile's own game is never also walked as a
 donor. A launch mode names its base zones, loaded right after the map
 (`ModeZones::base`; `survival` reads them from its `base_zones` settings row,
-every other mode keeps `common_mp`). They are found through
+every other mode keeps `common_mp`). The set also names the zones that go
+with it: startup zones loaded ahead of the base zones (`BaseZones::startup`),
+UI zones read only through their `localized_` siblings (`BaseZones::ui_localized`)
+and patch zones loaded after them (`BaseZones::patch`); every set keeps the
+multiplayer ones for now. They are found through
 `RuntimeProfile::find_base_zones` and are part of the `CommonKey`; the first one
-anchors the census and the rest are laid over it in their order. A launch mode
+anchors the census and the rest are laid over it in their order. The sound bank
+rows, the menu catalog, the localized strings and the resident clip cache take
+their base zones from the same set, with each base zone's `localized_` sibling
+where the tree has one (a missing sibling is skipped without a gap), and their
+startup, UI and patch zones from it too. The menu catalog loads the startup
+zones with their siblings, the UI siblings, the base zones and the patch zones,
+then the mode's zones, a later zone's menu replacing an earlier one's; the
+localized strings read the startup siblings, the base siblings latest first and
+the UI siblings, the first one carrying a key keeping it. The menu catalog and
+the menu strings read from the tree of the first base zone. A launch mode
 adds its own zones (`survival` names MW3's `common_specialops`, `common_survival`,
 `patch_specialops`, `patch_survival` in its `mode_zones` settings row). They are
 found the same way, are part of the `CommonKey`, and are walked by the common

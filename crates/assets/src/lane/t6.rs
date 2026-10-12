@@ -2378,7 +2378,7 @@ impl ZoneLane for T6Lane {
         // Claimed before the walk: the sound bank may ask for this zone while
         // the content is still decoding, and must wait for these aliases
         // rather than read the zone itself.
-        let sound_claim = asset_audio::ZoneSoundCapture::claim_common(
+        let sound_claim = asset_audio::ZoneSoundCapture::claim_source(
             path,
             asset_audio::ZoneGame::T6,
             "t6 common",

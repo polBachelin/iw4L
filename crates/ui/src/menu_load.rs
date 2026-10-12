@@ -3,7 +3,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use frame::ClientSet;
 
 use asset_game::{LocalizeCatalog, load_mp_localized_strings};
-use asset_transport::{GamesRoot, LoadProgress, RuntimeProfile, find_zone_file, list_mp_map_packs};
+use asset_transport::{
+    GamesRoot, LoadProgress, ModeZones, RuntimeProfile, find_zone_file, list_mp_map_packs,
+};
 use assets::{LoadingPreviewSource, MatchLoadRequest};
 
 use crate::classes::select::ClassSelectOverlayOpen;
@@ -34,6 +36,7 @@ fn launch_report(
 fn resolve_zone(
     profile: RuntimeProfile,
     games: &asset_transport::GamesRoot,
+    mode: &ModeZones,
     requested: &str,
 ) -> (
     String,
@@ -55,8 +58,10 @@ fn resolve_zone(
         .as_ref()
         .map(|z| z.path.clone())
         .map_err(|e| e.clone());
-    let common_mp = match &zone_ff {
-        Ok(path) => profile.find_common_mp(games, path).map(|z| z.path),
+    let base_anchor = match &zone_ff {
+        Ok(path) => profile
+            .find_base_zones(games, path, mode)
+            .map(|zones| zones[0].clone()),
         Err(e) => Err(e.clone()),
     };
     let game = parsed_game.or_else(|| {
@@ -66,7 +71,7 @@ fn resolve_zone(
             .and_then(|z| asset_transport::zone_game_for_path(&z.path))
     });
     let title = asset_transport::map_load_title(&requested_lc, game);
-    (zone, zone_ff, common_mp, zone_alias, title)
+    (zone, zone_ff, base_anchor, zone_alias, title)
 }
 
 fn insert_loading_chrome(
@@ -106,6 +111,7 @@ pub(crate) fn begin_load_from_session(
     mut class_overlay: ResMut<ClassSelectOverlayOpen>,
     identity: Option<ResMut<LaunchIdentity>>,
     profile: Option<Res<assets::MatchRuntimeProfile>>,
+    mode_zones: Option<Res<assets::MatchModeZones>>,
     loading: Option<Res<LoadingScreen>>,
     request: Option<Res<MatchLoadRequest>>,
     abort: Option<Res<assets::MatchLoadAbort>>,
@@ -122,12 +128,13 @@ pub(crate) fn begin_load_from_session(
     };
     let games = asset_transport::GamesRoot(identity.games_root.clone());
     let profile = profile.map_or(RuntimeProfile::Iw4, |profile| profile.0);
-    let (zone, zone_ff, common_mp, zone_alias, loading_title) =
-        resolve_zone(profile, &games, &fact.zone);
+    let mode_zones = mode_zones.map_or_else(ModeZones::default, |mode| mode.0.clone());
+    let (zone, zone_ff, base_anchor, zone_alias, loading_title) =
+        resolve_zone(profile, &games, &mode_zones, &fact.zone);
     if loading.as_ref().is_some_and(|s| s.title() == loading_title) {
         return;
     }
-    let probe = launch_report(zone.clone(), common_mp, zone_ff.clone(), zone_alias);
+    let probe = launch_report(zone.clone(), base_anchor, zone_ff.clone(), zone_alias);
     let progress = request
         .as_ref()
         .filter(|r| r.request_id == fact.request_id)
@@ -193,6 +200,7 @@ fn start_menu_strings_prepare(
     running: Option<Res<MenuStringsPrepare>>,
     root: Option<Res<crate::UiAssetRoot>>,
     profile: Option<Res<assets::MatchRuntimeProfile>>,
+    mode: Option<Res<assets::MatchModeZones>>,
     loading: (
         Option<Res<assets::MatchLoadBusy>>,
         Option<Res<MatchLoadRequest>>,
@@ -213,9 +221,13 @@ fn start_menu_strings_prepare(
         return;
     };
     let profile = profile.map_or(asset_transport::RuntimeProfile::Iw4, |profile| profile.0);
-    let zone = format!("{}:code_post_gfx_mp", profile.game().prefix());
+    let base = mode.map_or_else(Default::default, |mode| mode.0.base().clone());
+    let Some(anchor) = base.names().first() else {
+        return;
+    };
+    let zone = format!("{}:{anchor}", profile.game().prefix());
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        match load_mp_localized_strings(&GamesRoot(root), &zone) {
+        match load_mp_localized_strings(&GamesRoot(root), &zone, &base) {
             Ok(catalog) => Some(catalog),
             Err(error) => {
                 diag::warn!(Ui, "menu: localize: {error}");

@@ -9,8 +9,8 @@ use crate::{
 };
 use asset_anim::{XAnimBuild, XAnimCatalog};
 use asset_game::{
-    FxCatalog, LocalizeCatalog, MP_LOCALIZED_ZONES, WeaponBuild, WeaponRegistry,
-    load_localize_catalog_in_lane,
+    FxCatalog, LocalizeCatalog, WeaponBuild, WeaponRegistry, load_localize_catalog_in_lane,
+    localized_zones,
 };
 use asset_material::{ImageDemandPlan, MaterialCatalog};
 use asset_model::{

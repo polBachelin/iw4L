@@ -544,7 +544,7 @@ impl ZoneLane for T5Lane {
         sink.seed_materials(material_seed);
         sink.set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
         sink.set_capture_ns(asset_core::AssetNamespace::T5);
-        sink.sound = asset_audio::ZoneSoundCapture::claim_common(
+        sink.sound = asset_audio::ZoneSoundCapture::claim_source(
             path,
             asset_audio::ZoneGame::T5,
             "common census",
