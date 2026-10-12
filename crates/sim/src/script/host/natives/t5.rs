@@ -1493,7 +1493,7 @@ fn register_refused(registry: &mut NativeRegistry) {
         "heliturretsighttrace"
         => "receiver is not a vehicle");
 
-    refused!(Method: "spawnactor", "setgoalnode", "setgoalpos",
+    refused!(Method: "spawnactor",
         "forceteleport", "orientmode", "traversemode", "setanimstate", "setaimanimweights",
         "getnegotiationstartnode", "setflashbanged", "finishactordamage", "getshootatpos",
         "clearentitytarget", "playbattlechattertoteam"

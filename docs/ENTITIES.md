@@ -53,3 +53,34 @@ sections succeed, so a refused frame leaves the world baseline intact.
 
 Snapshots publish the **semantics** of DObj composition, never runtime trees or
 posed vertices ([`ANIM.md`](ANIM.md)).
+
+## Actors
+
+An actor is a character the server simulates without a client: it takes no
+client slot, no bot slot and no scoreboard row. `spawnactor(origin, angles,
+team)` (`sim/src/script/host/natives/actor.rs`) makes a script entity of kind
+`EntityKind::Actor` on a script mover gentity, with `team`, `health` and
+`maxhealth` (100) fields; `delete()` removes it like any spawned entity. The
+methods are in `script/profile/actor_catalog.rs` under `Owner::Actor`:
+
+* `setgoalpos(point)`, `setgoalnode(node)`: accepted, no movement yet;
+* `setweapon(name)`: the weapon `shoot` fires (`"none"` clears it);
+* `shoot([point])`: one bullet from `tag_flash`, or standing eye height, at
+  `point` or along the actor's angles;
+* `isalive()`, `getteam()`.
+
+Behavior lives in GSC. `setcharacter(body, [head], [hat])` dresses an actor:
+the body becomes its `model`, the head and hat attach to the body's head tag,
+and that DObj is what presence poses with the entity's anim tree (`useanimtree`
+and the other anim-tree methods, see [`GSC-RUNTIME.md`](GSC-RUNTIME.md)) and
+`render_anim` draws as a spawned script model. An actor with no character has
+no model: nothing draws it and nothing hits it.
+
+Bullets hit an actor's per-bone hit volumes, posed by its anim tree
+(`AuthorityDObjState::hit_volumes`); a model without them falls back to its
+bounds. Radius damage reaches it like any damageable script entity. A hit is
+scaled by hit location as a player's is, and a head hit is `MOD_HEAD_SHOT`. The
+actor is notified `damage` (amount, attacker, direction, point, means, model,
+bone, hit location, flags, weapon) and, when its health reaches zero, `death`
+(attacker, means, weapon); kill credit is the script's, from those. A dead
+actor takes no more damage and stays until deleted.

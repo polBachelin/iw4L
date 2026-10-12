@@ -77,6 +77,7 @@ fn set_character(world: &mut World, receiver: &Value, args: &[Value]) -> Result<
         hat: name(2)?,
     };
     let id = entity_id(world, receiver)?;
+    super::actor::dress(world, id, &selection);
     let entnum = world.resource::<Runtime>().entities[&id].number;
     FrameWorld::from_world(world).set_character(entnum, selection);
     Ok(Value::Undefined)

@@ -167,6 +167,7 @@ pub(crate) enum EntityKind {
     Item(i32),
     Missile(crate::ProjectileId),
     Vehicle,
+    Actor,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -401,11 +402,15 @@ impl Runtime {
                 presence,
                 matches!(
                     entity.kind,
-                    EntityKind::Spawned | EntityKind::Vehicle | EntityKind::Missile(_)
+                    EntityKind::Spawned
+                        | EntityKind::Vehicle
+                        | EntityKind::Actor
+                        | EntityKind::Missile(_)
                 ),
             ));
         }
         self.shown.remove(&id);
+        self.actors.remove(&id);
         for slot in &mut self.engine.attractors {
             if slot.is_some_and(|a| a.anchor == super::guidance::Anchor::Entity(id)) {
                 *slot = None;

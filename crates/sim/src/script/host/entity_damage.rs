@@ -217,9 +217,16 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
     let attacker = hit.attacker.map_or(Value::Undefined, |a| {
         super::players::player_object(world, a.0)
     });
-    if world.resource::<Runtime>().entities[&object].kind == super::entities::EntityKind::Vehicle {
-        super::vehicles::damage(world, object, hit, attacker, &weapon, &tag);
-        return true;
+    match world.resource::<Runtime>().entities[&object].kind {
+        super::entities::EntityKind::Vehicle => {
+            super::vehicles::damage(world, object, hit, attacker, &weapon, &tag);
+            return true;
+        }
+        super::entities::EntityKind::Actor => {
+            super::natives::actor::damage(world, object, hit, attacker, &tag);
+            return true;
+        }
+        _ => {}
     }
     let mut runtime = world.resource_mut::<Runtime>();
     let model = match runtime.object_field(object, "model") {

@@ -76,6 +76,7 @@ pub(crate) struct Runtime {
     pub(crate) pending_deletes: Vec<u64>,
     pub(crate) vehicles: BTreeMap<u64, host::vehicles::Heli>,
     pub(crate) planes: BTreeMap<u64, host::vehicles::Plane>,
+    pub(crate) actors: BTreeMap<u64, host::natives::actor::Actor>,
     pub(crate) use_selected: BTreeMap<u32, u64>,
     pub(crate) t5: host::natives::t5::T5State,
     pub(crate) restart: Option<Arc<host::restart::RestartPlan>>,
