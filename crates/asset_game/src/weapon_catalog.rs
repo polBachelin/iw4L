@@ -1569,6 +1569,8 @@ pub struct WeaponRegistry {
 
     by_namespaced: HashMap<(crate::AssetNamespace, String), u32>,
 
+    by_script: HashMap<String, u32>,
+
     item_groups: HashMap<(crate::AssetNamespace, String), String>,
 
     families: crate::WeaponFamilies,
@@ -2065,8 +2067,9 @@ impl WeaponBuild {
     }
 
     /// Lays the weapons of a zone loaded after these over them: a weapon both
-    /// carry takes the later definition in its existing row, so its id holds,
-    /// and a weapon only the later zone carries is appended. Returns how many
+    /// carry under one script name takes the later definition in its existing
+    /// row, so its id holds, and any other weapon is appended, so an SP
+    /// `flash_grenade` sits beside MP's `flash_grenade_mp`. Returns how many
     /// rows were replaced and how many were added.
     pub fn overlay(&mut self, mut later: Self) -> (usize, usize) {
         if self.registry.rows.is_empty() {
@@ -2094,8 +2097,19 @@ impl WeaponBuild {
         let rows = later.registry.rows.into_iter().skip(1);
         for (row, slots) in rows.zip(later.combat_slots.into_iter().skip(1)) {
             let key = (row.namespace, row.name.clone());
-            match self.registry.by_namespaced.get(&key) {
-                Some(&id) => {
+            let kept = [
+                self.registry.by_namespaced.get(&key),
+                self.registry.by_script.get(&row.script_name),
+            ]
+            .into_iter()
+            .flatten()
+            .copied()
+            .find(|&id| {
+                let kept = &self.registry.rows[id as usize];
+                kept.namespace == row.namespace && kept.script_name == row.script_name
+            });
+            match kept {
+                Some(id) => {
                     self.registry.rows[id as usize] = row;
                     self.combat_slots[id as usize] = slots;
                     replaced += 1;
@@ -2103,6 +2117,7 @@ impl WeaponBuild {
                 None => {
                     let id = self.registry.rows.len() as u32;
                     self.registry.by_namespaced.insert(key, id);
+                    self.registry.by_script.insert(row.script_name.clone(), id);
                     self.registry.rows.push(row);
                     self.combat_slots.push(slots);
                     added += 1;

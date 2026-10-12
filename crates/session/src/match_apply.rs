@@ -387,6 +387,18 @@ pub fn apply_prepared_match(
                 },
             ))
         }));
+        content.set_script_anim_notetracks(xanims.0.names().filter_map(|name| {
+            let notifies = &xanims.0.get(anim_namespace, name)?.parts.notifies;
+            (!notifies.is_empty()).then(|| {
+                (
+                    name.to_owned(),
+                    notifies
+                        .iter()
+                        .map(|notify| (notify.name.clone(), notify.time))
+                        .collect(),
+                )
+            })
+        }));
         content.set_mantle_xanims(sim::MantleXAnimBind::from_clips(|fast, i| {
             let name = sim::MantleXAnimBind::clip_name(fast, i)?;
             xanims
@@ -986,7 +998,13 @@ fn preflight_match_install(
             }
         }
     }
-    let sources = Sources(std::mem::take(&mut prepared.scripts));
+    let mut sources = Sources(std::mem::take(&mut prepared.scripts));
+    if kind == gamemode_iw4::GameModeKind::Survival {
+        let picks = assets::survival_pick_weapons(&mut sources.0, |name| {
+            weapons.registry().resolve_script_name(name).is_some()
+        });
+        diag::info!(Sim, "survival weapons: {}", picks.join(" "));
+    }
     let gametype = kind
         .script_tokens()
         .iter()
@@ -1045,9 +1063,9 @@ fn preflight_match_install(
         let added: Vec<_> = sim::script::parse_entity_string(&addon.text)
             .into_iter()
             .filter(|pairs| {
-                !pairs
-                    .iter()
-                    .any(|(key, value)| key.eq_ignore_ascii_case("classname") && value == "worldspawn")
+                !pairs.iter().any(|(key, value)| {
+                    key.eq_ignore_ascii_case("classname") && value == "worldspawn"
+                })
             })
             .collect();
         diag::info!(

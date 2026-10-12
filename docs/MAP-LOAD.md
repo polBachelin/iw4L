@@ -35,6 +35,18 @@ differently is an override, not a duplicate, and `load_jobs.csv`
 `assets::lane` (`ZoneGame` → iw4/iw5/t5/t6); a lane gap is a typed `LaneGap`, never
 silence.
 
+An IW5 zone's `PathData` is captured through `AssetLinkSink::capture_path_data`
+into `asset_world::PathGraph`: one `PathNode` per zone node (type, origin, yaw
+as angles, targetname and script_noteworthy when set) and a flat `links` list
+(neighbor index, distance) that each node slices with `first_link`/`link_count`.
+Node indices are the zone's, so link targets index `nodes` directly; a link
+pointing past the node array is dropped and counted. It travels as
+`MapFacts::path_graph` into `PreparedMap`, empty when the zone ships no
+`PathData`. Capture only: nothing paths on it yet. An `AddonMapEnts` entity
+string is appended after the zone's `MapEnts` string, and every IW5
+entity-string reader (spawns, script structs, triggers, the map script
+entities) parses the merged text.
+
 `ZoneLane::load_common_mp` returns owned common builders and diagnostics. A lane whose preparation needs already assembled donors can retain a private, consumed-once `CommonFamilyCompiler` inside that result. The shared loader supplies owned weapon, material, FPV, world-model, projectile, animation and effect builders; compilation returns them together with dependency refusals. This stage finishes before the common set is published or cloned for a match. It is not invoked by frame execution.
 
 T6 model/material/effect captures stay private to the T6 lane. Its compiler owns stand-in donor lookup, native technique linking, named texture adaptations, animation admission, weapon dressing and projectile binding. Missing model/effect donors return typed refusals, while accepted contributions and existing builders remain available; source conversion diagnostics remain in the load report. Other lanes finish these products within their existing common walk. All lanes publish through the same common-set and match installation path.
@@ -75,16 +87,21 @@ Content-addressed leaf in `asset_transport::artifact_cache` (`cache_get` /
 — and a hit must be the **same bytes** a miss would have written. The key names
 every input; if the encoder changed, bump the format word. Live kinds: `mips`,
 `wgsl`, `localize`, `nav` and `xwma_pcm`, whose miss is decoded by the native Rust T5 WMA2 decoder.
-The launch's `RuntimeProfile` picks the `common_mp` that anchors the walk (IW4,
-or the map's own IW5 tree for `survival`); the startup zones come from beside it.
-Every zone loaded beside it (sound bank base rows, localized strings, the menu
-probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses a file of
-another game's envelope; the profile's own game is never also walked as a donor.
-A launch mode adds its own zones (`survival` names MW3's `common_specialops`,
-`common_survival`, `patch_specialops`, `patch_survival` in its `mode_zones`
-settings row). They are found the same way, are part of the `CommonKey`, and are
-walked by the common census after `common_mp` in that order, a later zone's asset
-replacing an earlier one's: weapons in their row, catalogs by name, scripts and
+The launch's `RuntimeProfile` picks the tree whose first base zone anchors the
+walk (IW4, or the map's own IW5 tree for `survival`); the startup zones come from
+beside it. Every zone loaded beside it (sound bank base rows, localized strings,
+the menu probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses a
+file of another game's envelope; the profile's own game is never also walked as a
+donor. A launch mode names its base zones, loaded right after the map
+(`ModeZones::base`; `survival` reads them from its `base_zones` settings row,
+every other mode keeps `common_mp`). They are found through
+`RuntimeProfile::find_base_zones` and are part of the `CommonKey`; the first one
+anchors the census and the rest are laid over it in their order. A launch mode
+adds its own zones (`survival` names MW3's `common_specialops`, `common_survival`,
+`patch_specialops`, `patch_survival` in its `mode_zones` settings row). They are
+found the same way, are part of the `CommonKey`, and are walked by the common
+census after the base zones in that order, a later zone's asset replacing an
+earlier one's: weapons in their row, catalogs by name, scripts and
 tables, menus, localized strings and sound aliases. Their census claims their
 sounds (`ZoneSoundCapture::claim_source`); their images decode with the merged
 pool. A material another zone holds is captured as a reference row that links to

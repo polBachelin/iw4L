@@ -97,10 +97,13 @@ impl Iw5Lane {
 
     fn finish_loaded(
         scripts: Option<&(String, Option<String>)>,
+        path_graph: asset_world::PathGraph,
         path: &Path,
         mut loaded: LoadedWorld,
     ) -> LoadedWorld {
         Self::stamp_map_tree_team_settings(path, &mut loaded);
+        loaded.report.push(path_graph.report_line());
+        loaded.facts.path_graph = path_graph;
         if let Some((entities, stand_in)) = scripts {
             loaded.scripts.set_entities(entities.clone());
             let map = path
@@ -148,6 +151,7 @@ impl ZoneLane for Iw5Lane {
                 stage.fail();
                 return Self::finish_loaded(
                     None,
+                    Default::default(),
                     path,
                     LoadedWorld::with_gap(
                         WorldDrawPolicy::iw5(),
@@ -176,6 +180,7 @@ impl ZoneLane for Iw5Lane {
                 stage.fail();
                 return Self::finish_loaded(
                     None,
+                    Default::default(),
                     path,
                     LoadedWorld::with_gap(
                         WorldDrawPolicy::iw5(),
@@ -215,8 +220,9 @@ impl ZoneLane for Iw5Lane {
         let exp_fog = sink.exp_fog.take();
         let script_sound = std::mem::take(&mut sink.script_sound).finish();
         let createart_name = sink.createart_name.take();
+        let path_graph = std::mem::take(&mut sink.path_graph);
         let scripts = asset_world::map_ents_entity_string_iw5(&stream)
-            .map(asset_world::iw5_entity_string_named)
+            .map(|text| asset_world::iw5_entity_string_named(&text))
             .map(|entities| {
                 let stand_in =
                     (!sink.iw5_map.is_empty()).then(|| sink.iw5_map.map_script(&entities));
@@ -350,6 +356,7 @@ impl ZoneLane for Iw5Lane {
             let dm_spawns = dm_spawn_points_iw5(&stream);
             return Self::finish_loaded(
                 scripts.as_ref(),
+                path_graph,
                 path,
                 LoadedWorld {
                     sound: map_sound,
@@ -546,6 +553,7 @@ impl ZoneLane for Iw5Lane {
                 report.push(format!("map xanims: {}", map_xanims.len()));
                 Self::finish_loaded(
                     scripts.as_ref(),
+                    path_graph,
                     path,
                     LoadedWorld {
                         sound: map_sound,
@@ -599,6 +607,7 @@ impl ZoneLane for Iw5Lane {
                 let dm_spawns = dm_spawn_points_iw5(&stream);
                 Self::finish_loaded(
                     scripts.as_ref(),
+                    path_graph,
                     path,
                     LoadedWorld {
                         sound: map_sound,
@@ -808,6 +817,10 @@ fn census_common_zone(
     ));
     sink.weapons.resolve_reticles(&sink.materials);
     let captured = sink.weapons.len();
+    let mut names: Vec<&str> = sink.weapons.captured_names().collect();
+    names.sort_unstable();
+    names.dedup();
+    diag::debug!(Zone, "{zone} IW5 weapons captured: {}", names.join(" "));
     let mut weapons = sink.weapons.into_build();
     weapons.apply_stats_tables(sink.stats_tables.values());
     weapons.resolve_sz_xanim_edges(&sink.xanims);

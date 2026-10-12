@@ -467,6 +467,16 @@ pub struct XModelGeometry {
     pub radius: Option<f32>,
 }
 
+/// `PathData` node array as laid out in the zone. Each node's link slot is
+/// fixed up by the walk, so `ptr_at` on it resolves to the link array.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PathDataGeometry {
+    pub nodes: Option<Ptr>,
+    pub node_count: usize,
+    pub node_stride: usize,
+    pub link_field: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct XAnimPartsGeometry {
     pub name: Option<Ptr>,

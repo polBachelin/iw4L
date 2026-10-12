@@ -587,7 +587,29 @@ impl RuntimeProfile {
     }
 
     pub fn find_common_mp(self, root: &GamesRoot, zone_ff: &Path) -> Result<ZoneFile, String> {
-        self.find_runtime_zone(root, zone_ff, "common_mp")
+        self.find_runtime_zone(root, zone_ff, DEFAULT_BASE_ZONE)
+    }
+
+    /// Every base zone of `mode`, in its load order, from the runtime's own
+    /// tree. The first one missing refuses the set, as does a set naming none.
+    pub fn find_base_zones(
+        self,
+        root: &GamesRoot,
+        zone_ff: &Path,
+        mode: &ModeZones,
+    ) -> Result<Vec<PathBuf>, String> {
+        if mode.base().is_empty() {
+            return Err("the launch mode names no base zone".into());
+        }
+        mode.base()
+            .names()
+            .iter()
+            .map(|name| {
+                self.find_runtime_zone(root, zone_ff, name)
+                    .map(|zone| zone.path)
+                    .map_err(|error| format!("base zone `{name}`: {error}"))
+            })
+            .collect()
     }
 
     /// Every zone of `mode`, in its load order, from the runtime's own tree,
@@ -642,12 +664,42 @@ impl RuntimeProfile {
     }
 }
 
-/// The zones a launch mode loads after the runtime's `common_mp`, in load
-/// order: an asset a later zone carries replaces the one an earlier zone had.
-/// A launch with no mode of its own has none.
+/// The base zone of a launch mode whose settings name no base set of its own.
+pub const DEFAULT_BASE_ZONE: &str = "common_mp";
+
+/// The zones a launch mode loads right after the map, in load order. The
+/// first carries the census every later base and mode zone is laid over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BaseZones(Vec<String>);
+
+impl Default for BaseZones {
+    fn default() -> Self {
+        Self(vec![DEFAULT_BASE_ZONE.to_owned()])
+    }
+}
+
+impl BaseZones {
+    /// Zone stems separated by whitespace, as a settings row spells them.
+    pub fn parse(row: &str) -> Self {
+        Self(row.split_whitespace().map(str::to_owned).collect())
+    }
+
+    pub fn names(&self) -> &[String] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// The zones a launch mode loads after its base zones, in load order: an
+/// asset a later zone carries replaces the one an earlier zone had. A launch
+/// with no mode of its own has none, over the default base set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModeZones {
-    zones: Vec<String>,
+    base: BaseZones,
+    names: Vec<String>,
     layers: Vec<String>,
 }
 
@@ -658,9 +710,14 @@ impl ModeZones {
     /// Zone stems separated by whitespace, as a settings row spells them.
     pub fn parse(row: &str) -> Self {
         Self {
-            zones: row.split_whitespace().map(str::to_owned).collect(),
+            base: BaseZones::default(),
+            names: row.split_whitespace().map(str::to_owned).collect(),
             layers: Vec::new(),
         }
+    }
+
+    pub fn with_base(self, base: BaseZones) -> Self {
+        Self { base, ..self }
     }
 
     /// Zones loaded after the mode's own when the user's data has them,
@@ -670,8 +727,12 @@ impl ModeZones {
         self
     }
 
+    pub fn base(&self) -> &BaseZones {
+        &self.base
+    }
+
     pub fn names(&self) -> &[String] {
-        &self.zones
+        &self.names
     }
 
     pub fn layers(&self) -> &[String] {
@@ -679,7 +740,7 @@ impl ModeZones {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.zones.is_empty()
+        self.names.is_empty()
     }
 }
 

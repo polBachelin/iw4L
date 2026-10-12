@@ -1,4 +1,5 @@
 map,iw5:mp_paris
+base_zones,common_mp
 mode_zones,common_specialops common_survival patch_specialops patch_survival
 layer_zones,code_post_gfx so_survival_<map>
 waves_table,sp/survival_waves.csv
@@ -42,3 +43,4 @@ armory_replacement_continue,continue
 armory_replacement_grants,launcher
 primary_slots,2
 pause_menu,iw4l_pause
+player_viewhands,viewhands_player_delta

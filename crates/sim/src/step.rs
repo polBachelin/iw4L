@@ -28,7 +28,7 @@ use playerstate_iw4::buttons;
 pub(crate) struct StepRequest {
     pub(crate) tick: Tick,
     pub(crate) input: TickInput,
-    msec: i32,
+    pub(crate) msec: i32,
     pub(crate) reason: crate::StepReason,
     action_results: Vec<ActionResult>,
     fire_results: Vec<crate::FireCommandResult>,

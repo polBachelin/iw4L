@@ -15,6 +15,7 @@ pub mod players;
 pub mod presence;
 pub mod registry;
 pub mod restart;
+pub(crate) mod script_anim;
 mod sentry_placement;
 pub mod spectators;
 pub mod tables;

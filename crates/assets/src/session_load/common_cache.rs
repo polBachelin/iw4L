@@ -5,10 +5,12 @@ static NEXT_COMMON_PROFILE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic:
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommonKey {
     pub(super) profile: asset_transport::RuntimeProfile,
-    pub(super) runtime: Option<PathBuf>,
+    /// The launch mode's base zones in load order; the first is the anchor
+    /// whose census the rest of them and the mode zones are laid over.
+    pub(super) base: Vec<PathBuf>,
     pub(super) foreign: Option<PathBuf>,
-    /// The launch mode's zones, walked after `common_mp` in this order: a set
-    /// prepared for one mode is never the set of another.
+    /// The launch mode's zones, walked after the base zones in this order: a
+    /// set prepared for one mode is never the set of another.
     pub(super) mode: Vec<PathBuf>,
 }
 
@@ -16,29 +18,33 @@ impl CommonKey {
     pub(super) fn for_match(
         profile: asset_transport::RuntimeProfile,
         zone_ff: Option<&Path>,
-        runtime: Option<&Path>,
+        base: &[PathBuf],
         mode: &[PathBuf],
         report: &mut Vec<String>,
     ) -> Self {
         Self {
             profile,
-            runtime: runtime.map(Path::to_path_buf),
-            foreign: resolve_foreign_material_donor(zone_ff, runtime, report),
+            base: base.to_vec(),
+            foreign: resolve_foreign_material_donor(
+                zone_ff,
+                base.first().map(PathBuf::as_path),
+                report,
+            ),
             mode: mode.to_vec(),
         }
     }
 
     fn shell(games: &asset_transport::GamesRoot, report: &mut Vec<String>) -> Self {
-        let runtime = match find_common_mp_for_envelope(games, fastfile_iw4::ZONE_VERSION_PC) {
-            Ok(found) => Some(found.path),
+        let base = match find_common_mp_for_envelope(games, fastfile_iw4::ZONE_VERSION_PC) {
+            Ok(found) => vec![found.path],
             Err(error) => {
                 report.push(format!("CAC iw4: {error}"));
-                None
+                Vec::new()
             }
         };
         Self {
             profile: asset_transport::RuntimeProfile::Iw4,
-            runtime,
+            base,
             foreign: None,
             mode: Vec::new(),
         }
@@ -47,9 +53,15 @@ impl CommonKey {
 
 impl std::fmt::Display for CommonKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.runtime {
-            Some(path) => write!(f, "{}", path.display())?,
-            None => f.write_str("<no runtime common_mp>")?,
+        match self.base.split_first() {
+            Some((anchor, rest)) => {
+                write!(f, "{}", anchor.display())?;
+                if !rest.is_empty() {
+                    let stems: Vec<_> = rest.iter().map(|zone| zone_stem(zone)).collect();
+                    write!(f, " + base [{}]", stems.join(" "))?;
+                }
+            }
+            None => f.write_str("<no base zones>")?,
         }
         if let Some(foreign) = &self.foreign {
             write!(f, " + {}", foreign.display())?;
@@ -303,7 +315,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let started = std::time::Instant::now();
     let progress = LoadProgress::default();
     let pool = load_pool();
-    let anchor = key.runtime.clone();
+    let anchor = key.base.first().cloned();
 
     let startup_walk = {
         let anchor = anchor.clone();
@@ -353,21 +365,24 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
         let progress = progress.clone();
         pool.spawn(async move {
             let Some(path) = anchor else {
-                progress.record_skipped_scoped(StageId::CommonAssets, "common_mp");
+                progress.record_skipped_scoped(StageId::CommonAssets, "base zones");
                 return None;
             };
-            let stage = progress.begin_scoped(StageId::CommonAssets, "common_mp", None);
+            let stage = progress.begin_scoped(StageId::CommonAssets, zone_stem(&path), None);
             let opened = open_zone_shared(&path);
             finish_zone_open(stage, &opened);
             Some((path, opened))
         })
     };
 
-    // The launch mode's zones open beside common_mp and are walked after it,
-    // in their order, each laid over what the zones before it left.
+    // The base zones after the anchor, then the mode's zones, open beside the
+    // anchor and are walked after it in that order, each laid over what the
+    // zones before it left.
     let mode_open: Vec<_> = key
-        .mode
+        .base
         .iter()
+        .skip(1)
+        .chain(&key.mode)
         .cloned()
         .map(|path| {
             let progress = progress.clone();
@@ -407,9 +422,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
                 }
                 None => {
                     progress.record_skipped(StageId::Localization);
-                    report.push(
-                        "localize: no runtime common_mp — every on-screen string is a gap".into(),
-                    );
+                    report.push("localize: no base zone — every on-screen string is a gap".into());
                     LocalizeCatalog::default()
                 }
             };
@@ -582,7 +595,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             material_seed,
             [format!("common_mp models: open zone: {error}")]
                 .into_iter()
-                .chain(mode_zones_unwalked(&key.mode))
+                .chain(zones_unwalked(&key))
                 .collect(),
         ),
         None => (
@@ -596,7 +609,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             asset_game::FxModelCatalog::default(),
             None,
             material_seed,
-            mode_zones_unwalked(&key.mode).into_iter().collect(),
+            zones_unwalked(&key).into_iter().collect(),
         ),
     };
     common_report.append(&mut common_walk_report);
@@ -929,13 +942,20 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     set
 }
 
-/// The mode's zones lay over common_mp's census; with no common_mp walked
-/// there is nothing to lay them over, and the report says so.
-fn mode_zones_unwalked(mode: &[PathBuf]) -> Option<String> {
-    (!mode.is_empty()).then(|| {
-        let stems: Vec<_> = mode.iter().map(|zone| zone_stem(zone)).collect();
+/// The later base zones and the mode's zones lay over the anchor's census;
+/// with no anchor walked there is nothing to lay them over, and the report
+/// says so.
+fn zones_unwalked(key: &CommonKey) -> Option<String> {
+    let stems: Vec<_> = key
+        .base
+        .iter()
+        .skip(1)
+        .chain(&key.mode)
+        .map(|zone| zone_stem(zone))
+        .collect();
+    (!stems.is_empty()).then(|| {
         format!(
-            "mode zone gap: [{}] not walked: no common_mp census to lay them over",
+            "mode zone gap: [{}] not walked: no base zone census to lay them over",
             stems.join(" ")
         )
     })

@@ -202,6 +202,7 @@ pub(crate) struct ZoneWalkSink {
 
     pub script_sound: asset_audio::MapScriptSoundSource,
     pub iw5_map: asset_world::MapDeclarations,
+    pub path_graph: asset_world::PathGraph,
 
     pub t5_teamset: Option<String>,
 
@@ -496,6 +497,15 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
         self.xmodel_names_iw5.get(&slot).copied()
     }
 
+    fn capture_path_data(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::PathDataGeometry,
+    ) -> fastfile_iw5::Result<()> {
+        self.path_graph = asset_world::capture_path_graph_iw5(s, &self.strings_iw5, geometry);
+        Ok(())
+    }
+
     fn alias(
         &mut self,
         ty: fastfile_iw5::AssetType,
@@ -704,7 +714,10 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
                         brush_models,
                     },
                 ),
-                None => diag::warn!(World, "addon map entities: the zone's entity string is unreadable"),
+                None => diag::warn!(
+                    World,
+                    "addon map entities: the zone's entity string is unreadable"
+                ),
             }
         }
         note_iw5_fx_tracer_loaded(&mut self.fx, &mut self.tracers, ty, slot, insert_slot);

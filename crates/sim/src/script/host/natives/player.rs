@@ -768,7 +768,18 @@ fn register_death(registry: &mut NativeRegistry) {
     registry.register(
         crate::script::Namespace::Function,
         "getanimlength",
-        |world, _, args| Ok(Value::Float(anim_clip(world, args, 0)?.duration())),
+        |world, _, args| {
+            if let Ok(clip) = anim_clip(world, args, 0) {
+                return Ok(Value::Float(clip.duration()));
+            }
+            let name = match arg(args, 0)? {
+                Value::Animation { name, .. } => name.clone(),
+                other => return Err(format!("{} is not an animation", kind(other))),
+            };
+            super::super::script_anim::length(world, &name)
+                .map(Value::Float)
+                .ok_or_else(|| format!("animation '{name}' is not loaded in the simulation"))
+        },
     );
     registry.register(
         crate::script::Namespace::Function,

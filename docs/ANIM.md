@@ -30,6 +30,14 @@ A pure evaluator, used by **both** the authority **and** the client:
 * `RetainedModelCapability` — pose, `XBoneInfo`, collSurf/collTris for hitscan;
 * `build_body_head_weapon_dobj` — body + head on `j_spine4` + weapon on its tag.
 
+Character models captured into `BodyMeshCatalog` (with bone names, parents and
+bind pose), by name family: `mp_body_*`, `*_mp_body_*`, `*_mp_head_*`
+(MP), `c_*_mp_*_fb` (T6 bodies), `body_*`, `fullbody_*`, `head_*`, `hat_*`
+(SP), plus the dog model `german_sheperd_dog`. `by_name` reaches any of them,
+like `get`, with no extra name filter; `kits()` still builds
+team kits from the MP bodies only. `torso_stabilizer` is optional: SP bodies
+parent `j_spinelower` and the hips straight to `j_mainroot`.
+
 A missing clip **never** turns into the bind pose; additive nodes are a typed
 gap, not "ordinary blending".
 
@@ -50,5 +58,13 @@ gap, not "ordinary blending".
   mandatory material that failed is a refusal naming model, surface and
   material. Remote kits (`PreparedRemoteKits`: models, hide bits, shared DObj)
   and dropped items are composed at install, not on first sight.
+
+Script entities with an anim tree (`sim::script::host::script_anim`) are the
+exception to "semantics, not a tree": the blend state is authoritative on the script
+entity and reaches the DObj as an `XAnimTreeSnapshot` (one blend root, one leaf per
+animation, see [`GSC-RUNTIME.md`](GSC-RUNTIME.md)). `render_anim` resolves it like any
+other tree: each leaf's tracks bind to the model's bones by name, tracks for bones the
+model lacks are skipped, and the leaves blend by weight. A leaf whose clip is not
+loaded on the client refuses the pose instead of falling back to the bind pose.
 
 To watch it live: `IW4L_PERF=1` / [`PERF.md`](PERF.md).

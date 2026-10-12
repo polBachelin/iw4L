@@ -20,14 +20,14 @@ pub struct MatchLoadBusy(pub bool);
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchLoadAbort(pub u64);
 
-/// Fixed for the process: every map change resolves its `common_mp` the same
+/// Fixed for the process: every map change resolves its base zones the same
 /// way the launch did.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MatchRuntimeProfile(pub asset_transport::RuntimeProfile);
 
-/// Fixed for the process like the profile: the zones the launch mode loads
-/// after `common_mp`, resolved again beside every map's `common_mp`. A launch
-/// that inserts none loads no mode zones.
+/// Fixed for the process like the profile: the base and mode zones the launch
+/// mode loads after the map, resolved again beside every map. A launch that
+/// inserts none loads the default base set and no mode zones.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct MatchModeZones(pub asset_transport::ModeZones);
 
@@ -56,8 +56,9 @@ pub struct MatchLoadRequest {
 
     pub zone: String,
     pub zone_ff: Result<PathBuf, String>,
-    pub common_mp: Result<PathBuf, String>,
-    /// The mode zones found beside `common_mp`, in load order.
+    /// The mode's base zones found beside the map, in load order.
+    pub base_zones: Result<Vec<PathBuf>, String>,
+    /// The mode zones found beside the base zones, in load order.
     pub mode_zones: Result<Vec<PathBuf>, String>,
     pub progress: LoadProgress,
 }
@@ -151,7 +152,7 @@ fn start_match_load(
     let mode_zones = match request
         .zone_ff
         .as_ref()
-        .and(request.common_mp.as_ref())
+        .and(request.base_zones.as_ref())
         .and(request.mode_zones.as_ref())
     {
         Ok(mode_zones) => mode_zones.clone(),
@@ -168,7 +169,7 @@ fn start_match_load(
         }
     };
     let zone_ff = request.zone_ff.clone();
-    let common_mp = request.common_mp.clone();
+    let base_zones = request.base_zones.clone();
     let progress = request.progress.clone();
     let request_id = request.request_id;
     let load_key = request.load_key;
@@ -192,7 +193,7 @@ fn start_match_load(
         match load_prepared_match(
             profile,
             zone_ff,
-            common_mp,
+            base_zones,
             mode_zones.clone(),
             progress.clone(),
         )
@@ -290,8 +291,8 @@ fn approve_map_load(
             .map(|zone| zone.zone_name.clone())
             .unwrap_or_else(|_| request.zone.clone());
         let zone_ff = found.map(|zone| zone.path);
-        let common_mp = match &zone_ff {
-            Ok(path) => profile.find_common_mp(&games, path).map(|zone| zone.path),
+        let base_zones = match &zone_ff {
+            Ok(path) => profile.find_base_zones(&games, path, &mode),
             Err(error) => Err(error.clone()),
         };
         let mode_zones = match &zone_ff {
@@ -301,7 +302,7 @@ fn approve_map_load(
         let error = zone_ff
             .as_ref()
             .err()
-            .or_else(|| common_mp.as_ref().err())
+            .or_else(|| base_zones.as_ref().err())
             .or_else(|| mode_zones.as_ref().err())
             .cloned();
         if let Some(error) = error {
@@ -321,7 +322,7 @@ fn approve_map_load(
             load_key: request.load_key,
             zone,
             zone_ff,
-            common_mp,
+            base_zones,
             mode_zones,
             progress,
         });

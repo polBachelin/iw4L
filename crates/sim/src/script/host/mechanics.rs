@@ -167,6 +167,7 @@ pub(crate) fn advance_mechanics(world: &mut World) {
         return;
     }
     let now = i64::from(request.tick.0) * i64::from(crate::MATCH_TICK_MS);
+    let dt = request.msec as f32 / 1000.0;
     let runtime = world.resource::<Runtime>();
     if runtime.fault.is_some() || runtime.program.is_none() {
         return;
@@ -174,6 +175,7 @@ pub(crate) fn advance_mechanics(world: &mut World) {
     advance_motions(world, now);
     advance_bodies(world);
     advance_slides(world);
+    super::script_anim::advance(world, dt);
     apply_entity_links(world);
     super::players::apply_player_links(world);
     super::presence::settle_collision(world);

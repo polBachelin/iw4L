@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use fastfile_iw4::ZoneStream;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -247,7 +249,7 @@ pub fn flag_descriptors_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<FlagDescrip
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_flag_descriptors(text)
+    parse_flag_descriptors(&text)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -294,7 +296,7 @@ pub fn map_script_structs_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<MapScript
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_map_script_structs(text)
+    parse_map_script_structs(&text)
 }
 
 pub fn map_use_triggers_t5(s: &fastfile_t5::ZoneStream<'_>) -> Vec<MapUseTrigger> {
@@ -308,7 +310,7 @@ pub fn map_use_triggers_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<MapUseTrigg
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_map_use_triggers(text)
+    parse_map_use_triggers(&text)
 }
 
 fn has_ascii_prefix(value: &str, prefix: &str) -> bool {
@@ -375,7 +377,7 @@ pub fn airstrike_height(s: &ZoneStream<'_>) -> Option<f32> {
 }
 
 pub fn airstrike_height_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Option<f32> {
-    parse_airstrike_height(entity_string_iw5(s)?)
+    parse_airstrike_height(&entity_string_iw5(s)?)
 }
 
 pub fn minimap_corners_t5(s: &fastfile_t5::ZoneStream<'_>) -> Option<MinimapCorners> {
@@ -385,7 +387,7 @@ pub fn minimap_corners_t5(s: &fastfile_t5::ZoneStream<'_>) -> Option<MinimapCorn
 
 pub fn minimap_corners_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Option<MinimapCorners> {
     let text = entity_string_iw5(s)?;
-    parse_minimap_corners(text)
+    parse_minimap_corners(&text)
 }
 
 pub fn worldspawn_north_yaw_t5(s: &fastfile_t5::ZoneStream<'_>) -> Option<f32> {
@@ -393,7 +395,7 @@ pub fn worldspawn_north_yaw_t5(s: &fastfile_t5::ZoneStream<'_>) -> Option<f32> {
 }
 
 pub fn worldspawn_north_yaw_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Option<f32> {
-    parse_worldspawn_north_yaw(entity_string_iw5(s)?)
+    parse_worldspawn_north_yaw(&entity_string_iw5(s)?)
 }
 
 pub fn script_model_placements(s: &ZoneStream<'_>) -> Vec<ScriptModelPlacement> {
@@ -561,19 +563,19 @@ pub fn dm_spawn_points_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<SpawnPoint> 
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_spawn_points(text, MP_SPAWN_CLASSNAMES)
+    parse_spawn_points(&text, MP_SPAWN_CLASSNAMES)
 }
 
 pub fn intermission_view_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Option<IntermissionView> {
     let text = entity_string_iw5(s)?;
-    parse_intermission_view(text)
+    parse_intermission_view(&text)
 }
 
 pub fn script_model_placements_iw5(s: &fastfile_iw5::ZoneStream<'_>) -> Vec<ScriptModelPlacement> {
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_script_model_placements(text)
+    parse_script_model_placements(&text)
 }
 
 pub fn script_brush_model_placements(s: &ZoneStream<'_>) -> Vec<ScriptBrushModelPlacement> {
@@ -598,7 +600,7 @@ pub fn script_brush_model_placements_iw5(
     let Some(text) = entity_string_iw5(s) else {
         return Vec::new();
     };
-    parse_script_brush_model_placements(text)
+    parse_script_brush_model_placements(&text)
 }
 
 fn entity_string<'a>(s: &'a ZoneStream<'_>) -> Option<&'a str> {
@@ -616,7 +618,7 @@ pub fn map_ents_entity_string_t5<'a>(s: &'a fastfile_t5::ZoneStream<'_>) -> Opti
     entity_string_t5(s)
 }
 
-pub fn map_ents_entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<&'a str> {
+pub fn map_ents_entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<Cow<'a, str>> {
     entity_string_iw5(s)
 }
 
@@ -627,7 +629,9 @@ pub fn addon_map_ents_iw5<'a>(
 ) -> Option<(&'a str, &'a str, usize)> {
     let addon = s.addon_map_ents()?;
     let name = s.cstr(addon.name?).ok()?;
-    let bytes = s.slice_at(addon.entity_string?, 0, addon.entity_chars).ok()?;
+    let bytes = s
+        .slice_at(addon.entity_string?, 0, addon.entity_chars)
+        .ok()?;
     let text = core::str::from_utf8(bytes).ok()?;
     Some((name, text.trim_end_matches('\0'), addon.submodel_count))
 }
@@ -708,11 +712,32 @@ fn entity_string_t5<'a>(s: &'a fastfile_t5::ZoneStream<'_>) -> Option<&'a str> {
     core::str::from_utf8(bytes).ok()
 }
 
-fn entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<&'a str> {
-    let map_ents = s.map_ents()?;
-    let ptr = map_ents.entity_string?;
-    let bytes = s.slice_at(ptr, 0, map_ents.entity_chars).ok()?;
-    core::str::from_utf8(bytes).ok()
+fn entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Option<Cow<'a, str>> {
+    let text = |entity_string: Option<fastfile_iw5::Ptr>, entity_chars| {
+        let bytes = s.slice_at(entity_string?, 0, entity_chars).ok()?;
+        core::str::from_utf8(bytes)
+            .ok()
+            .map(|t| t.trim_end_matches('\0'))
+    };
+    let map = s
+        .map_ents()
+        .and_then(|g| text(g.entity_string, g.entity_chars));
+    let addon = s
+        .addon_map_ents()
+        .and_then(|g| text(g.entity_string, g.entity_chars));
+    match (map, addon) {
+        (Some(map), Some(addon)) => {
+            let mut merged = String::with_capacity(map.len() + addon.len() + 1);
+            merged.push_str(map);
+            if !map.ends_with('\n') {
+                merged.push('\n');
+            }
+            merged.push_str(addon);
+            Some(Cow::Owned(merged))
+        }
+        (Some(text), None) | (None, Some(text)) => Some(Cow::Borrowed(text)),
+        (None, None) => None,
+    }
 }
 
 pub fn parse_intermission_view(text: &str) -> Option<IntermissionView> {

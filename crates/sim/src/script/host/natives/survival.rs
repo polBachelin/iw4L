@@ -80,9 +80,7 @@ fn set_player_data(world: &mut World, receiver: &Value, args: &[Value]) -> Resul
         newest(set)
             .ok_or(format!("{def_name} has no definition"))?
             .lookup(&[Name(&name), Name(key)])
-            .map_err(|error| {
-                format!("`{name}` `{key}` is no number of {def_name}: {error:?}")
-            })?;
+            .map_err(|error| format!("`{name}` `{key}` is no number of {def_name}: {error:?}"))?;
     }
     let decls = if declared {
         Vec::new()
@@ -134,15 +132,14 @@ fn player_data_schema(
 }
 
 fn newest(set: &structured_data_iw4::DefinitionSet) -> Option<&structured_data_iw4::Definition> {
-    set.definitions.iter().max_by_key(|definition| definition.version)
+    set.definitions
+        .iter()
+        .max_by_key(|definition| definition.version)
 }
 
 /// Whether the schema keys `field` (numbers by the entries of an enum) or
 /// holds it as one number; any other shape is no field the store keeps.
-fn schema_keyed(
-    definition: &structured_data_iw4::Definition,
-    field: &str,
-) -> Result<bool, String> {
+fn schema_keyed(definition: &structured_data_iw4::Definition, field: &str) -> Result<bool, String> {
     use structured_data_iw4::DataType::{Bool, Byte, EnumArray, Int, Short};
     let number = |ty| matches!(ty, Int | Byte | Short | Bool);
     match definition.path_type(&[structured_data_iw4::Key::Name(field)]) {
@@ -155,7 +152,9 @@ fn schema_keyed(
         {
             Ok(true)
         }
-        Ok(ty) => Err(format!("`{field}` is {ty:?}, neither a number nor numbers by key")),
+        Ok(ty) => Err(format!(
+            "`{field}` is {ty:?}, neither a number nor numbers by key"
+        )),
         Err(error) => Err(format!("`{field}` is no field: {error:?}")),
     }
 }
