@@ -58,7 +58,7 @@ impl ZoneSoundCapture {
     }
 
     /// A capture for a zone its caller has named a sound source of its own,
-    /// such as a launch mode's zone, which no fixed name list knows.
+    /// such as a base or launch mode zone, which no fixed name list knows.
     pub fn claim_source(path: &Path, game: ZoneGame, walk: &'static str) -> Option<Self> {
         let claim = Claim::take(path)?;
         Some(Self::new(path, game, walk, Some(claim)))
@@ -174,16 +174,9 @@ fn is_sound_source(path: &Path, game: ZoneGame) -> bool {
         return false;
     };
     let names: &[&str] = match game {
-        ZoneGame::Iw4 => &[
-            "code_post_gfx_mp",
-            "localized_code_post_gfx_mp",
-            "patch_mp",
-            "common_mp",
-            "localized_common_mp",
-        ],
-        ZoneGame::Iw5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
-        ZoneGame::T5 => &["code_post_gfx_mp", "common_mp", "localized_common_mp"],
-        ZoneGame::T6 => &["common_mp"],
+        ZoneGame::Iw4 => &["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"],
+        ZoneGame::Iw5 | ZoneGame::T5 => &["code_post_gfx_mp"],
+        ZoneGame::T6 => &[],
     };
     names.iter().any(|name| stem.eq_ignore_ascii_case(name))
 }

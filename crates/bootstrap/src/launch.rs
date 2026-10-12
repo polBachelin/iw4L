@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use asset_audio::load_mp_sound_bank;
 use asset_game::{load_mp_localized_strings, load_ui_menu_catalog};
-use asset_transport::{LoadProgress, ModeZones, RuntimeProfile, find_zone_file, list_mp_map_packs};
+use asset_transport::{
+    BaseZones, LoadProgress, ModeZones, RuntimeProfile, find_zone_file, list_mp_map_packs,
+};
 use assets::{
     LoadingPreviewSource, LoadingScreen, MatchLoadRequest, MatchModeZones, MatchRuntimeProfile,
     NamespaceSoundIwd, NamespaceTrees,
@@ -375,13 +377,14 @@ fn run_menu(
     steam: &asset_transport::SteamProbe,
 ) {
     start_perf(None, "menu");
-    let ui_games = asset_game::ui_games_root(RuntimeProfile::Iw4, &games).unwrap_or_else(|error| {
-        for line in asset_transport::games_content_report(&games) {
-            diag::warn!(Launch, "{line}");
-        }
-        diag::warn!(Launch, "{error}");
-        fatal(&mw2_not_found(&games, steam))
-    });
+    let ui_games = asset_game::ui_games_root(RuntimeProfile::Iw4, &games, &BaseZones::default())
+        .unwrap_or_else(|error| {
+            for line in asset_transport::games_content_report(&games) {
+                diag::warn!(Launch, "{line}");
+            }
+            diag::warn!(Launch, "{error}");
+            fatal(&mw2_not_found(&games, steam))
+        });
     let shell_common = assets::load_pool().spawn(assets::load_shell_common(games.clone()));
     let (mut menus, menu_report) =
         load_ui_menu_catalog(RuntimeProfile::Iw4, &ui_games, &ModeZones::default());
@@ -449,7 +452,7 @@ fn run_menu(
         started: std::time::Instant::now(),
     })
     .add_systems(Update, install_class_catalog);
-    match load_mp_localized_strings(&ui_games, "iw4:code_post_gfx_mp") {
+    match load_mp_localized_strings(&ui_games, "iw4:code_post_gfx_mp", &BaseZones::default()) {
         Ok(loc) => {
             diag::info!(Launch, "menu: {} localize keys", loc.len());
             app.insert_resource(loc);
@@ -713,7 +716,7 @@ fn run_map(
             request_id: 0,
         });
     }
-    let ui_games_root = asset_game::ui_games_root(frontend.runtime(), &games)
+    let ui_games_root = asset_game::ui_games_root(frontend.runtime(), &games, mode.base())
         .ok()
         .map(|root| root.0);
     app.insert_resource(launch_identity(&config))

@@ -96,7 +96,11 @@ donor. A launch mode names its base zones, loaded right after the map
 (`ModeZones::base`; `survival` reads them from its `base_zones` settings row,
 every other mode keeps `common_mp`). They are found through
 `RuntimeProfile::find_base_zones` and are part of the `CommonKey`; the first one
-anchors the census and the rest are laid over it in their order. A launch mode
+anchors the census and the rest are laid over it in their order. The sound bank
+rows, the menu catalog, the localized strings and the resident clip cache take
+their base zones from the same set, with each base zone's `localized_` sibling
+where the tree has one (a missing sibling is skipped without a gap); the menu
+catalog and the menu strings read from the tree of the first base zone. A launch mode
 adds its own zones (`survival` names MW3's `common_specialops`, `common_survival`,
 `patch_specialops`, `patch_survival` in its `mode_zones` settings row). They are
 found the same way, are part of the `CommonKey`, and are walked by the common

@@ -199,6 +199,7 @@ pub(crate) fn install_sound_bank(
     mut epoch: ResMut<MatchEpoch>,
     resident_clips: Res<crate::clip_store::ResidentClipCache>,
     mut resident: ResMut<ResidentSoundBank>,
+    mode: Option<Res<assets::MatchModeZones>>,
     mut commands: Commands,
 ) {
     let Some(compose) = compose.as_deref_mut() else {
@@ -335,6 +336,7 @@ pub(crate) fn install_sound_bank(
                 Arc::clone(&bank),
                 Some(iwd),
                 compose.common_profile_id,
+                mode.map_or_else(Default::default, |mode| mode.0.base().clone()),
                 Some(resident_clips.clone()),
             );
             commands.queue(move |world: &mut World| {

@@ -684,13 +684,41 @@ impl BaseZones {
         Self(row.split_whitespace().map(str::to_owned).collect())
     }
 
+    /// The set `paths` were found for, named by their stems.
+    pub fn from_paths(paths: &[PathBuf]) -> Self {
+        Self(
+            paths
+                .iter()
+                .filter_map(|path| path.file_stem())
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .collect(),
+        )
+    }
+
     pub fn names(&self) -> &[String] {
         &self.0
+    }
+
+    /// Each base zone's `localized_` sibling, in load order. The data has
+    /// none for some base zones, so a caller skips one it cannot find.
+    pub fn localized(&self) -> impl DoubleEndedIterator<Item = String> + '_ {
+        self.0.iter().map(|name| localized_zone(name))
+    }
+
+    /// Whether `stem` names a base zone or a base zone's `localized_` sibling.
+    pub fn carries(&self, stem: &str) -> bool {
+        self.0.iter().any(|name| {
+            stem.eq_ignore_ascii_case(name) || stem.eq_ignore_ascii_case(&localized_zone(name))
+        })
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
+
+pub fn localized_zone(zone: &str) -> String {
+    format!("localized_{zone}")
 }
 
 /// The zones a launch mode loads after its base zones, in load order: an

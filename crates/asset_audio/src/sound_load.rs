@@ -7,7 +7,7 @@ use fastfile_iw4::{
 };
 
 use crate::discover::{
-    GamesRoot, ModeZones, RuntimeProfile, find_zone_file, find_zone_file_version,
+    GamesRoot, ModeZones, RuntimeProfile, find_zone_file, find_zone_file_version, localized_zone,
 };
 use crate::sound_catalog::SoundCatalog;
 use crate::zone::{ZoneMemory, open_zone_shared};
@@ -179,17 +179,32 @@ fn sound_sources(
     profile: RuntimeProfile,
     games: &GamesRoot,
     map: &Path,
+    base: Result<&[PathBuf], String>,
     mode: Result<&[PathBuf], String>,
 ) -> (Vec<SoundSource>, Vec<SoundSource>) {
     let runtime_namespace = namespace_of_game(profile.game());
-    let runtime = |name: &'static str, merge, absent| SoundSource {
+    let runtime = |name: String, merge, absent| SoundSource {
         namespace: runtime_namespace,
-        name: name.to_owned(),
         found: profile
-            .find_runtime_zone(games, map, name)
+            .find_runtime_zone(games, map, &name)
             .map(|zone| zone.path),
+        name,
         merge,
         absent,
+    };
+    let found = |path: &PathBuf| SoundSource {
+        namespace: runtime_namespace,
+        name: zone_stem(path),
+        found: Ok(path.clone()),
+        merge: Merge::Override,
+        absent: Absent::Gap,
+    };
+    let unfound = |name: &str, error| SoundSource {
+        namespace: runtime_namespace,
+        name: name.to_owned(),
+        found: Err(error),
+        merge: Merge::Override,
+        absent: Absent::Gap,
     };
     let donor = |namespace, name: &'static str, version| SoundSource {
         namespace,
@@ -198,36 +213,28 @@ fn sound_sources(
         merge: Merge::Missing,
         absent: Absent::Skip,
     };
-    let mut before_map = vec![
-        runtime("code_post_gfx_mp", Merge::Override, Absent::Skip),
-        runtime("localized_code_post_gfx_mp", Merge::Override, Absent::Skip),
-        runtime("patch_mp", Merge::Override, Absent::Skip),
-        runtime("common_mp", Merge::Override, Absent::Gap),
-        runtime("localized_common_mp", Merge::Override, Absent::Gap),
-    ];
+    let mut before_map: Vec<_> = ["code_post_gfx_mp", "localized_code_post_gfx_mp", "patch_mp"]
+        .into_iter()
+        .map(|name| runtime(name.to_owned(), Merge::Override, Absent::Skip))
+        .collect();
+    match base {
+        Ok(zones) => {
+            for path in zones {
+                before_map.push(found(path));
+                before_map.push(runtime(
+                    localized_zone(&zone_stem(path)),
+                    Merge::Override,
+                    Absent::Skip,
+                ));
+            }
+        }
+        Err(error) => before_map.push(unfound("base zones", error)),
+    }
     // The launch mode's zones load after the runtime's, in their own order,
     // so an alias one of them carries replaces the runtime's.
     match mode {
-        Ok(zones) => before_map.extend(zones.iter().map(|path| {
-            SoundSource {
-                namespace: runtime_namespace,
-                name: path
-                    .file_stem()
-                    .unwrap_or(path.as_os_str())
-                    .to_string_lossy()
-                    .into_owned(),
-                found: Ok(path.clone()),
-                merge: Merge::Override,
-                absent: Absent::Gap,
-            }
-        })),
-        Err(error) => before_map.push(SoundSource {
-            namespace: runtime_namespace,
-            name: "mode zones".to_owned(),
-            found: Err(error),
-            merge: Merge::Override,
-            absent: Absent::Gap,
-        }),
+        Ok(zones) => before_map.extend(zones.iter().map(found)),
+        Err(error) => before_map.push(unfound("mode zones", error)),
     }
     let after_map = vec![
         donor(
@@ -287,15 +294,26 @@ fn origin_label(origin: ZoneSoundOrigin) -> String {
     }
 }
 
-/// `mode` is the launch mode's zones, found beside the runtime's `common_mp`
-/// and in their load order.
+/// `base` and `mode` are the launch mode's base and mode zones, found beside
+/// the map and in their load order.
 pub fn gather_sound_sources(
     profile: RuntimeProfile,
     games: &GamesRoot,
     map: &Path,
+    base: &[PathBuf],
     mode: &[PathBuf],
 ) -> SoundSources {
-    gather_sources(sound_sources(profile, games, map, Ok(mode)), profile)
+    gather_sources(
+        sound_sources(profile, games, map, Ok(base), Ok(mode)),
+        profile,
+    )
+}
+
+fn zone_stem(path: &Path) -> String {
+    path.file_stem()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn gather_sources(
@@ -430,12 +448,14 @@ pub fn load_mp_sound_bank(
     mode: &ModeZones,
 ) -> Result<LoadedSoundBank, String> {
     let zone_ff = find_zone_file(games, zone)?;
+    let base = profile.find_base_zones(games, &zone_ff.path, mode);
     let mode = profile.find_mode_zones(games, &zone_ff.path, mode);
     let sources = gather_sources(
         sound_sources(
             profile,
             games,
             &zone_ff.path,
+            base.as_deref().map_err(Clone::clone),
             mode.as_deref().map_err(Clone::clone),
         ),
         profile,

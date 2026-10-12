@@ -4,7 +4,7 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use asset_audio::SoundCatalog;
+use asset_audio::{BaseZones, SoundCatalog};
 use asset_core::AssetNamespace;
 use assets::NamespaceSoundIwd;
 use bevy::prelude::*;
@@ -128,7 +128,11 @@ struct LoadedClipKey {
     seek_table: Vec<u32>,
 }
 
-fn resident_clip_key(bank: &SoundCatalog, key: &ClipKey) -> Option<(LoadedClipKey, bool)> {
+fn resident_clip_key(
+    bank: &SoundCatalog,
+    base: &BaseZones,
+    key: &ClipKey,
+) -> Option<(LoadedClipKey, bool)> {
     if key.revision() != bank.revision() {
         return None;
     }
@@ -143,12 +147,8 @@ fn resident_clip_key(bank: &SoundCatalog, key: &ClipKey) -> Option<(LoadedClipKe
     }
     let common = matches!(
         sound.zone.as_str(),
-        "code_post_gfx_mp"
-            | "localized_code_post_gfx_mp"
-            | "patch_mp"
-            | "common_mp"
-            | "localized_common_mp"
-    );
+        "code_post_gfx_mp" | "localized_code_post_gfx_mp" | "patch_mp"
+    ) || base.carries(sound.zone.as_str());
     Some((
         LoadedClipKey {
             content: sound.encoded_content_id(),
@@ -276,6 +276,7 @@ struct MediaServiceInner {
     retirement: Sender<ClipWorkers>,
     clip_cache: Option<PreparedClipCache>,
     common_profile_id: u64,
+    base: Arc<BaseZones>,
 }
 
 impl Drop for MediaServiceInner {
@@ -335,14 +336,17 @@ struct MediaRequests {
 impl ClipStore {
     pub fn start(bank: Arc<SoundCatalog>, iwd: Option<Arc<NamespaceSoundIwd>>) -> Self {
         Self {
-            service: MediaService::start_with_common(bank, iwd, 0, None),
+            service: MediaService::start_with_common(bank, iwd, 0, Arc::default(), None),
         }
     }
 
+    /// `base` is the launch mode's base zones: clips from them, like those
+    /// from the startup zones, outlive the bank.
     pub(crate) fn start_with_common(
         bank: Arc<SoundCatalog>,
         iwd: Option<Arc<NamespaceSoundIwd>>,
         common_profile_id: u64,
+        base: BaseZones,
         clip_cache: Option<ResidentClipCache>,
     ) -> Self {
         if let Some(cache) = &clip_cache {
@@ -351,7 +355,13 @@ impl ClipStore {
         }
         let prepared = clip_cache.as_ref().map(|cache| cache.prepared.clone());
         Self {
-            service: MediaService::start_with_common(bank, iwd, common_profile_id, prepared),
+            service: MediaService::start_with_common(
+                bank,
+                iwd,
+                common_profile_id,
+                Arc::new(base),
+                prepared,
+            ),
         }
     }
 
@@ -383,6 +393,7 @@ impl MediaService {
         bank: Arc<SoundCatalog>,
         iwd: Option<Arc<NamespaceSoundIwd>>,
         common_profile_id: u64,
+        base: Arc<BaseZones>,
         clip_cache: Option<PreparedClipCache>,
     ) -> Self {
         if let Some(cache) = &clip_cache {
@@ -420,6 +431,7 @@ impl MediaService {
             let outcomes = Arc::clone(&outcomes);
             let requests = Arc::clone(&requests);
             let clip_cache = clip_cache.clone();
+            let base = Arc::clone(&base);
             let stop_worker = Arc::clone(&stop);
 
             let spawned = std::thread::Builder::new()
@@ -455,7 +467,7 @@ impl MediaService {
                         }
                         if let Some(cache) = &clip_cache
                             && let Ok(pcm) = &result
-                            && let Some((key, common)) = resident_clip_key(&bank, &job.key)
+                            && let Some((key, common)) = resident_clip_key(&bank, &base, &job.key)
                         {
                             cache.remember(common_profile_id, key, common, pcm.clone());
                         }
@@ -497,6 +509,7 @@ impl MediaService {
             retirement,
             clip_cache,
             common_profile_id,
+            base,
         }))
     }
 
@@ -571,7 +584,7 @@ impl MediaService {
         }
         requests.queued.insert(key.clone());
         if let Some(pcm) = self.0.clip_cache.as_ref().and_then(|cache| {
-            resident_clip_key(&self.0.bank, &key)
+            resident_clip_key(&self.0.bank, &self.0.base, &key)
                 .and_then(|(source, common)| cache.ready(self.0.common_profile_id, &source, common))
         }) {
             requests.reused_clips += 1;

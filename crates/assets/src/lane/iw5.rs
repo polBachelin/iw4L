@@ -648,7 +648,7 @@ impl ZoneLane for Iw5Lane {
         decode_color_maps: bool,
         material_seed: asset_material::MaterialCatalog,
     ) -> CommonCensus {
-        let sound = asset_audio::ZoneSoundCapture::claim_common(
+        let sound = asset_audio::ZoneSoundCapture::claim_source(
             path,
             asset_audio::ZoneGame::Iw5,
             "common census",

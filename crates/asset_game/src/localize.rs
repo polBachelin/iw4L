@@ -5,6 +5,7 @@ use bevy::prelude::Resource;
 use fastfile_iw4::{AssetLinkSink, AssetType, Ptr, Result as ZoneResult, ZoneStream, load_zone};
 
 use crate::{ZoneGame, ZoneMemory, open_zone};
+use asset_transport::BaseZones;
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct LocalizeCatalog {
@@ -561,24 +562,30 @@ impl fastfile_t5::AssetSink for T5LocalizeSink {
     }
 }
 
-pub const MP_LOCALIZED_ZONES: &[&str] = &[
-    "localized_code_post_gfx_mp",
-    "localized_common_mp",
-    "localized_ui_mp",
-];
+/// The localized zones beside a runtime whose base zones are `base`, in the
+/// order their strings are read: the first one carrying a key keeps it, so a
+/// later base zone's sibling is read ahead of an earlier one's.
+pub fn localized_zones(base: &BaseZones) -> Vec<String> {
+    std::iter::once("localized_code_post_gfx_mp".to_owned())
+        .chain(base.localized().rev())
+        .chain(std::iter::once("localized_ui_mp".to_owned()))
+        .collect()
+}
 
 pub fn load_mp_localized_strings(
     games: &crate::GamesRoot,
     zone: &str,
+    base: &BaseZones,
 ) -> Result<LocalizeCatalog, String> {
     let zone_ff = crate::find_zone_file(games, zone)?;
     let mut catalog = LocalizeCatalog::default();
-    for name in MP_LOCALIZED_ZONES {
-        match crate::find_zone_for_tree(&zone_ff.path, name) {
+    for name in localized_zones(base) {
+        match crate::find_zone_for_tree(&zone_ff.path, &name) {
             Ok(found) => match load_localize_catalog_for_zone_game(&found.path) {
                 Ok(part) => catalog.absorb(part),
                 Err(e) => diag::warn!(Zone, "localize: {name} failed to load ({e})"),
             },
+            Err(_) if base.carries(&name) => {}
             Err(e) => diag::warn!(
                 Zone,
                 "localize: {name} missing ({e}) — its keys will report as gaps"

@@ -149,13 +149,13 @@ fn start_match_load(
         );
     }
     *waiting_for_retirement = None;
-    let mode_zones = match request
+    let (sound_base, mode_zones) = match request
         .zone_ff
         .as_ref()
         .and(request.base_zones.as_ref())
-        .and(request.mode_zones.as_ref())
+        .and_then(|base| Ok((base, request.mode_zones.as_ref()?)))
     {
-        Ok(mode_zones) => mode_zones.clone(),
+        Ok((base, mode_zones)) => (base.clone(), mode_zones.clone()),
         Err(error) => {
             failed.write(MapLoadFailed {
                 request_id: request.request_id,
@@ -205,8 +205,13 @@ fn start_match_load(
                 }
                 prepared.sound = Some(match (games, sound_path) {
                     (Some(games), Ok(path)) => {
-                        let sources =
-                            asset_audio::gather_sound_sources(profile, &games, &path, &mode_zones);
+                        let sources = asset_audio::gather_sound_sources(
+                            profile,
+                            &games,
+                            &path,
+                            &sound_base,
+                            &mode_zones,
+                        );
                         let map = prepared
                             .sound
                             .take()

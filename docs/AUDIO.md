@@ -40,6 +40,15 @@ rear/center at -3 dB and LFE at -6 dB. IW5 pointer-based speaker maps,
 cross-channel routes and multichannel output remain unsupported; WMA seek/tail
 semantics need corpus validation.
 
+The match sound bank is laid in load order: the runtime's startup zones, each
+of the launch mode's base zones (`ModeZones::base`) followed by its `localized_`
+sibling where the tree has one, then the mode's zones, each replacing the aliases
+before it. A map of the runtime game overrides them; other games' banks only fill
+missing aliases. A base zone is walked as a named sound source
+(`ZoneSoundCapture::claim_source`), so no fixed zone name gates its capture.
+Clips from the startup and base zones stay in the resident clip cache across a
+bank change; mode and map clips do not.
+
 Desired loops use scope/epoch/object/slot versions and retain virtual cursors.
 Control ranks eight map voices with a 0.002 gain floor. Device recovery uses
 bounded backoff; one-shots preserve PCM during short outages until their start
