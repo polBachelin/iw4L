@@ -2,9 +2,10 @@
 //! is a script mover with a team, health and a weapon; scripts give it its
 //! character (`setcharacter`), its anim tree and its behavior.
 
-use super::super::args::{arg, optional, string, vector};
+use super::super::args::{float, optional, string, vector};
 use super::super::entities::EntityKind;
 use super::super::entity_damage::EntityHit;
+use super::actor_path::{self, Nav};
 use crate::frame::FrameWorld;
 use crate::script::Namespace::{Function, Method};
 use crate::script::runtime::raise;
@@ -18,6 +19,7 @@ pub(crate) struct Actor {
     team: Arc<str>,
     weapon: Option<u32>,
     worn: Vec<(Arc<str>, Arc<str>)>,
+    pub(super) nav: Option<Nav>,
 }
 
 fn actor(world: &World, receiver: &Value) -> Result<u64, String> {
@@ -41,6 +43,7 @@ fn alive(world: &mut World, object: u64) -> bool {
 }
 
 pub(crate) fn register(registry: &mut NativeRegistry) {
+    actor_path::register(registry);
     registry.register(Function, "spawnactor", |world, _, args| {
         let origin = vector(args, 0)?;
         let angles = vector(args, 1)?;
@@ -66,18 +69,30 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 team: team.into(),
                 weapon: None,
                 worn: Vec::new(),
+                nav: None,
             },
         );
         Ok(Value::Object(id))
     });
     registry.register(Method, "setgoalpos", |world, receiver, args| {
-        actor(world, receiver)?;
-        vector(args, 0)?;
+        let id = actor(world, receiver)?;
+        let goal = vector(args, 0)?;
+        set_goal(world, id, goal, None);
         Ok(Value::Undefined)
     });
     registry.register(Method, "setgoalnode", |world, receiver, args| {
-        actor(world, receiver)?;
-        arg(args, 0)?;
+        let id = actor(world, receiver)?;
+        let node = actor_path::node_arg(world, args, 0)?;
+        let goal = FrameWorld::from_world(world).path_graph().nodes[node as usize].origin;
+        set_goal(world, id, goal, Some(node));
+        Ok(Value::Undefined)
+    });
+    registry.register(Method, "setgoalradius", |world, receiver, args| {
+        let id = actor(world, receiver)?;
+        let radius = float(args, 0)?;
+        world
+            .resource_mut::<Runtime>()
+            .set_object_field(id, "goalradius", Value::Float(radius));
         Ok(Value::Undefined)
     });
     registry.register(Method, "setweapon", |world, receiver, args| {
@@ -101,6 +116,21 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let id = actor(world, receiver)?;
         Ok(Value::string(&world.resource::<Runtime>().actors[&id].team))
     });
+}
+
+fn set_goal(world: &mut World, id: u64, goal: [f32; 3], node: Option<u32>) {
+    let nav = actor_path::set_goal(world, id, goal, node);
+    world
+        .resource_mut::<Runtime>()
+        .actors
+        .get_mut(&id)
+        .unwrap()
+        .nav = Some(nav);
+}
+
+/// Walks every actor with a goal one frame along its route.
+pub(crate) fn advance(world: &mut World) {
+    actor_path::advance_all(world, alive);
 }
 
 /// An actor wears its character as its model: the body, with the head and

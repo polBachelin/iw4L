@@ -63,7 +63,9 @@ team)` (`sim/src/script/host/natives/actor.rs`) makes a script entity of kind
 `maxhealth` (100) fields; `delete()` removes it like any spawned entity. The
 methods are in `script/profile/actor_catalog.rs` under `Owner::Actor`:
 
-* `setgoalpos(point)`, `setgoalnode(node)`: accepted, no movement yet;
+* `setgoalpos(point)`, `setgoalnode(node)`: walk to the goal over the map's
+  path nodes (see [Actor navigation](#actor-navigation));
+* `setgoalradius(radius)`: sets the `goalradius` field;
 * `setweapon(name)`: the weapon `shoot` fires (`"none"` clears it);
 * `shoot([point])`: one bullet from `tag_flash`, or standing eye height, at
   `point` or along the actor's angles;
@@ -84,3 +86,33 @@ actor is notified `damage` (amount, attacker, direction, point, means, model,
 bone, hit location, flags, weapon) and, when its health reaches zero, `death`
 (attacker, means, weapon); kill credit is the script's, from those. A dead
 actor takes no more damage and stays until deleted.
+
+## Actor navigation
+
+Actors walk on the path nodes the map ships (`MapFacts::path_graph`, handed to
+the sim as `SimPathGraph` by `SimContentBuilder::set_path_graph`), never on the
+bots' baked graph. `sim/src/script/host/natives/actor_path.rs` holds it all.
+
+`getnode(name, key)`, `getnodearray(name, key)` and `getallnodes()` return node
+structs with `origin`, `angles`, `type` and, when the node has them,
+`targetname` and `script_noteworthy`; `key` is one of those two names. A node
+is the same struct on every call, so scripts can compare nodes and keep fields
+on them. `type` is the node type's name (`"Path"`, `"Cover Stand"`, ...), and
+`"BAD NODE"` for a type the table does not know.
+
+`setgoalpos(point)` and `setgoalnode(node)` replace the actor's goal. The route
+starts at the nearest of the eight nodes closest to the actor that a clip trace
+at 32 units up reaches unobstructed (the nearest when none does) and ends at the
+same choice around the goal, or at `node` itself. A* over the node links runs
+under one budget of 512 node expansions per frame shared by every actor, in
+actor order; a search that runs out resumes the next frame where it stopped.
+The found route is walked node to node and then to the goal point at 190 units
+a second scaled by the actor's `moveplaybackrate` field (1 when unset). Each
+frame the feet are snapped to the ground with a clip trace from 18 units above
+to 64 below, and the actor turns to face its motion. A dead actor keeps its
+goal but does not move.
+
+The actor is notified `goal` once it is within `goalradius` (field, 0 when
+unset) of the goal horizontally and within its height vertically, or at the end
+of the route, and `bad_path` when there are no nodes or no route links its
+start and goal nodes. Either clears the goal.
