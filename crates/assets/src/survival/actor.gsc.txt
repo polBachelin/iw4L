@@ -15,10 +15,10 @@ settingpercent( key )
 	return int( setting( key ) ) / 100;
 }
 
-// survival/actor_anims.csv: state, stance ("" for any), direction ("" for
-// any), anim names (space separated, one drawn per play). The engine
-// narrows each cell to the loaded anims before the script starts; a cell
-// left empty plays nothing.
+// survival/actor_anims.csv: anim set, state, stance ("" for any),
+// direction ("" for any), anim names (space separated, one drawn per play).
+// The engine narrows each cell to the loaded anims before the script
+// starts; a cell left empty plays nothing.
 readanims()
 {
 	if ( isdefined( level.actoranims ) )
@@ -27,22 +27,28 @@ readanims()
 	level.actoranims = [];
 	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
 	{
-		state = tablelookupbyrow( table, row, 0 );
-		if ( !isdefined( level.actoranims[ state ] ) )
-			level.actoranims[ state ] = [];
+		animset = tablelookupbyrow( table, row, 0 );
+		state = tablelookupbyrow( table, row, 1 );
+		if ( !isdefined( level.actoranims[ animset ] ) )
+			level.actoranims[ animset ] = [];
+		if ( !isdefined( level.actoranims[ animset ][ state ] ) )
+			level.actoranims[ animset ][ state ] = [];
 		entry = spawnstruct();
-		entry.stance = tablelookupbyrow( table, row, 1 );
-		entry.direction = tablelookupbyrow( table, row, 2 );
-		entry.anims = strtok( tablelookupbyrow( table, row, 3 ), " " );
-		level.actoranims[ state ][ level.actoranims[ state ].size ] = entry;
+		entry.stance = tablelookupbyrow( table, row, 2 );
+		entry.direction = tablelookupbyrow( table, row, 3 );
+		entry.anims = strtok( tablelookupbyrow( table, row, 4 ), " " );
+		level.actoranims[ animset ][ state ][ level.actoranims[ animset ][ state ].size ] = entry;
 	}
 }
 
-// One anim of `state` for the actor's stance and `direction`, from the first
-// row that fits, else the state's first row; "" when there is none.
+// One anim of `state` in the actor's anim set for its stance and
+// `direction`, from the first row that fits, else the state's first row;
+// "" when there is none.
 pickanim( state, direction )
 {
-	rows = level.actoranims[ state ];
+	if ( !isdefined( level.actoranims[ self.animset ] ) )
+		return "";
+	rows = level.actoranims[ self.animset ][ state ];
 	if ( !isdefined( rows ) || rows.size == 0 )
 		return "";
 	picked = rows[ 0 ];
@@ -98,6 +104,7 @@ actor_think( archetype )
 	self useanimtree( #animtree );
 	table = "survival/archetypes.csv";
 	self.archetype = archetype;
+	self.animset = "human";
 	self.pose = "stand";
 	self.aimaccuracy = int( tablelookup( table, 0, archetype, 5 ) ) / 100;
 	self.burstshots = int( tablelookup( table, 0, archetype, 6 ) );

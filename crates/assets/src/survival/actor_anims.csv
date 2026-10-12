@@ -1,22 +1,27 @@
-idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
-idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
-run,stand,,run_lowready_f
-run,crouch,,crouch_fastwalk_f
-walk,stand,,walk_lowready_f
-walk,crouch,,crouch_fastwalk_f
-aim,stand,,exposed_aim_5
-aim,crouch,,exposed_crouch_aim exposed_crouch_aim_5
-fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
-fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
-pain,stand,b,exposed_pain_face exposed_pain_groin exposed_pain_right_arm exposed_pain_left_arm
-pain,stand,f,exposed_pain_back
-pain,stand,,exposed_pain_face exposed_pain_groin
-pain,crouch,,exposed_crouch_pain_chest exposed_crouch_pain_headsnap exposed_crouch_pain_flinch
-death,stand,b,death_stand_sniper_chest1 exposed_death_headshot exposed_death_neckgrab exposed_death_falltoknees
-death,stand,f,exposed_death_twist exposed_death_falltoknees
-death,stand,,death_stand_sniper_chest1 exposed_death_groin
-death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
-explode,,f,death_explosion_stand_f_v1
-explode,,b,death_explosion_stand_b_v1
-explode,,l,death_explosion_stand_l_v1
-explode,,r,death_explosion_stand_r_v1
+human,idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
+human,idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
+human,run,stand,,run_lowready_f
+human,run,crouch,,crouch_fastwalk_f
+human,walk,stand,,walk_lowready_f
+human,walk,crouch,,crouch_fastwalk_f
+human,aim,stand,,exposed_aim_5
+human,aim,crouch,,exposed_crouch_aim exposed_crouch_aim_5
+human,fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
+human,fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
+human,pain,stand,b,exposed_pain_face exposed_pain_groin exposed_pain_right_arm exposed_pain_left_arm
+human,pain,stand,f,exposed_pain_back
+human,pain,stand,,exposed_pain_face exposed_pain_groin
+human,pain,crouch,,exposed_crouch_pain_chest exposed_crouch_pain_headsnap exposed_crouch_pain_flinch
+human,death,stand,b,death_stand_sniper_chest1 exposed_death_headshot exposed_death_neckgrab exposed_death_falltoknees
+human,death,stand,f,exposed_death_twist exposed_death_falltoknees
+human,death,stand,,death_stand_sniper_chest1 exposed_death_groin
+human,death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
+human,explode,,f,death_explosion_stand_f_v1
+human,explode,,b,death_explosion_stand_b_v1
+human,explode,,l,death_explosion_stand_l_v1
+human,explode,,r,death_explosion_stand_r_v1
+dog,idle,,,german_shepherd_idle german_shepherd_attackidle
+dog,run,,,german_shepherd_run
+dog,attack,,,german_shepherd_attack_ai_01_start_a german_shepherd_run_attack
+dog,pain,,,german_shepherd_run_pain
+dog,death,,,german_shepherd_death_front

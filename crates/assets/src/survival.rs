@@ -241,18 +241,27 @@ mod fill_in_column {
     pub(super) const BURST: usize = 6;
 }
 
-/// `ACTOR_ANIMS_TABLE`: state, stance (empty for any), direction (empty for
-/// any), anim names (space separated, one drawn per play).
+/// `ACTOR_ANIMS_TABLE`: anim set, state, stance (empty for any), direction
+/// (empty for any), anim names (space separated, one drawn per play).
 mod actor_anim_column {
-    pub(super) const STATE: usize = 0;
-    pub(super) const STANCE: usize = 1;
-    pub(super) const DIRECTION: usize = 2;
-    pub(super) const ANIMS: usize = 3;
+    pub(super) const SET: usize = 0;
+    pub(super) const STATE: usize = 1;
+    pub(super) const STANCE: usize = 2;
+    pub(super) const DIRECTION: usize = 3;
+    pub(super) const ANIMS: usize = 4;
 }
 
-/// The states, stances and push directions the actor script picks anims for.
-const ACTOR_ANIM_STATES: [&str; 8] = [
-    "idle", "run", "walk", "aim", "fire", "pain", "death", "explode",
+/// The anim sets with the states their script picks anims for, and the
+/// stances and push directions it picks by. A dog's skeleton has no human
+/// bones, so it never plays the human set.
+const ACTOR_ANIM_SETS: [(&str, &[&str]); 2] = [
+    (
+        "human",
+        &[
+            "idle", "run", "walk", "aim", "fire", "pain", "death", "explode",
+        ],
+    ),
+    ("dog", &["idle", "run", "attack", "pain", "death"]),
 ];
 const ACTOR_STANCES: [&str; 2] = ["stand", "crouch"];
 const ACTOR_DIRECTIONS: [&str; 4] = ["f", "b", "l", "r"];
@@ -281,6 +290,14 @@ const ACTOR_PERCENTS: [&str; 3] = [
     "actor_crouch_percent",
     "actor_pain_percent",
 ];
+/// Settings rows the dog script reads as whole numbers.
+const DOG_NUMBERS: [&str; 5] = [
+    "dog_attack_range",
+    "dog_bite_radius",
+    "dog_bite_damage",
+    "dog_bite_ms",
+    "dog_attack_rest_ms",
+];
 
 /// `CHARACTERS_TABLE`: id, body model, head models (space separated, one
 /// drawn per spawn), hat model or empty.
@@ -294,7 +311,7 @@ const FULLBODY_PREFIX: &str = "fullbody_";
 
 /// What the gametype script does for an archetype beyond its weapon and
 /// health (`ARCHETYPES_TABLE` c3), and the `HEAVIES_TABLE` rows each reads.
-const TRAITS: [(&str, &[&str]); 5] = [
+const TRAITS: [(&str, &[&str]); 6] = [
     (
         "explosive",
         &["explosive_means", "explosive_damage_percent"],
@@ -358,14 +375,24 @@ const TRAITS: [(&str, &[&str]); 5] = [
             "chopper_spread",
         ],
     ),
+    (
+        "splode",
+        &[
+            "splode_fx",
+            "splode_means",
+            "splode_radius",
+            "splode_damage_max",
+            "splode_damage_min",
+        ],
+    ),
 ];
 
 /// `HEAVIES_TABLE` rows that name a weapon ref (through `WEAPON_ALIASES_TABLE`),
 /// an effect, a shellshock, means of death, a vehicle or a map key value,
 /// rather than a whole number.
 const HEAVIES_WEAPONS: [&str; 2] = ["martyrdom_weapon", "claymore_weapon"];
-const HEAVIES_MEANS: [&str; 2] = ["explosive_means", "gas_means"];
-const HEAVIES_NAMES: [&str; 9] = [
+const HEAVIES_MEANS: [&str; 3] = ["explosive_means", "gas_means", "splode_means"];
+const HEAVIES_NAMES: [&str; 10] = [
     "gas_fx",
     "gas_shock_high",
     "gas_shock_med",
@@ -375,6 +402,7 @@ const HEAVIES_NAMES: [&str; 9] = [
     "chopper_path_noteworthy",
     "chopper_start_targetname",
     "chopper_death_fx",
+    "splode_fx",
 ];
 
 /// Action slots run 1 to 4.
@@ -382,7 +410,7 @@ const ACTION_SLOTS: std::ops::RangeInclusive<u32> = 1..=4;
 
 /// An IW5 runtime carries compiled scripts only, so every module the engine
 /// starts or calls by name is ours.
-const MODULES: [(&str, &str); 6] = [
+const MODULES: [(&str, &str); 7] = [
     (
         "codescripts/delete",
         include_str!("survival/codescripts_delete.gsc.txt"),
@@ -400,6 +428,10 @@ const MODULES: [(&str, &str); 6] = [
     (
         "maps/mp/_survival_actor",
         include_str!("survival/actor.gsc.txt"),
+    ),
+    (
+        "maps/mp/_survival_dog",
+        include_str!("survival/dog.gsc.txt"),
     ),
 ];
 
@@ -493,7 +525,7 @@ pub fn survival_pick_weapons(
 }
 
 /// Narrows every `ACTOR_ANIMS_TABLE` anim cell to the anims `is_loaded`
-/// knows. A cell left with none takes its state's first row, so the actor
+/// knows. A cell left with none takes its set's state's first row, so the actor
 /// script plays only loaded anims; a state whose first row has none plays
 /// nothing. Returns the anims missing, each once.
 pub fn survival_pick_anims(
@@ -508,9 +540,12 @@ pub fn survival_pick_anims(
         return Vec::new();
     }
     let mut missing = std::collections::BTreeSet::new();
-    let mut first: BTreeMap<String, String> = BTreeMap::new();
+    let mut first: BTreeMap<(String, String), String> = BTreeMap::new();
     for row in anims.cells.chunks_exact_mut(columns).take(anims.rows) {
-        let state = row[actor_anim_column::STATE].clone();
+        let state = (
+            row[actor_anim_column::SET].clone(),
+            row[actor_anim_column::STATE].clone(),
+        );
         let cell = &mut row[actor_anim_column::ANIMS];
         let (loaded, absent): (Vec<&str>, Vec<&str>) =
             cell.split_whitespace().partition(|name| is_loaded(name));
@@ -737,7 +772,8 @@ fn layer_waves_tables(tables: &BTreeMap<String, ScriptTable>) -> Result<Vec<Stri
 /// waves table itself) to the archetypes (of `waves`) and armories the
 /// script plays it with: waves numbered 1 to N with a repeat block, refs that
 /// name archetypes, parallel special counts, and for every archetype an actor
-/// plays a weapon of the loaded zones and a health.
+/// plays a health and, unless it is one of `dog_archetypes`, a weapon of the
+/// loaded zones.
 fn check_waves(
     archetypes: &ScriptTable,
     aliases: &ScriptTable,
@@ -762,6 +798,16 @@ fn check_waves(
         if archetype_row(reference).is_none() {
             gaps.push(format!(
                 "{SETTINGS_TABLE}: unsimulated `{reference}` is no archetype of {waves_name}"
+            ));
+        }
+    }
+    let dogs: Vec<&str> = required_setting("dog_archetypes")?
+        .split_whitespace()
+        .collect();
+    for reference in &dogs {
+        if archetype_row(reference).is_none() {
+            gaps.push(format!(
+                "{SETTINGS_TABLE}: dog `{reference}` is no archetype of {waves_name}"
             ));
         }
     }
@@ -878,6 +924,23 @@ fn check_waves(
         let Some(row) = archetype_row(reference) else {
             continue;
         };
+        let health = cell(row, archetype_column::HEALTH);
+        if !health.parse::<i32>().is_ok_and(|health| health > 0) {
+            gaps.push(format!(
+                "{waves_name}: archetype `{reference}` has no positive health in c{}: `{health}`",
+                archetype_column::HEALTH
+            ));
+        }
+        let reward = cell(row, archetype_column::REWARD);
+        if reward.parse::<u32>().is_err() {
+            gaps.push(format!(
+                "{waves_name}: archetype `{reference}` pays no whole reward in c{}: `{reward}`",
+                archetype_column::REWARD
+            ));
+        }
+        if dogs.iter().any(|r| r.eq_ignore_ascii_case(reference)) {
+            continue;
+        }
         let fill_in = archetypes
             .rows()
             .find(|fill| cell(fill, 0).eq_ignore_ascii_case(reference))
@@ -903,20 +966,6 @@ fn check_waves(
                     "{waves_name}: archetype `{reference}` -> `{named}` (`{resolved}`) is no weapon of the loaded zones"
                 ));
             }
-        }
-        let health = cell(row, archetype_column::HEALTH);
-        if !health.parse::<i32>().is_ok_and(|health| health > 0) {
-            gaps.push(format!(
-                "{waves_name}: archetype `{reference}` has no positive health in c{}: `{health}`",
-                archetype_column::HEALTH
-            ));
-        }
-        let reward = cell(row, archetype_column::REWARD);
-        if reward.parse::<u32>().is_err() {
-            gaps.push(format!(
-                "{waves_name}: archetype `{reference}` pays no whole reward in c{}: `{reward}`",
-                archetype_column::REWARD
-            ));
         }
     }
     Ok(())
@@ -1354,23 +1403,30 @@ fn check_armory_settings(gaps: &mut Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// Holds `ACTOR_ANIMS_TABLE` and the `actor_*` settings to what the actor
-/// script reads: every row a state, stance and direction it picks by, every
-/// state with a row, and its settings whole numbers, percents at most 100.
-/// Anims are not checked: a missing one falls back to its state's first row.
+/// Holds `ACTOR_ANIMS_TABLE` and the `actor_*` and `dog_*` settings to what
+/// the actor and dog scripts read: every row a set, state, stance and
+/// direction they pick by, every state of a set with a row, and their
+/// settings whole numbers, percents at most 100. Anims are not checked: a
+/// missing one falls back to its state's first row.
 fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String> {
     use actor_anim_column as c;
     for row in anims.rows() {
-        let (state, stance, direction) = (
+        let (set, state, stance, direction) = (
+            cell(row, c::SET),
             cell(row, c::STATE),
             cell(row, c::STANCE),
             cell(row, c::DIRECTION),
         );
-        if !ACTOR_ANIM_STATES.contains(&state) {
-            gaps.push(format!(
-                "{ACTOR_ANIMS_TABLE}: `{state}` is no actor state ({})",
-                ACTOR_ANIM_STATES.join(", ")
-            ));
+        match ACTOR_ANIM_SETS.iter().find(|(name, _)| *name == set) {
+            None => gaps.push(format!(
+                "{ACTOR_ANIMS_TABLE}: `{set}` is no anim set ({})",
+                ACTOR_ANIM_SETS.map(|(name, _)| name).join(", ")
+            )),
+            Some((_, states)) if !states.contains(&state) => gaps.push(format!(
+                "{ACTOR_ANIMS_TABLE}: `{state}` is no `{set}` state ({})",
+                states.join(", ")
+            )),
+            Some(_) => {}
         }
         if !stance.is_empty() && !ACTOR_STANCES.contains(&stance) {
             gaps.push(format!(
@@ -1385,12 +1441,19 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
             ));
         }
     }
-    for state in ACTOR_ANIM_STATES {
-        if !anims.rows().any(|row| cell(row, c::STATE) == state) {
-            gaps.push(format!("{ACTOR_ANIMS_TABLE}: no row for state `{state}`"));
+    for (set, states) in ACTOR_ANIM_SETS {
+        for state in states {
+            if !anims
+                .rows()
+                .any(|row| cell(row, c::SET) == set && cell(row, c::STATE) == *state)
+            {
+                gaps.push(format!(
+                    "{ACTOR_ANIMS_TABLE}: no row for `{set}` state `{state}`"
+                ));
+            }
         }
     }
-    for key in ACTOR_NUMBERS {
+    for key in ACTOR_NUMBERS.into_iter().chain(DOG_NUMBERS) {
         let value = required_setting(key)?;
         let most = if ACTOR_PERCENTS.contains(&key) {
             100

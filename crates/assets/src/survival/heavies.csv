@@ -39,3 +39,8 @@ chopper_aim_height,40
 chopper_burst_ms,1000
 chopper_rest_ms,2500
 chopper_spread,150
+splode_fx,explosions/grenadeexp_default
+splode_means,MOD_EXPLOSIVE
+splode_radius,192
+splode_damage_max,120
+splode_damage_min,20

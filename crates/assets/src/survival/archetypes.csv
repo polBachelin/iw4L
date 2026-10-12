@@ -12,6 +12,6 @@ claymore,,russian_military_assault russian_military_smg russian_military_lmg,cla
 chemical,,chemwar_a chemwar_b chemwar_full_a chemwar_full_aa,gas,,30,4
 friendly_support_delta,,delta_a delta_b,,,50,5
 friendly_support_riotshield,,gign_assault gign_smg,,,40,4
-dog_reg,dog_bite,dog,,,,
-dog_splode,dog_bite,dog,,,,
+dog_reg,dog_bite,dog,,130,,
+dog_splode,dog_bite,dog,splode,130,,
 chopper,minigun_littlebird,,chopper,,,
