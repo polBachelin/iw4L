@@ -45,7 +45,11 @@ of the launch mode's base zones (`ModeZones::base`) followed by its `localized_`
 sibling where the tree has one, then the mode's zones, each replacing the aliases
 before it. A map of the runtime game overrides them; other games' banks only fill
 missing aliases. A base zone is walked as a named sound source
-(`ZoneSoundCapture::claim_source`), so no fixed zone name gates its capture.
+(`ZoneSoundCapture::claim_source`), so no fixed zone name gates its capture;
+the localize walk claims a base zone's `localized_` sibling the same way, so
+the sound bank reuses that walk instead of reading the zone again. The startup
+zones (`code_post_gfx_mp`, `localized_code_post_gfx_mp`, `patch_mp`) are still
+a fixed multiplayer list and are not yet read from data.
 Clips from the startup and base zones stay in the resident clip cache across a
 bank change; mode and map clips do not.
 

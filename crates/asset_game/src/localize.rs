@@ -196,17 +196,31 @@ impl fastfile_iw4::AssetSink for LocalizeSink {
     }
 }
 
-pub fn load_localize_catalog(path: &Path) -> Result<LocalizeCatalog, String> {
+/// The sound capture a localize walk of `path` takes: a base zone or its
+/// `localized_` sibling is a sound source the fixed name list does not know.
+fn sound_claim(
+    path: &Path,
+    game: asset_audio::ZoneGame,
+    base: &BaseZones,
+) -> Option<asset_audio::ZoneSoundCapture> {
+    let carried = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| base.carries(stem));
+    if carried {
+        asset_audio::ZoneSoundCapture::claim_source(path, game, "localize")
+    } else {
+        asset_audio::ZoneSoundCapture::claim_common(path, game, "localize")
+    }
+}
+
+pub fn load_localize_catalog(path: &Path, base: &BaseZones) -> Result<LocalizeCatalog, String> {
     let image = open_zone(path).map_err(|e| e.to_string())?;
     let header = image.header().map_err(|e| e.to_string())?;
     let mut memory = ZoneMemory::for_header(&header);
     let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
     let mut sink = LocalizeSink {
-        sound: asset_audio::ZoneSoundCapture::claim_common(
-            path,
-            asset_audio::ZoneGame::Iw4,
-            "localize",
-        ),
+        sound: sound_claim(path, asset_audio::ZoneGame::Iw4, base),
         ..Default::default()
     };
     let walk = load_zone(&mut stream, &mut sink);
@@ -225,17 +239,13 @@ pub fn load_localize_catalog(path: &Path) -> Result<LocalizeCatalog, String> {
     Ok(sink.catalog)
 }
 
-pub fn load_localize_catalog_iw5(path: &Path) -> Result<LocalizeCatalog, String> {
+pub fn load_localize_catalog_iw5(path: &Path, base: &BaseZones) -> Result<LocalizeCatalog, String> {
     let image = open_zone(path).map_err(|e| e.to_string())?;
     let header = image.iw5_header().map_err(|e| e.to_string())?;
     let mut memory = crate::Iw5ZoneMemory::for_header(&header);
     let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
     let mut sink = Iw5LocalizeSink {
-        sound: asset_audio::ZoneSoundCapture::claim_common(
-            path,
-            asset_audio::ZoneGame::Iw5,
-            "localize",
-        ),
+        sound: sound_claim(path, asset_audio::ZoneGame::Iw5, base),
         ..Default::default()
     };
     let walk = fastfile_iw5::load_zone(&mut stream, &mut sink);
@@ -253,17 +263,13 @@ pub fn load_localize_catalog_iw5(path: &Path) -> Result<LocalizeCatalog, String>
     Ok(sink.catalog)
 }
 
-pub fn load_localize_catalog_t5(path: &Path) -> Result<LocalizeCatalog, String> {
+pub fn load_localize_catalog_t5(path: &Path, base: &BaseZones) -> Result<LocalizeCatalog, String> {
     let image = open_zone(path).map_err(|e| e.to_string())?;
     let header = image.t5_header().map_err(|e| e.to_string())?;
     let mut memory = crate::T5ZoneMemory::for_header(&header);
     let mut stream = memory.stream(&image.bytes).map_err(|e| e.to_string())?;
     let mut sink = T5LocalizeSink {
-        sound: asset_audio::ZoneSoundCapture::claim_common(
-            path,
-            asset_audio::ZoneGame::T5,
-            "localize",
-        ),
+        sound: sound_claim(path, asset_audio::ZoneGame::T5, base),
         ..Default::default()
     };
     let walk = fastfile_t5::load_zone(&mut stream, &mut sink);
@@ -396,16 +402,24 @@ impl LocalizeCatalog {
     }
 }
 
-fn load_localize_catalog_for_zone_game(path: &Path) -> Result<LocalizeCatalog, String> {
+fn load_localize_catalog_for_zone_game(
+    path: &Path,
+    base: &BaseZones,
+) -> Result<LocalizeCatalog, String> {
     match asset_transport::zone_game_for_path(path) {
-        Some(ZoneGame::Iw4) | None => load_localize_catalog(path),
-        Some(ZoneGame::Iw5) => load_localize_catalog_iw5(path),
-        Some(ZoneGame::T5) => load_localize_catalog_t5(path),
+        Some(ZoneGame::Iw4) | None => load_localize_catalog(path, base),
+        Some(ZoneGame::Iw5) => load_localize_catalog_iw5(path, base),
+        Some(ZoneGame::T5) => load_localize_catalog_t5(path, base),
         Some(ZoneGame::T6) => load_localize_catalog_t6(path),
     }
 }
 
-pub fn load_localize_catalog_in_lane(path: &Path) -> Result<LocalizeCatalog, String> {
+/// `base` is the base set of the game `path` belongs to, so the walk can
+/// share its sound capture with the sound bank.
+pub fn load_localize_catalog_in_lane(
+    path: &Path,
+    base: &BaseZones,
+) -> Result<LocalizeCatalog, String> {
     let key = localize_cache_key(path);
     if let Some(hit) = cached_localize_catalog(key.as_deref()) {
         return Ok(hit);
@@ -417,7 +431,7 @@ pub fn load_localize_catalog_in_lane(path: &Path) -> Result<LocalizeCatalog, Str
     if let Some(hit) = cached_localize_catalog(key.as_deref()) {
         return Ok(hit);
     }
-    let catalog = load_localize_catalog_for_zone_game(path)?;
+    let catalog = load_localize_catalog_for_zone_game(path, base)?;
     if let Some(key) = &key
         && let Err(error) = asset_transport::cache_put("localize", key, &catalog.cache_encode())
     {
@@ -581,7 +595,7 @@ pub fn load_mp_localized_strings(
     let mut catalog = LocalizeCatalog::default();
     for name in localized_zones(base) {
         match crate::find_zone_for_tree(&zone_ff.path, &name) {
-            Ok(found) => match load_localize_catalog_for_zone_game(&found.path) {
+            Ok(found) => match load_localize_catalog_for_zone_game(&found.path, base) {
                 Ok(part) => catalog.absorb(part),
                 Err(e) => diag::warn!(Zone, "localize: {name} failed to load ({e})"),
             },

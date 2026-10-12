@@ -1051,13 +1051,15 @@ pub(super) fn load_localized_strings_beside(
     };
     let runtime_namespace = asset_core::AssetNamespace::from_zone_game(profile.game());
     // A donor game's strings come from its own multiplayer base set.
-    let localized = |namespace| {
+    let donor_base = asset_transport::BaseZones::default();
+    let base_for = |namespace| {
         if namespace == runtime_namespace {
-            localized_zones(base)
+            base
         } else {
-            localized_zones(&asset_transport::BaseZones::default())
+            &donor_base
         }
     };
+    let localized = |namespace| localized_zones(base_for(namespace));
     let mut lanes: [(asset_core::AssetNamespace, u32, Vec<String>); 4] = [
         (
             asset_core::AssetNamespace::Iw4,
@@ -1146,7 +1148,7 @@ pub(super) fn load_localized_strings_beside(
     stage.set_total(plan.len() as u64);
     for (namespace, found) in plan {
         let name = &found.zone_name;
-        match load_localize_catalog_in_lane(&found.path) {
+        match load_localize_catalog_in_lane(&found.path, base_for(namespace)) {
             Ok(part) if part.is_empty() => {}
             Ok(part) => {
                 report.push(format!(
