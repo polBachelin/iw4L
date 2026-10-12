@@ -753,6 +753,100 @@ pub(crate) fn load_mode_zone(
     census_common_zone(path, image, progress, false, material_seed, sound)
 }
 
+/// A zone walked for its animations alone: no models, menus, sounds or
+/// weapons. Its other assets are still read past, as the stream requires.
+pub(crate) fn load_anim_zone(path: &Path, image: &ZoneImage) -> (XAnimBuild, Vec<String>) {
+    let zone = path
+        .file_stem()
+        .map_or_else(|| "anims".into(), |stem| stem.to_string_lossy());
+    let header = match image.iw5_header() {
+        Ok(header) => header,
+        Err(error) => {
+            return (
+                XAnimBuild::default(),
+                vec![format!("{zone} anims: IW5 zone header: {error}")],
+            );
+        }
+    };
+    let mut memory = Iw5ZoneMemory::for_header(&header);
+    let mut stream = match memory.stream(&image.bytes) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return (
+                XAnimBuild::default(),
+                vec![format!("{zone} anims: IW5 zone arenas: {error}")],
+            );
+        }
+    };
+    let mut sink = AnimZoneSink::default();
+    sink.xanims
+        .set_capture_zone(asset_core::ZoneOwner::from_zone_path(path));
+    sink.xanims.set_capture_ns(asset_core::AssetNamespace::Iw5);
+    let walk = fastfile_iw5::load_zone(&mut stream, &mut sink);
+    let mut report = vec![format!(
+        "{zone} anims (IW5): {} XAnimParts captured ({} gaps)",
+        sink.xanims.len(),
+        sink.xanims.capture_gaps
+    )];
+    if let Err(error) = walk {
+        report.push(format!("{zone} anims: IW5 walk stopped — {error}"));
+    }
+    (sink.xanims, report)
+}
+
+#[derive(Default)]
+struct AnimZoneSink {
+    strings: fastfile_iw5::ScriptStrings,
+    xanims: XAnimBuild,
+}
+
+impl fastfile_iw5::AssetSink for AnimZoneSink {
+    fn set_script_strings(&mut self, strings: fastfile_iw5::ScriptStrings) {
+        self.strings = strings;
+    }
+
+    fn load_asset(
+        &mut self,
+        s: &mut fastfile_iw5::ZoneStream<'_>,
+        _index: usize,
+        ty: fastfile_iw5::AssetType,
+        slot: fastfile_iw5::Ptr,
+    ) -> fastfile_iw5::Result<()> {
+        fastfile_iw5::load_asset_at_observed(s, ty, slot, self)?;
+        Ok(())
+    }
+}
+
+impl fastfile_iw5::AssetLinkSink for AnimZoneSink {
+    fn loaded(
+        &mut self,
+        _s: &fastfile_iw5::ZoneStream<'_>,
+        _ty: fastfile_iw5::AssetType,
+        _slot: fastfile_iw5::Ptr,
+        _insert: Option<fastfile_iw5::Ptr>,
+    ) -> fastfile_iw5::Result<()> {
+        Ok(())
+    }
+
+    fn alias(
+        &mut self,
+        _ty: fastfile_iw5::AssetType,
+        _slot: fastfile_iw5::Ptr,
+        _target: fastfile_iw5::Ptr,
+    ) -> fastfile_iw5::Result<()> {
+        Ok(())
+    }
+
+    fn capture_xanim(
+        &mut self,
+        s: &fastfile_iw5::ZoneStream<'_>,
+        geometry: fastfile_iw5::XAnimPartsGeometry,
+    ) -> fastfile_iw5::Result<()> {
+        self.xanims.capture_xanim_iw5(s, &self.strings, geometry);
+        Ok(())
+    }
+}
+
 fn census_common_zone(
     path: &Path,
     image: &ZoneImage,

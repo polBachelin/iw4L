@@ -24,7 +24,7 @@ a weapon themselves.
 
 * `settings.csv` — `key,value`: zones (`base_zones`, loaded right after the
   map, the first anchoring the census, today `common_mp` as every other mode;
-  `mode_zones`, laid over them), table names, teams, `friendly_fire`
+  `mode_zones`, laid over them; `actor_anim_zones`, see Actors), table names, teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
   `unsimulated_archetypes` (archetypes no bot can play: the waves skip them),
@@ -98,15 +98,17 @@ a weapon themselves.
   loads; until they are, a wrong one falls back to the MP name, which the
   `survival weapons:` line shows. The juggernaut guns (`m60jugg`,
   `riotshieldjugg`) name the MP weapon alone.
-* `archetypes.csv` — `ref,weapon,characters,trait,speed`: fill-ins for archetype
+* `archetypes.csv` — `ref,weapon,characters,trait,speed,accuracy,burst`: fill-ins for archetype
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
   classnames), and what sets an archetype apart. The weapon resolves through
   `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
   characters are `characters.csv` ids, space separated; each spawn wears one
   of them at random (see Characters). The trait is one of
   `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is the
-  bot's move speed in percent (`setmovespeedscale`), empty for 100. Traits
-  and speeds are ours: MW3's table has only the archetype descriptions they
+  bot's move speed in percent (`setmovespeedscale`), empty for 100, and an
+  actor's run rate. Accuracy (percent of shots aimed true) and burst (shots
+  per burst) are an actor's (see Actors), empty on the archetypes no actor
+  plays. Traits, speeds, accuracies and bursts are ours: MW3's table has only the archetype descriptions they
   follow (`Guys strapped with C4 that explode on death`, `Guys that place
   claymores`, `Chemical warfare enemies in gas masks`, `Uses and is weak to
   explosives`).
@@ -255,6 +257,56 @@ Which archetype wears which character is ours:
 | `dog_reg`, `dog_splode` | `german_sheperd_dog` |
 
 Dogs stay out (no dog body or movement).
+
+## Actors
+
+`crates/assets/src/survival/actor.gsc.txt` (module `maps/mp/_survival_actor`)
+is our own behavior for a human actor: retail AI scripts are not run. The
+gametype keeps its entry point in `level.actorthink`; a script that spawns an
+actor (`spawnactor`) and dresses it calls `actor_think( archetype )` on it.
+It loops, every `actor_think_ms`, through these states:
+
+* idle: no living human of the other side is left (or the actor is on
+  `human_team`): it stands still and plays `idle`;
+* move to target: no human is seen within `actor_engage_range`: it runs
+  (`run`) over the path nodes toward the nearest living human, and walks
+  (`walk`, at `actor_walk_rate_percent` of its rate) once within
+  `actor_walk_range`. Its rate (`moveplaybackrate`) is its archetype's speed;
+* engage: the nearest human it sees (a bullet trace from its eye,
+  `actor_eye_height` or `actor_crouch_eye_height`, to theirs) is within
+  range: it stops, stands or crouches (`actor_crouch_percent`), faces them,
+  aims (`aim`), then fires one burst (`fire`) of its archetype's burst length
+  at the weapon's fire interval. Each shot goes to the target's eye at its
+  archetype's accuracy, else up to `actor_miss_spread` units off. It aims
+  again and rests `actor_burst_rest_ms` before it looks again;
+* pain: a hit flinches it at `actor_pain_percent`: it stops and plays one
+  `pain` for its stance and the hit's direction; the other states wait;
+* death: it plays one `death` for its stance and the killing hit's
+  direction, `explode` when the means is one of `actor_explosive_means`, and
+  is deleted after `actor_corpse_ms`.
+
+A hit's direction is the way it pushes the body against the actor's facing:
+`f` forward (hit from behind), `b` back, `l` left, `r` right.
+
+`actor_anims.csv` — `state,stance,direction,anims` — names the SP animation
+assets each state plays: the state (`idle`, `run`, `walk`, `aim`, `fire`,
+`pain`, `death`, `explode`), the stance (`stand`, `crouch`, empty for any),
+the direction (empty for any) and anim names, space separated, one drawn per
+play. The first row that fits the actor's stance and the direction is used,
+else the state's first row. Only SP `generic_human` anims belong there, never
+the MP `pb_*` ones: those twist a torso SP bodies do not have. When the
+match is installed each cell is narrowed to the anims the loaded zones hold,
+and a cell left with none takes its state's first row; the anims missing are
+logged once (`survival actor anims not loaded`). Anim-tree methods take the
+name as a string, resolved in the actor's tree.
+
+SP human anims live in MW3's SP `common` zone, which survival does not load
+until the zone flip. `actor_anim_zones` (`common`) names zones walked for their anims
+alone, after the mode's zones: no models, menus, sounds, weapons or tables
+are taken from them, and an anim the zones before them already hold is kept.
+A zone missing from the user's data is warned at launch (`mode anim zone
+gap`) and the actors play what the other zones hold. The row is temporary:
+the zone flip loads `common` in full and removes it.
 
 ## Waves
 
@@ -525,7 +577,11 @@ positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
 1, every `test_wave` ref an archetype (held to what a bot plays like any
 wave's), every `archetypes.csv` trait one of the five, speed a whole
-percent above zero and character an id of `characters.csv`, every
+percent above zero, accuracy a whole percent 0–100, burst a whole count
+above zero and character an id of `characters.csv`, every
+`actor_anims.csv` row a state, stance and direction the actor script picks
+by with every state given a row, every `actor_*` setting a whole number
+(its percents 0–100) and `actor_explosive_means` naming something, every
 `characters.csv` id named once with a body and no head on a `fullbody_*`
 body, and for each trait in use its `heavies.csv` rows: weapon
 refs that are weapons of the loaded zones (through `weapon_aliases.csv`),

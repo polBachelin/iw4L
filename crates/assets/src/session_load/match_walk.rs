@@ -7,6 +7,7 @@ pub(super) async fn walk_prepared_match(
     zone_ff: Result<PathBuf, String>,
     base_zones: Result<Vec<PathBuf>, String>,
     mode_zones: Vec<PathBuf>,
+    anim_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> (MatchLoadOutcome, Option<Arc<CommonSet>>) {
     let zone_name = zone_ff
@@ -44,6 +45,7 @@ pub(super) async fn walk_prepared_match(
         zone_ff.as_ref().ok().map(PathBuf::as_path),
         base_zones.as_deref().unwrap_or(&[]),
         &mode_zones,
+        &anim_zones,
         &mut donor_report,
     );
     let waiting = progress.begin_scoped(StageId::CommonAssets, "shared common", None);

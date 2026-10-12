@@ -293,6 +293,7 @@ fn run_export_gltf(games: asset_transport::GamesRoot, artifacts: PathBuf, zone_a
         Ok(found.path),
         base_zones,
         Vec::new(),
+        Vec::new(),
         asset_transport::LoadProgress::default(),
     )) {
         assets::MatchLoadOutcome::Ready(prepared) => prepared,
@@ -598,7 +599,20 @@ fn run_map(
         Ok(path) => frontend.runtime().find_mode_zones(&games, path, &mode),
         Err(e) => Err(e.clone()),
     };
+    let mut anim_zones = Vec::new();
     if let Ok(path) = &zone_ff {
+        for (zone, found) in frontend.runtime().find_anim_zones(&games, path, &mode) {
+            match found {
+                Ok(at) => {
+                    diag::info!(Launch, "mode anim zone `{zone}`: {}", at.display());
+                    anim_zones.push(at);
+                }
+                Err(error) => diag::warn!(
+                    Launch,
+                    "mode anim zone gap: `{zone}` is not in the user's data ({error}); actors fall back to the anims the other zones hold"
+                ),
+            }
+        }
         for (layer, found) in frontend.runtime().find_layer_zones(&games, path, &mode) {
             match found {
                 Ok(at) => diag::info!(Launch, "mode layer `{layer}`: {}", at.display()),
@@ -732,6 +746,7 @@ fn run_map(
             zone_ff,
             base_zones,
             mode_zones,
+            anim_zones,
             progress: progress.clone(),
         })
         .insert_resource(LoadingScreen::new(

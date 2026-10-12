@@ -153,7 +153,8 @@ Anim trees on script entities live in `script/host/script_anim.rs`. Their method
 are not in the generated catalogs; `script/profile/anim_tree_catalog.rs` declares
 them for both realms. `UseAnimTree(#animtree)` gives an entity with a model a blend
 state bound to that tree; the other methods fail on an entity without one, or when
-the animation literal belongs to another tree.
+the animation literal belongs to another tree. Where they take an animation, a string
+names one in the entity's own tree, so a script can pick animations from a table.
 - `SetAnim(anim, [weight=1], [blendTime=0.2], [rate=1])` ramps the animation to
   `weight` over `blendTime` seconds. `SetAnimKnob` also ramps every other animation
   to zero over the same time.
