@@ -622,6 +622,13 @@ fn radius_damage(
         Some(Value::Object(id)) => runtime(world).player_client(*id).map(crate::ClientId),
         _ => None,
     };
+    let inflictor = inflictor.or_else(|| match args.get(4) {
+        Some(Value::Object(id)) if runtime(world).actors.contains_key(id) => runtime(world)
+            .entities
+            .get(id)
+            .and_then(|entity| entity.presence),
+        _ => None,
+    });
     let means = optional(args, 5, string)?
         .map(|name| super::super::entity_damage::means_named(&name))
         .transpose()?
@@ -635,6 +642,7 @@ fn radius_damage(
     runtime(world)
         .blasts
         .push(super::super::entity_damage::ScriptBlast {
+            cone: None,
             origin,
             radius,
             max,

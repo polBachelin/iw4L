@@ -104,7 +104,110 @@ pub(crate) fn launch(
     Ok(Value::Object(object))
 }
 
+fn place_charge(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Value, String> {
+    let owner = match receiver {
+        Value::Object(owner) if world.resource::<Runtime>().actors.contains_key(owner) => *owner,
+        _ => return Err("charge owner is not an actor".into()),
+    };
+    let name = string(args, 0)?;
+    let origin = vector(args, 1)?;
+    let angles = vector(args, 2)?;
+    let frame = FrameWorld::from_world(world);
+    let weapon = crate::script_player::weapon_named(&frame, &name)?;
+    let facts = frame
+        .equipment_facts_for(weapon)
+        .ok_or("charge has no equipment facts")?;
+    if facts.timed_detonation || facts.explosion_inner_damage <= 0 {
+        return Err("charge weapon must be a remotely detonated explosive".into());
+    }
+    let model = frame.weapon_projectile_model(weapon).to_owned();
+    let presence = super::presence::spawn_presence(world, origin)?;
+    let number = FrameWorld::from_world(world).gentity_number(presence);
+    let mut runtime = world.resource_mut::<Runtime>();
+    let object = runtime.create_entity(EntityKind::Spawned, "script_model")?;
+    runtime.set_object_field(object, "origin", Value::Vector(origin));
+    runtime.set_object_field(object, "angles", Value::Vector(angles));
+    runtime.set_object_field(object, "model", Value::string(&model));
+    let entity = runtime.entities.get_mut(&object).unwrap();
+    entity.presence = Some(presence);
+    entity.charge = Some((weapon, owner));
+    if let Some(number) = number {
+        entity.number = number;
+    }
+    Ok(Value::Object(object))
+}
+
+fn detonate_charge(world: &mut World, object: u64, weapon: u32, owner: u64) -> Result<(), String> {
+    let mut runtime = world.resource_mut::<Runtime>();
+    let origin = match runtime.object_field(object, "origin") {
+        Value::Vector(origin) => origin,
+        _ => return Err("charge has no origin".into()),
+    };
+    let angles = match runtime.object_field(object, "angles") {
+        Value::Vector(angles) => angles,
+        _ => [0.0; 3],
+    };
+    let inflictor = runtime
+        .entities
+        .get(&owner)
+        .and_then(|entity| entity.presence);
+    let number = runtime.entities[&object].number;
+    let owner_number = runtime
+        .entities
+        .get(&owner)
+        .map_or(-1, |entity| entity.number);
+    if inflictor.is_none() {
+        runtime.delete_entity(object);
+        return Ok(());
+    }
+    drop(runtime);
+    let tick = world.resource::<crate::step::StepRequest>().tick;
+    let mut frame = FrameWorld::from_world(world);
+    let facts = frame
+        .equipment_facts_for(weapon)
+        .ok_or("charge has no equipment facts")?;
+    frame.push_entity_event(
+        tick,
+        crate::EventAudience::All,
+        entity_iw4::EntityEventKind::GRENADE_EXPLODE,
+        crate::EntityEventPayload {
+            number,
+            attacker_entity_num: owner_number,
+            weapon,
+            origin,
+            direction: [0.0, 0.0, 1.0],
+            ..Default::default()
+        },
+    );
+    world
+        .resource_mut::<Runtime>()
+        .blasts
+        .push(super::entity_damage::ScriptBlast {
+            cone: (facts.damage_cone_angle > 0.0 && facts.damage_cone_angle < 180.0).then(|| {
+                (
+                    math_iw4::angle_vectors(angles).0,
+                    facts.damage_cone_angle.to_radians().cos(),
+                )
+            }),
+            origin,
+            radius: facts
+                .explosion_radius
+                .max(facts.explosion_radius_min)
+                .max(0) as f32,
+            max: facts.explosion_inner_damage as f32,
+            min: facts.explosion_outer_damage.max(0) as f32,
+            attacker: None,
+            inflictor,
+            means: "MOD_EXPLOSIVE",
+            weapon,
+        });
+    raise(world, Value::Object(object), "death", vec![]);
+    world.resource_mut::<Runtime>().delete_entity(object);
+    Ok(())
+}
+
 pub(crate) fn register(registry: &mut NativeRegistry) {
+    registry.register(Method, "placecharge", place_charge);
     registry.register(Function, "getmissileowner", |world, _, args| {
         if args.len() != 1 {
             return Err("GetMissileOwner requires one missile argument".into());
@@ -141,6 +244,12 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         launch(world, owner, weapon, start, end)
     });
     registry.register(Method, "detonate", |world, receiver, _| {
+        if let Some((object, entity)) = world.resource::<Runtime>().entity(receiver)
+            && let Some((weapon, owner)) = entity.charge
+        {
+            detonate_charge(world, object, weapon, owner)?;
+            return Ok(Value::Undefined);
+        }
         let (_, id, number) = missile_of(world, receiver)?;
         let now = now_ms(world);
         let mut frame = FrameWorld::from_world(world);

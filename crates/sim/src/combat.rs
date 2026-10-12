@@ -1529,6 +1529,7 @@ pub(crate) fn phase_trace(
                                 target,
                                 amount: scaled,
                                 attacker: Some(em.attacker),
+                                inflictor: None,
                                 means,
                                 weapon: em.weapon,
                                 point: segment.end,

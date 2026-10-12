@@ -163,7 +163,7 @@ no bot and take no client slot. The script spawns it on `enemy_team` with
 its archetype's health (c7), dresses it (see Characters) and runs
 `actor_think( archetype )` on it (see Actors), which gives it its weapon
 (`archetypes.csv`, else c5) and speed. c6 (offhand), c8 and c11 are not read:
-an actor throws nothing, and its aim is its `archetypes.csv` accuracy. Its
+an actor throws no offhand grenades, and its aim is its `archetypes.csv` accuracy. Its
 `death` notify is the wave's kill: the kill is counted, a player who dealt
 it is paid, and the actor plays its death and is deleted after
 `actor_corpse_ms`.
@@ -171,14 +171,21 @@ it is paid, and the actor plays its death and is deleted after
 ## Heavy archetypes
 
 Every archetype plays its row of the waves table: health (c7), weapon and
-reward. The juggernauts (`jug_*`, health 1000 or 2000 in c7) run at their
-speed (75%). The `explosive`, `martyrdom`, `claymore` and `gas` traits are
-not played: they hang on a damage callback and on weapons owned by the
-enemy, and an actor has neither (`magicbullet` and `radiusdamage` credit
-players only, and an actor's damage reaches no script callback). Their
-`heavies.csv` rows stay checked for the archetypes that name them. An actor
-also takes damage whatever its attacker's team: `friendly_fire` holds for
-players and choppers only.
+reward. Juggernauts run at their archetype's speed (75%). Actor damage passes
+through the gametype before health changes: `friendly_fire` protects teammates,
+and the `explosive` trait multiplies explosive damage by
+`explosive_damage_percent`.
+
+A `martyrdom` enemy places a C4 charge on death and detonates it after
+`martyrdom_delay_ms`. A `claymore` enemy plants `claymore_count` charges facing
+the nearest player in range; they arm, trip and detonate at the distances,
+angles and delays in `heavies.csv`, and are removed when their planter dies.
+`placecharge` creates a stationary charge using the weapon's projectile model;
+`detonate` uses that weapon's blast radius, damage, cone and explosion event.
+A `gas` enemy emits its cloud on death, dealing periodic radius damage and
+shellshock for `gas_ms`. Charges and gas retain their actor as damage source,
+so team protection also applies to their victims. A corpse with an active death
+effect remains until that effect finishes.
 
 * `chopper` (MW3's `Enemy Attack Chopper`, row 112: health 1500, reward
   600): no actor. It is a vehicle (`spawnvehicle`) of `heavies.csv`'s
@@ -237,13 +244,13 @@ gametype keeps its entry point in `level.actorthink`; a script that spawns an
 actor (`spawnactor`) and dresses it calls `actor_think( archetype )` on it.
 It loops, every `actor_think_ms`, through these states:
 
-* idle: no living human of the other side is left (or the actor is on
-  `human_team`): it stands still and plays `idle`;
-* move to target: no human is seen within `actor_engage_range`: it runs
-  (`run`) over the path nodes toward the nearest living human, and walks
+* idle: no living player or actor of the other side is left: it stands
+  still and plays `idle`;
+* move to target: no enemy is seen within `actor_engage_range`: it runs
+  (`run`) over the path nodes toward the nearest living enemy, and walks
   (`walk`, at `actor_walk_rate_percent` of its rate) once within
   `actor_walk_range`. Its rate (`moveplaybackrate`) is its archetype's speed;
-* engage: the nearest human it sees (a bullet trace from its eye,
+* engage: the nearest enemy it sees (a bullet trace from its eye,
   `actor_eye_height` or `actor_crouch_eye_height`, to theirs) is within
   range: it stops, stands or crouches (`actor_crouch_percent`), faces them,
   aims (`aim`), then fires one burst (`fire`) of its archetype's burst length
@@ -484,7 +491,7 @@ Otherwise its price is spent (`reason=purchase:<ref>`) and it is granted as
   `sentry_gun_so`) with its `grants.csv` model, carried in front of the player and placed
   with `+attack` where `canplayerplacesentry` fits it. Placed, it is in
   `sentry` mode on the player's team: the turret host picks the nearest
-  visible hostile and the script fires it at the weapon's fire time. Its kills
+  visible hostile player or actor and the script fires it at the weapon's fire time. Its kills
   are the player's. It is never destroyed and never expires, so c10 caps how
   many a player ever places. `shootturret` fires by the weapon's type:
   `sentry_minigun_so` (bullet) traces, `sentry_gun_so` (projectile) launches
@@ -495,7 +502,7 @@ Otherwise its price is spent (`reason=purchase:<ref>`) and it is granted as
   places of `actor_budget` like enemies: allies in play or owed come off the
   wave's budget, owed allies spawn first as places free up, and an ally
   spawns on the player spawn nearest the players that nobody stands on. The
-  actor behavior idles an ally (see Actors), and enemies hunt players only.
+  actor behavior targets hostile players and actors on both sides (see Actors).
   An ally's death frees its place and its squad's count. They wear Delta and GIGN characters
   (see Characters). The riot squad has no riot shield (c5 names the MP5).
 * a perk of `perks_table` enabled in its c6 (`specialty_quickdraw`,

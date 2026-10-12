@@ -3,6 +3,7 @@ main()
 	level.callbackstartgametype = ::onstartgametype;
 	level.callbackplayerconnect = ::onplayerconnect;
 	level.callbackplayerdisconnect = ::onplayerdisconnect;
+	level.callbackactordamage = ::onactordamage;
 	level.callbackplayerdamage = ::onplayerdamage;
 	level.callbackplayerkilled = ::onplayerkilled;
 	level.callbackplayerlaststand = ::onplayerlaststand;
@@ -88,6 +89,10 @@ onstartgametype()
 	level.airstrikefx = loadfx( support( "airstrike_fx" ) );
 	precachemodel( support( "airstrike_plane" ) );
 	readgrants();
+	level.gasfx = loadfx( heavy( "gas_fx" ) );
+	precacheshellshock( heavy( "gas_shock_high" ) );
+	precacheshellshock( heavy( "gas_shock_med" ) );
+	precacheshellshock( heavy( "gas_shock_low" ) );
 	level.chopperdeathfx = loadfx( heavy( "chopper_death_fx" ) );
 	readlayer();
 	readspawns();
@@ -1076,6 +1081,8 @@ spawnenemy( archetype )
 	}
 	actor = spawnwaveactor( archetype, spawnpoint, setting( "enemy_team" ) );
 	actor thread enemydeath();
+	if ( archetypetrait( archetype ) == "claymore" )
+		actor thread layclaymores();
 }
 
 spawnally( archetype )
@@ -1088,6 +1095,15 @@ spawnally( archetype )
 enemydeath()
 {
 	self waittill( "death", attacker, means, weapon );
+	trait = archetypetrait( self.archetype );
+	if ( trait == "martyrdom" || trait == "gas" )
+	{
+		self.deatheffectactive = true;
+		if ( trait == "martyrdom" )
+			self thread martyrdom();
+		else
+			self thread gascloud();
+	}
 	forgetactor( self );
 	level.enemiesinplay--;
 	level.wavekilled++;
@@ -1181,6 +1197,15 @@ giveloadout()
 	logprint( "survival: loadout" + summary + " selfrevive=" + self.selfrevives + " armor=" + self.armor + "\n" );
 }
 
+onactordamage( amount, attacker, direction, point, means, tag, location, flags, weapon )
+{
+	if ( self isfriendlyfire( attacker ) )
+		return;
+	if ( isdefined( self.archetype ) && archetypetrait( self.archetype ) == "explosive" && isexplosive( means ) )
+		amount = int( amount * int( heavy( "explosive_damage_percent" ) ) / 100 );
+	self finishactordamage( amount, attacker, direction, point, means, tag, location, flags, weapon );
+}
+
 onplayerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff )
 {
 	if ( self isfriendlyfire( attackerent ) )
@@ -1202,7 +1227,7 @@ absorbarmor( damage, means )
 	return damage - absorbed;
 }
 
-// Clients and choppers of one team hurt each other only with `friendly_fire`
+// Clients, actors and choppers hurt teammates only with `friendly_fire`
 // 1; anyone can still hurt themselves. An ownerless chopper is its own
 // attacker.
 isfriendlyfire( attacker )
@@ -2334,4 +2359,142 @@ chopperdeath()
 	playfx( level.chopperdeathfx, origin );
 	self delete();
 	level notify( "roster_changed" );
+}
+
+isexplosive( means )
+{
+	explosive = strtok( heavy( "explosive_means" ), " " );
+	for ( i = 0; i < explosive.size; i++ )
+	{
+		if ( explosive[ i ] == means )
+			return true;
+	}
+	return false;
+}
+
+nearesthumanwithin( range )
+{
+	nearest = undefined;
+	best = range * range;
+	for ( i = 0; i < level.humans.size; i++ )
+	{
+		human = level.humans[ i ];
+		if ( human.sessionstate != "playing" )
+			continue;
+		distance = distancesquared( self.origin, human.origin );
+		if ( distance <= best )
+		{
+			nearest = human;
+			best = distance;
+		}
+	}
+	return nearest;
+}
+
+martyrdom()
+{
+	weapon = weaponfor( heavy( "martyrdom_weapon" ) );
+	origin = self.origin;
+	c4 = self placecharge( weapon, origin, self.angles );
+	logprint( "survival: martyrdom c4 dropped actor=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
+	wait heavyseconds( "martyrdom_delay_ms" );
+	c4 detonate();
+	logprint( "survival: martyrdom c4 detonated actor=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
+	wait int( support( "support_settle_ms" ) ) / 1000;
+	self.deatheffectactive = undefined;
+}
+
+layclaymores()
+{
+	self endon( "death" );
+	weapon = weaponfor( heavy( "claymore_weapon" ) );
+	count = int( heavy( "claymore_count" ) );
+	for ( planted = 0; planted < count; planted++ )
+	{
+		for ( ;; )
+		{
+			target = self nearesthumanwithin( int( heavy( "claymore_plant_range" ) ) );
+			if ( isdefined( target ) )
+				break;
+			wait heavyseconds( "claymore_poll_ms" );
+		}
+		yaw = vectortoyaw( target.origin - self.origin );
+		forward = anglestoforward( ( 0, yaw, 0 ) );
+		claymore = self placecharge( weapon, self.origin + forward * int( heavy( "claymore_plant_reach" ) ), ( 0, yaw, 0 ) );
+		level thread claymoretrip( claymore, yaw, self, weapon );
+		wait heavyseconds( "claymore_arm_ms" );
+	}
+}
+
+claymoretrip( claymore, yaw, owner, weapon )
+{
+	claymore endon( "death" );
+	planter = owner getentitynumber();
+	level thread claymoredisarm( claymore, owner, planter );
+	claymore endon( "disarmed" );
+	wait heavyseconds( "claymore_arm_ms" );
+	logprint( "survival: claymore planted actor=" + planter + " at " + claymore.origin + " yaw " + int( yaw ) + " weapon=" + weapon + "\n" );
+	forward = anglestoforward( ( 0, yaw, 0 ) );
+	radius = int( heavy( "claymore_trip_radius" ) );
+	arc = cos( int( heavy( "claymore_trip_arc" ) ) );
+	for ( ;; )
+	{
+		wait heavyseconds( "claymore_poll_ms" );
+		for ( i = 0; i < level.humans.size; i++ )
+		{
+			human = level.humans[ i ];
+			if ( human.sessionstate != "playing" || distancesquared( human.origin, claymore.origin ) > radius * radius )
+				continue;
+			if ( vectordot( vectornormalize( human.origin - claymore.origin ), forward ) < arc )
+				continue;
+			logprint( "survival: claymore tripped by client=" + human getentitynumber() + " planter=" + planter + " at " + claymore.origin + "\n" );
+			wait heavyseconds( "claymore_trip_delay_ms" );
+			claymore detonate();
+			logprint( "survival: claymore detonated planter=" + planter + " at " + claymore.origin + "\n" );
+			return;
+		}
+	}
+}
+
+gascloud()
+{
+	origin = self.origin;
+	radius = int( heavy( "gas_radius" ) );
+	damage = int( heavy( "gas_damage" ) );
+	playfx( level.gasfx, origin );
+	logprint( "survival: chemical gas at " + origin + " radius=" + radius + " ms=" + heavy( "gas_ms" ) + " client=" + self getentitynumber() + "\n" );
+	for ( end = gettime() + int( heavy( "gas_ms" ) ); gettime() < end; )
+	{
+		radiusdamage( origin, radius, damage, damage, self, heavy( "gas_means" ) );
+		for ( i = 0; i < level.humans.size; i++ )
+			level.humans[ i ] gasshock( origin, radius );
+		wait heavyseconds( "gas_interval_ms" );
+	}
+	logprint( "survival: chemical gas at " + origin + " cleared client=" + self getentitynumber() + "\n" );
+	self.deatheffectactive = undefined;
+}
+
+gasshock( origin, radius )
+{
+	if ( self.sessionstate != "playing" )
+		return;
+	distance = distance( self.origin, origin );
+	if ( distance > radius )
+		return;
+	shock = heavy( "gas_shock_low" );
+	if ( distance <= int( heavy( "gas_high_radius" ) ) )
+		shock = heavy( "gas_shock_high" );
+	else if ( distance <= int( heavy( "gas_med_radius" ) ) )
+		shock = heavy( "gas_shock_med" );
+	self shellshock( shock, heavyseconds( "gas_shock_ms" ) );
+	logprint( "survival: gas shock client=" + self getentitynumber() + " shock=" + shock + " distance=" + int( distance ) + "\n" );
+}
+
+claymoredisarm( claymore, owner, planter )
+{
+	claymore endon( "death" );
+	owner waittill( "death" );
+	claymore notify( "disarmed" );
+	logprint( "survival: claymore disarmed planter=" + planter + " died, at " + claymore.origin + "\n" );
+	claymore delete();
 }

@@ -40,3 +40,8 @@ codecallback_vehicledamage( inflictorent, attackerent, dmg, dmgflags, mod, weapo
 {
 	[[ level.callbackvehicledamage ]]( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff, modelidx, hitpart );
 }
+
+codecallback_actordamage( amount, attacker, direction, point, means, tag, location, flags, weapon )
+{
+	[[ level.callbackactordamage ]]( amount, attacker, direction, point, means, tag, location, flags, weapon );
+}

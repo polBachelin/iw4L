@@ -177,6 +177,7 @@ fn apply_entity_blast(world: &mut FrameWorld, blast: &ExplosionBlast) {
                 target,
                 amount,
                 attacker: Some(blast.attacker),
+                inflictor: None,
                 means,
                 weapon: blast.weapon,
                 point: mid,
@@ -210,7 +211,7 @@ pub(crate) fn apply_script_blast(
                 missile: None,
                 means: blast.means,
                 ignore_model: blast.inflictor,
-                cone: None,
+                cone: blast.cone,
             },
         );
     }
@@ -225,6 +226,9 @@ pub(crate) fn apply_script_blast(
         let Some(bounds) = world.player_area_bounds(target) else {
             continue;
         };
+        if !blast.contains(bounds.mid()) {
+            continue;
+        }
         let dist = radius_damage_distance_to_aabb(blast.origin, bounds.mid(), bounds.half());
         let vis_scale = player_radius_vis_scale(
             world,
@@ -272,7 +276,7 @@ pub(crate) fn apply_script_blast(
                 [0.0; 3]
             },
             hitloc: 0,
-            inflictor: None,
+            inflictor: blast.inflictor.map(crate::script_player::Inflictor::Entity),
             commit,
         };
         crate::script::player_damage(world.ecs(), tick, &hit);
@@ -287,7 +291,7 @@ pub(crate) fn apply_script_blast(
             outer: blast.min,
             attacker: blast.attacker,
             exclude: blast.inflictor,
-            cone: None,
+            cone: blast.cone,
         },
     );
     apply_shared_glass_blast(
