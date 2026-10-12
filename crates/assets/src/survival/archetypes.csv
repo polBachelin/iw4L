@@ -1,11 +1,17 @@
-jug_regular,m60jugg,fullbody_juggernaut_novisor_b,,75
-jug_riotshield,riotshieldjugg,fullbody_juggernaut_novisor_b,,75
-jug_explosive,m60jugg,fullbody_juggernaut_explosive_so,explosive,75
-jug_minigun,m60jugg,fullbody_juggernaut_novisor_b,,75
-martyrdom,,,martyrdom,
-claymore,,,claymore,
-chemical,,fullbody_chemwar_russian_assault_a,gas,
-friendly_support_delta,,mp_body_delta_elite_assault_bb,,
-dog_reg,dog_bite,german_sheperd_dog,,
-dog_splode,dog_bite,german_sheperd_dog,,
-chopper,minigun_littlebird,vehicle_little_bird_armed,chopper,
+easy,,militia_a militia_b militia_c,,
+regular,,russian_military_assault russian_military_smg russian_military_lmg,,
+hardened,,russian_military_assault russian_military_smg russian_military_lmg,,
+veteran,,russian_naval_a russian_naval_b,,
+elite,,russian_naval_a russian_naval_b,,
+jug_regular,m60jugg,jug_novisor,,75
+jug_riotshield,riotshieldjugg,jug_blue,,75
+jug_explosive,m60jugg,jug_explosive,explosive,75
+jug_minigun,m60jugg,jug_sp,,75
+martyrdom,,militia_a militia_b militia_c,martyrdom,
+claymore,,russian_military_assault russian_military_smg russian_military_lmg,claymore,
+chemical,,chemwar_a chemwar_b chemwar_full_a chemwar_full_aa,gas,
+friendly_support_delta,,delta_a delta_b,,
+friendly_support_riotshield,,gign_assault gign_smg,,
+dog_reg,dog_bite,dog,,
+dog_splode,dog_bite,dog,,
+chopper,minigun_littlebird,,chopper,

@@ -98,18 +98,22 @@ a weapon themselves.
   loads; until they are, a wrong one falls back to the MP name, which the
   `survival weapons:` line shows. The juggernaut guns (`m60jugg`,
   `riotshieldjugg`) name the MP weapon alone.
-* `archetypes.csv` — `ref,weapon,body,trait,speed`: fill-ins for archetype
+* `archetypes.csv` — `ref,weapon,characters,trait,speed`: fill-ins for archetype
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
   classnames), and what sets an archetype apart. The weapon resolves through
   `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
-  body is read only as a chopper's vehicle model (see Heavy
-  archetypes). The trait is one of
+  characters are `characters.csv` ids, space separated; each spawn wears one
+  of them at random (see Characters). The trait is one of
   `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is the
   bot's move speed in percent (`setmovespeedscale`), empty for 100. Traits
   and speeds are ours: MW3's table has only the archetype descriptions they
   follow (`Guys strapped with C4 that explode on death`, `Guys that place
   claymores`, `Chemical warfare enemies in gas masks`, `Uses and is weak to
   explosives`).
+* `characters.csv` — `id,body,heads,hat`: the SP characters an archetype
+  wears. The body, heads and hat are model names of `common_survival`; the
+  heads are space separated, one drawn per spawn, and the hat may be empty.
+  A `fullbody_*` body carries its own head, so its row has none.
 * `heavies.csv` — `key,value`, all ours (MW3's numbers lived in its compiled
   script): `explosive_means` (the means of death an `explosive` archetype is
   weak to) and `explosive_damage_percent`; the martyr's weapon ref, drop
@@ -120,7 +124,8 @@ a weapon themselves.
   damage per interval, duration and interval, and its shocks by depth
   (`gas_shock_high` within `gas_high_radius`, `gas_shock_med` within
   `gas_med_radius`, `gas_shock_low` to `gas_radius`) for `gas_shock_ms`;
-  the chopper's vehicle definition (`chopper_vehicle`), the map keys of
+  the chopper's vehicle definition (`chopper_vehicle`) and model
+  (`chopper_model`), the map keys of
   MW3's chopper path (`chopper_path_noteworthy`, `chopper_start_targetname`),
   its death effect, speed and acceleration in mph, the time between a wave's
   choppers entering, how long it holds at a node, its gun's range, the aim
@@ -202,8 +207,8 @@ and speed:
 With `friendly_fire` 0 an enemy's C4, claymore and gas spare the other
 enemies and hurt the players, and the players' explosives spare each other.
 * `chopper` (MW3's `Enemy Attack Chopper`, row 112: health 1500, reward
-  600): no bot. It is a vehicle (`spawnvehicle`) of its `archetypes.csv` body
-  (`vehicle_little_bird_armed`) with no owner, on `enemy_team`, with its c7
+  600): no bot. It is a vehicle (`spawnvehicle`) of `heavies.csv`'s
+  `chopper_model` (`vehicle_little_bird_armed`) with no owner, on `enemy_team`, with its c7
   health and its `archetypes.csv` gun (`minigun_littlebird`, both of
   common_survival). It flies MW3's own chopper path on the map, read at
   runtime: on mp_paris the 28 entities whose script_noteworthy is
@@ -227,10 +232,29 @@ enemies and hurt the players, and the players' explosives spare each other.
   such path skips the chopper like an unsimulated archetype, and says so at
   start.
 
-Bodies are not set: a bot is drawn with the team's soldier kit, the one body
-per side the map's kits give. `archetypes.csv`'s body column (MW3's
-`fullbody_juggernaut_*`, `fullbody_chemwar_*`) needs a body per client, which
-the renderer does not have. Dogs stay out (no dog body or movement).
+## Characters
+
+On spawn a bot is dressed (`setcharacter`) in a character of its archetype:
+`archetypecharacter` draws one of its `archetypes.csv` ids, then one of that
+row's heads, and returns the body, head and hat (`""` for none). The spawn
+line ends `character=<body>/<head>/<hat>`. A model the renderer cannot draw
+(not captured, or of another family than the map's) leaves the bot in its
+team's kit and is warned once (`character body=… drawn in its team kit`).
+Which archetype wears which character is ours:
+
+| archetypes | characters |
+| --- | --- |
+| `easy`, `martyrdom` | militia (`body_africa_militia_smg_a/b/c`, `hat_africa_militia_*`) |
+| `regular`, `hardened`, `claymore` | Russian military (`body_russian_military_*`) |
+| `veteran`, `elite` | Russian naval (`body_russian_naval_assault_*`) |
+| `chemical` | chemical warfare, masked heads or `fullbody_chemwar_russian_assault_a/aa` |
+| `jug_regular`, `jug_explosive` | `fullbody_juggernaut_novisor_b`, `fullbody_juggernaut_explosive_so` |
+| `jug_riotshield`, `jug_minigun` | `body_so_juggernaut_blue` with its hat, `body_complete_sp_juggernaut` |
+| `friendly_support_delta` | Delta (`body_delta_elite_assault_*`, `head_delta_elite_a..d`) |
+| `friendly_support_riotshield` | GIGN (`body_gign_paris_*`, `head_gign_a..d`) |
+| `dog_reg`, `dog_splode` | `german_sheperd_dog` |
+
+Dogs stay out (no dog body or movement).
 
 ## Waves
 
@@ -450,9 +474,8 @@ Otherwise its price is spent (`reason=purchase:<ref>`) and it is granted as
   players and allies (connected, asked for or owed) come off the wave's
   budget, owed allies are asked for first as slots free up, and an ally spawns
   on the player spawn nearest the players. Enemy bots hunt them as they hunt
-  players (both are on `human_team`). No body is set: the bot keeps the
-  default player body, and `archetypes.csv`'s body column is not read yet. The
-  riot squad has no riot shield (c5 names the MP5).
+  players (both are on `human_team`). They wear Delta and GIGN characters
+  (see Characters). The riot squad has no riot shield (c5 names the MP5).
 * a perk of `perks_table` enabled in its c6 (`specialty_quickdraw`,
   `specialty_bulletaccuracy`, `specialty_stalker`, `specialty_longersprint`,
   `specialty_fastreload`): `setperk`. A perk with no engine behavior is
@@ -501,8 +524,10 @@ every `challenges.csv` ref must be a challenge of `challenge_table` with a
 positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
 1, every `test_wave` ref an archetype (held to what a bot plays like any
-wave's), every `archetypes.csv` trait one of the five and speed a whole
-percent above zero, and for each trait in use its `heavies.csv` rows: weapon
+wave's), every `archetypes.csv` trait one of the five, speed a whole
+percent above zero and character an id of `characters.csv`, every
+`characters.csv` id named once with a body and no head on a `fullbody_*`
+body, and for each trait in use its `heavies.csv` rows: weapon
 refs that are weapons of the loaded zones (through `weapon_aliases.csv`),
 means of death the engine knows, a named effect, shocks, vehicle and map
 keys, and whole numbers above zero, `getup_shock`,
