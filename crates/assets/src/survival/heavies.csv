@@ -25,7 +25,7 @@ gas_shock_high,radiation_high
 gas_shock_med,radiation_med
 gas_shock_low,radiation_low
 gas_shock_ms,1500
-chopper_vehicle,attack_littlebird_mp
+chopper_vehicle,littlebird_so
 chopper_path_noteworthy,so_chopper_boss_path_struct
 chopper_start_targetname,chopper_boss_path_start
 chopper_death_fx,explosions/aerial_explosion_littlebird_mp

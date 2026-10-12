@@ -32,7 +32,7 @@ pub use weapon_override::{
 };
 pub use wire::{Iw5WireFormat, WireAssetTable, WirePointer, WireTableError, read_wire_asset_table};
 pub use zone::{
-    AttachmentGeometry, BLOCK_STACK_CAP, BlockType, ClipMapGeometry, ComWorldGeometry,
+    AddonMapEntsGeometry, AttachmentGeometry, BLOCK_STACK_CAP, BlockType, ClipMapGeometry, ComWorldGeometry,
     FontDefGeometry, FxEffectDefGeometry, FxImpactTableGeometry, GfxImageGeometry,
     GfxLightDefGeometry, GfxLightGridGeometry, GfxLightmapPair, GfxSunEffectsGeometry,
     GfxWorldGeometry, MAX_LIGHT_DEFS, MAX_LIGHTMAP_PAGES, MAX_XFILE_COUNT, MapEntsGeometry,

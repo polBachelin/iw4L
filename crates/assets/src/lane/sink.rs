@@ -695,6 +695,18 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
             sound.iw5_loaded(stream, ty, slot, insert_slot);
         }
         self.materials.iw5_loaded(stream, ty, slot, insert_slot);
+        if ty == fastfile_iw5::AssetType::AddonMapEnts {
+            match asset_world::addon_map_ents_iw5(stream) {
+                Some((name, text, brush_models)) => self.scripts.capture_addon_entities(
+                    name,
+                    crate::script_sources::AddonEntities {
+                        text: asset_world::iw5_entity_string_named(text),
+                        brush_models,
+                    },
+                ),
+                None => diag::warn!(World, "addon map entities: the zone's entity string is unreadable"),
+            }
+        }
         note_iw5_fx_tracer_loaded(&mut self.fx, &mut self.tracers, ty, slot, insert_slot);
         if ty == fastfile_iw5::AssetType::Fx {
             if let Some(name) = self.last_fx_name_iw5.take() {

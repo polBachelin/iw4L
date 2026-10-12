@@ -90,8 +90,8 @@ onstartgametype()
 	precacheshellshock( heavy( "gas_shock_high" ) );
 	precacheshellshock( heavy( "gas_shock_med" ) );
 	precacheshellshock( heavy( "gas_shock_low" ) );
-	level.playerspawns = getentarray( setting( "player_spawn_classname" ), "classname" );
-	level.enemyspawns = getentarray( setting( "enemy_spawn_classname" ), "classname" );
+	readlayer();
+	readspawns();
 	readwaves();
 	for ( i = 0; i < level.archetypes.size; i++ )
 	{
@@ -122,23 +122,140 @@ onstartgametype()
 	level thread runwaves();
 }
 
+// The Special Ops level laid over the map (`survival_layer`, the level whose
+// entities the map's zones add), if any: survival plays under its vision, as
+// the map plays under the one named after it.
+readlayer()
+{
+	level.layer = getdvar( "survival_layer" );
+	if ( level.layer == "" )
+	{
+		logprint( "survival: no layer over " + getdvar( "mapname" ) + ": the map's own vision\n" );
+		return;
+	}
+	visionsetnaked( level.layer, 0 );
+	logprint( "survival: layer " + level.layer + " over " + getdvar( "mapname" ) + ", vision " + level.layer + "\n" );
+}
+
+// `pattern` with every `key` in it replaced by `value`.
+fill( pattern, key, value )
+{
+	filled = "";
+	for ( i = 0; i < pattern.size; i++ )
+	{
+		if ( i + key.size <= pattern.size && getsubstr( pattern, i, i + key.size ) == key )
+		{
+			filled = filled + value;
+			i = i + key.size - 1;
+		}
+		else
+			filled = filled + pattern[ i ];
+	}
+	return filled;
+}
+
+// The players start on the map's layer starts (`layer_player_spawn_classnames`)
+// when it has them, else on `player_spawn_classname`, where an armory squad
+// always joins them. Enemies come in on the layer's structs whose
+// script_noteworthy is one of `layer_enemy_spawn_noteworthy` (MW3's squad
+// leaders and followers; that they are where enemies enter is our reading),
+// else on `enemy_spawn_classname`.
+readspawns()
+{
+	level.allyspawns = getentarray( setting( "player_spawn_classname" ), "classname" );
+	level.playerspawns = [];
+	classnames = strtok( setting( "layer_player_spawn_classnames" ), " " );
+	for ( i = 0; i < classnames.size; i++ )
+	{
+		starts = getentarray( classnames[ i ], "classname" );
+		for ( j = 0; j < starts.size; j++ )
+			level.playerspawns[ level.playerspawns.size ] = starts[ j ];
+	}
+	if ( level.playerspawns.size )
+		logprint( "survival: players start on the layer's " + setting( "layer_player_spawn_classnames" ) + " (" + level.playerspawns.size + ")\n" );
+	else
+	{
+		level.playerspawns = level.allyspawns;
+		logprint( "survival: players start on " + setting( "player_spawn_classname" ) + " (" + level.playerspawns.size + "): the map has no " + setting( "layer_player_spawn_classnames" ) + "\n" );
+	}
+	level.enemyspawns = [];
+	noteworthy = strtok( setting( "layer_enemy_spawn_noteworthy" ), " " );
+	for ( i = 0; i < level.struct.size; i++ )
+	{
+		struct = level.struct[ i ];
+		if ( !isdefined( struct.script_noteworthy ) || !isdefined( struct.origin ) )
+			continue;
+		for ( j = 0; j < noteworthy.size; j++ )
+		{
+			if ( struct.script_noteworthy == noteworthy[ j ] )
+			{
+				if ( !isdefined( struct.angles ) )
+					struct.angles = ( 0, 0, 0 );
+				level.enemyspawns[ level.enemyspawns.size ] = struct;
+			}
+		}
+	}
+	if ( level.enemyspawns.size )
+		logprint( "survival: enemies enter on the layer's structs " + setting( "layer_enemy_spawn_noteworthy" ) + " (" + level.enemyspawns.size + ")\n" );
+	else
+	{
+		level.enemyspawns = getentarray( setting( "enemy_spawn_classname" ), "classname" );
+		logprint( "survival: enemies enter on " + setting( "enemy_spawn_classname" ) + " (" + level.enemyspawns.size + "): the map has no struct " + setting( "layer_enemy_spawn_noteworthy" ) + "\n" );
+	}
+}
+
+// The table the waves and the start loadout are read from: the map layer's
+// (`layer_waves_table` for the first of `layer_tiers` loaded), else
+// `waves_table`. The archetypes are always `waves_table`'s: the layer's
+// table has none.
+readwavestable()
+{
+	tiers = strtok( setting( "layer_tiers" ), " " );
+	for ( i = 0; i < tiers.size; i++ )
+	{
+		name = fill( setting( "layer_waves_table" ), "<tier>", tiers[ i ] );
+		if ( tablelookupbyrow( name, 0, 0 ) != "" )
+		{
+			logprint( "survival: waves and start loadout from the layer's " + name + ", archetypes from " + setting( "waves_table" ) + "\n" );
+			return name;
+		}
+	}
+	logprint( "survival: waves, start loadout and archetypes from " + setting( "waves_table" ) + ": no " + setting( "layer_waves_table" ) + " of tier " + setting( "layer_tiers" ) + " is loaded\n" );
+	return setting( "waves_table" );
+}
+
 readwaves()
 {
-	table = setting( "waves_table" );
+	level.wavestable = readwavestable();
+	table = level.wavestable;
 	level.wavecount = 0;
 	level.waverows = [];
-	level.archetypes = [];
+	level.armorykind = [];
+	level.armorykinds = [];
 	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
 	{
+		key = int( tablelookupbyrow( table, row, 0 ) );
 		if ( tablelookupbyrow( table, row, 1 ) == "1" )
 		{
 			level.wavecount++;
 			level.waverows[ int( tablelookupbyrow( table, row, 2 ) ) ] = row;
-			continue;
+			kind = tablelookupbyrow( table, row, 10 );
+			if ( kind != "" && !isdefined( level.armorykind[ kind ] ) )
+			{
+				level.armorykind[ kind ] = true;
+				level.armorykinds[ level.armorykinds.size ] = kind;
+			}
 		}
-		key = int( tablelookupbyrow( table, row, 0 ) );
+		else if ( key < 100 && tablelookupbyrow( table, row, 0 ) == "" + key )
+			logprint( "survival: " + table + " row " + key + " (wave " + tablelookupbyrow( table, row, 2 ) + ") has c1 `" + tablelookupbyrow( table, row, 1 ) + "`, not 1: not played\n" );
+	}
+	archetypes = setting( "waves_table" );
+	level.archetypes = [];
+	for ( row = 0; tablelookupbyrow( archetypes, row, 0 ) != ""; row++ )
+	{
+		key = int( tablelookupbyrow( archetypes, row, 0 ) );
 		if ( key >= 100 && key < 1000 )
-			level.archetypes[ level.archetypes.size ] = tablelookupbyrow( table, row, 1 );
+			level.archetypes[ level.archetypes.size ] = tablelookupbyrow( archetypes, row, 1 );
 	}
 	// Past the last row the waves marked in c9 repeat, in order: our reading of
 	// the column, which MW3 sets on waves 16-21 only.
@@ -281,28 +398,76 @@ placementorigin( origin )
 	return ( int( words[ 0 ] ), int( words[ 1 ] ), int( words[ 2 ] ) );
 }
 
-// Each armory the map's placements name stands in the world as its model,
-// and opens its kind's menu (`armory_menu_prefix` + kind) to a player who
-// uses it.
+// Each armory stands in the world as its model, and opens its kind's menu
+// (`armory_menu_prefix` + kind) to a player who uses it. The map's layer
+// places one for each kind the waves unlock: the script_model whose
+// targetname is `layer_armory_targetname` + kind, with the models it targets
+// on it. With none on the map, the placements are `survival/maps/<map>.csv`.
 readplacements()
 {
-	table = "survival/maps/" + getdvar( "mapname" ) + ".csv";
 	level.armories = [];
-	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	prefix = setting( "layer_armory_targetname" );
+	for ( k = 0; k < level.armorykinds.size; k++ )
 	{
-		model = tablelookupbyrow( table, row, 3 );
-		precachemodel( model );
-		armory = spawn( "script_model", placementorigin( tablelookupbyrow( table, row, 1 ) ) );
-		armory.angles = ( 0, int( tablelookupbyrow( table, row, 2 ) ), 0 );
-		armory setmodel( model );
-		armory.kind = tablelookupbyrow( table, row, 0 );
-		armory.menu = setting( "armory_menu_prefix" ) + armory.kind;
-		level.armories[ level.armories.size ] = armory;
-		logprint( "survival: armory " + armory.kind + " spawned at " + armory.origin + " yaw " + armory.angles[ 1 ] + " model " + model + " menu " + armory.menu + "\n" );
-		armory thread armoryuse();
+		kind = level.armorykinds[ k ];
+		placed = getentarray( prefix + kind, "targetname" );
+		for ( i = 0; i < placed.size; i++ )
+		{
+			if ( placed[ i ].classname != "script_model" )
+				continue;
+			armory = placearmory( kind, placed[ i ].origin, placed[ i ].angles, placed[ i ].model, "layer" );
+			armory placeprop( placed[ i ] );
+		}
 	}
+	if ( level.armories.size )
+		return;
+	table = "survival/maps/" + getdvar( "mapname" ) + ".csv";
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+		placearmory( tablelookupbyrow( table, row, 0 ), placementorigin( tablelookupbyrow( table, row, 1 ) ), ( 0, int( tablelookupbyrow( table, row, 2 ) ), 0 ), tablelookupbyrow( table, row, 3 ), table );
 	if ( !level.armories.size )
-		logprint( "survival: " + table + " places no armory on this map\n" );
+		logprint( "survival: " + table + " places no armory on this map, nor does a layer `" + prefix + "<kind>`\n" );
+}
+
+placearmory( kind, origin, angles, model, source )
+{
+	precachemodel( model );
+	armory = spawn( "script_model", origin );
+	armory.angles = angles;
+	armory setmodel( model );
+	armory.kind = kind;
+	armory.menu = setting( "armory_menu_prefix" ) + kind;
+	level.armories[ level.armories.size ] = armory;
+	logprint( "survival: armory " + kind + " spawned at " + armory.origin + " yaw " + armory.angles[ 1 ] + " model " + model + " menu " + armory.menu + " from " + source + "\n" );
+	armory thread armoryuse();
+	return armory;
+}
+
+// The model the layer's armory targets stands on it as placed; the model
+// that one targets in turn is the look it takes once the armory is usable
+// (MW3's closed and open laptops: that it opens then is our reading).
+placeprop( placed )
+{
+	if ( !isdefined( placed.target ) )
+		return;
+	props = getentarray( placed.target, "targetname" );
+	if ( !props.size || !isdefined( props[ 0 ].model ) )
+		return;
+	precachemodel( props[ 0 ].model );
+	self.prop = spawn( "script_model", props[ 0 ].origin );
+	self.prop.angles = props[ 0 ].angles;
+	self.prop setmodel( props[ 0 ].model );
+	opened = "";
+	if ( isdefined( props[ 0 ].target ) )
+	{
+		next = getentarray( props[ 0 ].target, "targetname" );
+		if ( next.size && isdefined( next[ 0 ].model ) )
+		{
+			self.propusable = next[ 0 ].model;
+			precachemodel( self.propusable );
+			opened = " usable " + self.propusable;
+		}
+	}
+	logprint( "survival: armory " + self.kind + " prop " + props[ 0 ].model + " at " + self.prop.origin + opened + "\n" );
 }
 
 // An armory can be used once the wave that unlocks its kind is over.
@@ -312,6 +477,8 @@ armoryuse()
 	while ( !isdefined( level.armoryunlocked[ self.kind ] ) )
 		level waittill( "armory_unlocked" );
 	self makeusable();
+	if ( isdefined( self.propusable ) )
+		self.prop setmodel( self.propusable );
 	logprint( "survival: armory " + self.kind + " usable at " + self.origin + "\n" );
 	for ( ;; )
 	{
@@ -456,7 +623,7 @@ queueeach( refs )
 
 runwave( wave, row )
 {
-	table = setting( "waves_table" );
+	table = level.wavestable;
 	level.wave = wave;
 	level.wavequeue = [];
 	level.wavevehicles = [];
@@ -532,7 +699,7 @@ intermission( wave, row )
 {
 	seconds = int( setting( "intermission_seconds" ) );
 	logprint( "survival: intermission " + seconds + "s before wave=" + ( wave + 1 ) + "\n" );
-	kind = tablelookupbyrow( setting( "waves_table" ), row, 10 );
+	kind = tablelookupbyrow( level.wavestable, row, 10 );
 	if ( kind != "" && !isdefined( level.armoryunlocked[ kind ] ) )
 	{
 		level.armoryunlocked[ kind ] = true;
@@ -896,11 +1063,11 @@ enemyspawnpoint()
 // an armory squad joins the players where they are.
 allyspawnpoint()
 {
-	best = level.playerspawns[ randomint( level.playerspawns.size ) ];
+	best = level.allyspawns[ randomint( level.allyspawns.size ) ];
 	bestdistance = -1;
-	for ( i = 0; i < level.playerspawns.size; i++ )
+	for ( i = 0; i < level.allyspawns.size; i++ )
 	{
-		point = level.playerspawns[ i ];
+		point = level.allyspawns[ i ];
 		if ( positionwouldtelefrag( point.origin ) )
 			continue;
 		distance = nearesthuman( point.origin );
@@ -970,7 +1137,7 @@ spawnbot()
 
 loadoutslot( slot, column )
 {
-	return tablelookup( setting( "waves_table" ), 1, slot, column );
+	return tablelookup( level.wavestable, 1, slot, column );
 }
 
 giveloadout()

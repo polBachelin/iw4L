@@ -785,6 +785,17 @@ fn census_common_zone(
         sound.deposit(walk.as_ref().map(|_| ()).map_err(|e| e.to_string()));
     }
     let mut report = vec![format!("{zone} (IW5): walked {} assets", sink.walked)];
+    for (name, addon) in sink.scripts.addon_entities() {
+        report.push(format!(
+            "{zone} addon entities: `{name}` {} entities, {} brush models of its own",
+            addon.text.matches('{').count(),
+            addon.brush_models
+        ));
+    }
+    if !sink.film_visions.is_empty() {
+        let names: Vec<&str> = sink.film_visions.keys().map(String::as_str).collect();
+        report.push(format!("{zone} film visions: {}", names.join(" ")));
+    }
     if let Err(error) = walk {
         report.push(format!(
             "{zone} IW5 walk: stopped after {} assets — {error}",

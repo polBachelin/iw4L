@@ -273,6 +273,7 @@ pub struct ZoneStream<'a> {
     light_def_count: usize,
     clip_map: Option<ClipMapGeometry>,
     map_ents: Option<MapEntsGeometry>,
+    addon_map_ents: Option<AddonMapEntsGeometry>,
     latest_image: Option<GfxImageGeometry>,
     latest_material: Option<MaterialGeometry>,
     latest_technique_set: Option<TechniqueSetGeometry>,
@@ -709,6 +710,16 @@ pub struct ClipMapGeometry {
     pub stage_trigger: MapEntsGeometry,
 }
 
+/// Entities a zone adds to a map it does not carry, and the brush models
+/// (`*N` past the map's own) they are drawn and collide with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AddonMapEntsGeometry {
+    pub name: Option<Ptr>,
+    pub entity_string: Option<Ptr>,
+    pub entity_chars: usize,
+    pub submodel_count: usize,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MapEntsGeometry {
     pub trigger_models: Option<Ptr>,
@@ -1051,6 +1062,7 @@ impl<'a> ZoneStream<'a> {
             light_def_count: 0,
             clip_map: None,
             map_ents: None,
+            addon_map_ents: None,
             latest_image: None,
             latest_material: None,
             latest_technique_set: None,
@@ -1183,6 +1195,15 @@ impl<'a> ZoneStream<'a> {
 
     pub fn map_ents(&self) -> Option<MapEntsGeometry> {
         self.map_ents
+    }
+
+    pub fn record_addon_map_ents(&mut self, geometry: AddonMapEntsGeometry) {
+        self.addon_map_ents = Some(geometry);
+    }
+
+    /// The `AddonMapEnts` the walk read last.
+    pub fn addon_map_ents(&self) -> Option<AddonMapEntsGeometry> {
+        self.addon_map_ents
     }
 
     pub fn record_image(&mut self, image: GfxImageGeometry) {

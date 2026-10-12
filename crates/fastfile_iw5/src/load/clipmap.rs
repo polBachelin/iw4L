@@ -411,8 +411,14 @@ pub(super) fn load_addonmapents(s: &mut ZoneStream<'_>) -> Result<()> {
     let submodel_count = s.u32_at(p, s.layout(40, 80))? as usize;
 
     s.push(XFILE_BLOCK_VIRTUAL)?;
-    follow_name(s, p, 0)?;
-    s.plain_array(p, s.layout(4, 8), 1, 1, entity_chars)?;
+    let name = s.follow_string(p, 0)?;
+    let entity_string = s.plain_array(p, s.layout(4, 8), 1, 1, entity_chars)?;
+    s.record_addon_map_ents(crate::zone::AddonMapEntsGeometry {
+        name,
+        entity_string,
+        entity_chars,
+        submodel_count,
+    });
 
     load_map_triggers(s, p.at(s.layout(0xc, 24)))?;
     // Asset-level ClipInfo contents stay in VIRTUAL with the rest of the

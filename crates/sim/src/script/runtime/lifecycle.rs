@@ -45,6 +45,7 @@ pub(crate) fn install(
     let plan = host::restart::RestartPlan {
         natives: natives.clone(),
         entities: Arc::new(level.entities),
+        authored_entities: level.authored_entities,
         tables: Arc::new(level.tables),
         keys: Arc::new(level.keys),
         entries: Vec::new(),
@@ -125,11 +126,12 @@ pub(crate) fn install_level(
         runtime.started = false;
     }
     let entities = plan.entities.clone();
+    let authored = plan.authored_entities;
     let keys = plan.keys.clone();
     world.resource_mut::<Runtime>().restart = Some(Arc::new(plan));
     world
         .resource_mut::<Runtime>()
-        .spawn_map_entities(&entities, &keys)
+        .spawn_map_entities(&entities, authored, &keys)
         .map_err(|m| Fault::at(&location, m))?;
     host::presence::initialize_map_models(world);
     Ok(())

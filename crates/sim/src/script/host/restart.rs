@@ -10,6 +10,7 @@ use bevy_ecs::prelude::World;
 pub(crate) struct RestartPlan {
     pub natives: NativeRegistry,
     pub entities: Arc<Vec<Vec<(String, String)>>>,
+    pub authored_entities: usize,
     pub tables: Arc<BTreeMap<String, StringTable>>,
     pub keys: Arc<BTreeMap<String, KeyType>>,
     pub entries: Vec<String>,

@@ -6,7 +6,17 @@ pub struct ScriptSources {
     tables: BTreeMap<String, ScriptTable>,
     schemas: BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>>,
     entities: Option<String>,
+    addon_entities: BTreeMap<String, AddonEntities>,
     configs: BTreeMap<String, String>,
+}
+
+/// Entities a zone adds to the map, by the `AddonMapEnts` name it carries
+/// them under: the entity string in the map's grammar and how many brush
+/// models of its own (`*N` past the map's) the zone holds for them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AddonEntities {
+    pub text: String,
+    pub brush_models: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +103,14 @@ impl ScriptSources {
 
     pub fn entities(&self) -> Option<&str> {
         self.entities.as_deref()
+    }
+
+    pub fn addon_entities(&self) -> &BTreeMap<String, AddonEntities> {
+        &self.addon_entities
+    }
+
+    pub(crate) fn capture_addon_entities(&mut self, name: &str, entities: AddonEntities) {
+        self.addon_entities.insert(normalize(name), entities);
     }
 
     pub fn config(&self, name: &str) -> Option<&str> {
@@ -218,6 +236,7 @@ impl ScriptSources {
         self.tables.extend(other.tables);
         self.schemas.extend(other.schemas);
         self.configs.extend(other.configs);
+        self.addon_entities.extend(other.addon_entities);
         if other.entities.is_some() {
             self.entities = other.entities;
         }

@@ -1039,10 +1039,30 @@ fn preflight_match_install(
             Default::default()
         }
     };
+    let mut entities = sim::script::parse_entity_string(sources.0.entities().unwrap_or(""));
+    let authored_entities = entities.len();
+    for (name, addon) in sources.0.addon_entities() {
+        let added: Vec<_> = sim::script::parse_entity_string(&addon.text)
+            .into_iter()
+            .filter(|pairs| {
+                !pairs
+                    .iter()
+                    .any(|(key, value)| key.eq_ignore_ascii_case("classname") && value == "worldspawn")
+            })
+            .collect();
+        diag::info!(
+            Sim,
+            "gsc: map entities +{} from `{name}` after the map's {authored_entities} (its worldspawn left out; its {} brush models and its trigger hulls are not loaded, so its brush and trigger entities have no collision)",
+            added.len(),
+            addon.brush_models
+        );
+        entities.extend(added);
+    }
     let script_level = sim::script::LevelData {
         player_data_defaults: account_defaults.clone(),
         schemas: sources.0.schemas().clone(),
-        entities: sim::script::parse_entity_string(sources.0.entities().unwrap_or("")),
+        entities,
+        authored_entities,
         keys,
         tables: sources
             .0
@@ -1069,6 +1089,7 @@ fn preflight_match_install(
     if kind == gamemode_iw4::GameModeKind::Survival {
         assets::survival_data_check(
             sources.0.tables(),
+            sources.0.schemas(),
             zone,
             |name| matches!(weapons.registry().resolve_index(name), Ok(Some(index)) if index != 0),
         )
@@ -1101,6 +1122,24 @@ fn preflight_match_install(
         script_dvars.push(("onlinegame".into(), "1".into()));
     }
     script_dvars.push(("mapname".into(), zone.to_owned()));
+    if kind == gamemode_iw4::GameModeKind::Survival {
+        let layers: Vec<&str> = sources
+            .0
+            .addon_entities()
+            .keys()
+            .filter_map(|name| name.strip_prefix("maps/")?.strip_suffix(".mapents"))
+            .collect();
+        if layers.len() > 1 {
+            diag::warn!(
+                Sim,
+                "gsc: survival layer: entities of several levels {layers:?}; `survival_layer` names the first"
+            );
+        }
+        script_dvars.push((
+            "survival_layer".into(),
+            layers.first().copied().unwrap_or("").to_owned(),
+        ));
+    }
     script_dvars.push(("g_gametype".into(), gametype.to_owned()));
     script_dvars.push(("sv_maxclients".into(), "18".into()));
     for (name, value) in rules.map_or(&[][..], |rules| &rules.0) {

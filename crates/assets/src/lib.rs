@@ -57,4 +57,4 @@ pub use survival::{
 pub mod image_handles;
 
 mod script_sources;
-pub use script_sources::{ScriptSourceOrigin, ScriptSources, ScriptTable};
+pub use script_sources::{AddonEntities, ScriptSourceOrigin, ScriptSources, ScriptTable};

@@ -590,20 +590,53 @@ impl RuntimeProfile {
         self.find_runtime_zone(root, zone_ff, "common_mp")
     }
 
-    /// Every zone of `mode`, in its load order, from the runtime's own tree.
-    /// A mode needs all of them, so the first one missing refuses the set.
+    /// Every zone of `mode`, in its load order, from the runtime's own tree,
+    /// then the layers the tree has. A mode needs all of its own zones, so the
+    /// first one missing refuses the set; a missing layer is left out, and
+    /// `find_layer_zones` says which.
     pub fn find_mode_zones(
         self,
         root: &GamesRoot,
         zone_ff: &Path,
         mode: &ModeZones,
     ) -> Result<Vec<PathBuf>, String> {
-        mode.names()
+        let mut zones = mode
+            .names()
             .iter()
             .map(|name| {
                 self.find_runtime_zone(root, zone_ff, name)
                     .map(|zone| zone.path)
                     .map_err(|error| format!("mode zone `{name}`: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        zones.extend(
+            self.find_layer_zones(root, zone_ff, mode)
+                .into_iter()
+                .filter_map(|(_, found)| found.ok()),
+        );
+        Ok(zones)
+    }
+
+    /// Each layer of `mode` for the map `zone_ff`, by the name it resolves
+    /// to, and where the runtime's tree has it or why not.
+    pub fn find_layer_zones(
+        self,
+        root: &GamesRoot,
+        zone_ff: &Path,
+        mode: &ModeZones,
+    ) -> Vec<(String, Result<PathBuf, String>)> {
+        let map = zone_ff
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        mode.layers()
+            .iter()
+            .map(|layer| {
+                let name = layer.replace(ModeZones::MAP, &map);
+                let found = self
+                    .find_runtime_zone(root, zone_ff, &name)
+                    .map(|zone| zone.path);
+                (name, found)
             })
             .collect()
     }
@@ -613,20 +646,40 @@ impl RuntimeProfile {
 /// order: an asset a later zone carries replaces the one an earlier zone had.
 /// A launch with no mode of its own has none.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ModeZones(Vec<String>);
+pub struct ModeZones {
+    zones: Vec<String>,
+    layers: Vec<String>,
+}
 
 impl ModeZones {
+    /// What a layer name is spelled with where it names the map's own zone.
+    pub const MAP: &str = "<map>";
+
     /// Zone stems separated by whitespace, as a settings row spells them.
     pub fn parse(row: &str) -> Self {
-        Self(row.split_whitespace().map(str::to_owned).collect())
+        Self {
+            zones: row.split_whitespace().map(str::to_owned).collect(),
+            layers: Vec::new(),
+        }
+    }
+
+    /// Zones loaded after the mode's own when the user's data has them,
+    /// spelled as `parse` reads them; `MAP` in a name stands for the map.
+    pub fn with_layers(mut self, row: &str) -> Self {
+        self.layers = row.split_whitespace().map(str::to_owned).collect();
+        self
     }
 
     pub fn names(&self) -> &[String] {
-        &self.0
+        &self.zones
+    }
+
+    pub fn layers(&self) -> &[String] {
+        &self.layers
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.zones.is_empty()
     }
 }
 

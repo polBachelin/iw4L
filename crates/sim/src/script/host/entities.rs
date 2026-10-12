@@ -20,6 +20,10 @@ impl StringTable {
 #[derive(Clone, Debug, Default)]
 pub struct LevelData {
     pub entities: Vec<Vec<(String, String)>>,
+    /// How many of `entities` the map itself authors; the rest are another
+    /// zone's additions, whose brush models and trigger hulls the map's
+    /// collision does not hold.
+    pub authored_entities: usize,
     pub tables: BTreeMap<String, StringTable>,
     pub keys: BTreeMap<String, KeyType>,
     pub schemas: BTreeMap<String, Arc<structured_data_iw4::DefinitionSet>>,
@@ -421,6 +425,7 @@ impl Runtime {
     pub(crate) fn spawn_map_entities(
         &mut self,
         entities: &[Vec<(String, String)>],
+        authored: usize,
         keys: &BTreeMap<String, KeyType>,
     ) -> Result<(), String> {
         let structs = match self.object_field(0, "struct") {
@@ -514,11 +519,11 @@ impl Runtime {
             if let Some(entity) = self.entities.get_mut(&id) {
                 if classname == "trigger_radius" {
                     entity.cylinder = Some((radius.unwrap_or(0.0), height.unwrap_or(0.0)));
-                } else {
+                } else if ordinal < authored {
                     entity.brush = cmodel;
                     entity.trigger_model = trigger_model;
                 }
-                if matches!(classname, "script_model" | "script_brushmodel") {
+                if ordinal < authored && matches!(classname, "script_model" | "script_brushmodel") {
                     entity.presence = u32::try_from(ordinal)
                         .ok()
                         .map(crate::ScriptModelId::from_authored_source_ordinal);

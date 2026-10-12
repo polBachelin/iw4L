@@ -620,6 +620,18 @@ pub fn map_ents_entity_string_iw5<'a>(s: &'a fastfile_iw5::ZoneStream<'_>) -> Op
     entity_string_iw5(s)
 }
 
+/// The `AddonMapEnts` the walk read last: its name, its entity string as
+/// the zone spells it, and how many brush models of its own it carries.
+pub fn addon_map_ents_iw5<'a>(
+    s: &'a fastfile_iw5::ZoneStream<'_>,
+) -> Option<(&'a str, &'a str, usize)> {
+    let addon = s.addon_map_ents()?;
+    let name = s.cstr(addon.name?).ok()?;
+    let bytes = s.slice_at(addon.entity_string?, 0, addon.entity_chars).ok()?;
+    let text = core::str::from_utf8(bytes).ok()?;
+    Some((name, text.trim_end_matches('\0'), addon.submodel_count))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MapEntsKeyCensus {
     pub quoted_pairs: u32,

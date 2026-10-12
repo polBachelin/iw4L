@@ -36,6 +36,10 @@ const MAP_TABLES: [(&str, &str); 1] = [("mp_paris", include_str!("survival/maps/
 
 const ARMORY_KINDS: [&str; 3] = ["weapon", "equipment", "airsupport"];
 
+/// What `layer_waves_table` is spelled with where it names a tier of
+/// `layer_tiers`.
+const LAYER_TIER: &str = "<tier>";
+
 /// MW3's waves table (`waves_table`) as the gametype script reads it. A row
 /// whose c1 is `1` is a normal-mode wave (the chaos tables carry `0`).
 mod wave_column {
@@ -347,11 +351,13 @@ fn required_setting(key: &str) -> Result<&'static str, String> {
     survival_setting(key).ok_or_else(|| format!("{SETTINGS_TABLE} has no `{key}` row"))
 }
 
-/// The MW3 zones survival loads after `common_mp`, in load order. Survival
-/// reads its tables, menus, weapons and sounds from them, so a settings file
+/// The MW3 zones survival loads after `common_mp`, in load order, then the
+/// Special Ops layers (`layer_zones`) the user's data has. Survival reads its
+/// tables, menus, weapons and sounds from the mode's zones, so a settings file
 /// that names none is refused rather than read as a mode without zones.
 pub fn survival_mode_zones() -> Result<asset_transport::ModeZones, String> {
-    let zones = asset_transport::ModeZones::parse(required_setting("mode_zones")?);
+    let zones = asset_transport::ModeZones::parse(required_setting("mode_zones")?)
+        .with_layers(required_setting("layer_zones")?);
     if zones.is_empty() {
         return Err(format!("{SETTINGS_TABLE}: `mode_zones` names no zone"));
     }
@@ -374,6 +380,7 @@ pub fn survival_team_rules() -> Result<gamemode_iw4::survival::TeamRules, String
 /// readable. The gametype script trusts them, so a gap refuses the match.
 pub fn survival_data_check(
     tables: &BTreeMap<String, ScriptTable>,
+    schemas: &BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>>,
     zone: &str,
     is_weapon: impl Fn(&str) -> bool,
 ) -> Result<(), String> {
@@ -434,11 +441,21 @@ pub fn survival_data_check(
             ));
         }
     }
+    let (list_name, list) = match layer_waves_tables(tables)?[..] {
+        [] => (waves_name.to_owned(), waves),
+        [ref name] => (name.clone(), table(name)?),
+        ref several => {
+            gaps.push(format!(
+                "{SETTINGS_TABLE}: the loaded zones hold more than one `layer_waves_table`: {several:?}"
+            ));
+            (waves_name.to_owned(), waves)
+        }
+    };
     check_waves(
         table(ARCHETYPES_TABLE)?,
         table(WEAPON_ALIASES_TABLE)?,
-        waves_name,
-        waves,
+        (waves_name, waves),
+        (&list_name, list),
         &is_weapon,
         &mut gaps,
     )?;
@@ -464,8 +481,14 @@ pub fn survival_data_check(
     );
     check_armory_settings(&mut gaps)?;
     check_weapon_slots(&mut gaps)?;
+    let def_name = required_setting("player_data_def")?;
+    let schema = schemas
+        .get(&def_name.to_ascii_lowercase())
+        .and_then(|set| set.definitions.iter().max_by_key(|d| d.version))
+        .map(|definition| (def_name, definition));
     check_player_data(
         table(PLAYER_DATA_TABLE)?,
+        schema,
         armory_name,
         table(armory_name)?,
         &mut gaps,
@@ -512,15 +535,33 @@ pub fn survival_data_check(
     }
 }
 
-/// Holds every wave row to the archetypes and armories the script plays it
-/// with: waves numbered 1 to N with a repeat block, refs that name
-/// archetypes, parallel special counts, and for every archetype a bot plays
-/// a weapon of the loaded zones and a health.
+/// The map layer's waves tables the loaded zones hold: `layer_waves_table`
+/// for each of `layer_tiers`. The script plays the first; more than one is a
+/// gap.
+fn layer_waves_tables(tables: &BTreeMap<String, ScriptTable>) -> Result<Vec<String>, String> {
+    let pattern = required_setting("layer_waves_table")?;
+    if !pattern.contains(LAYER_TIER) {
+        return Err(format!(
+            "{SETTINGS_TABLE}: `layer_waves_table` `{pattern}` names no {LAYER_TIER}"
+        ));
+    }
+    Ok(required_setting("layer_tiers")?
+        .split_whitespace()
+        .map(|tier| pattern.replace(LAYER_TIER, tier))
+        .filter(|name| tables.contains_key(&name.to_ascii_lowercase()))
+        .collect())
+}
+
+/// Holds every wave row (of `list`: the map layer's waves table, else the
+/// waves table itself) to the archetypes (of `waves`) and armories the
+/// script plays it with: waves numbered 1 to N with a repeat block, refs that
+/// name archetypes, parallel special counts, and for every archetype a bot
+/// plays a weapon of the loaded zones and a health.
 fn check_waves(
     archetypes: &ScriptTable,
     aliases: &ScriptTable,
-    waves_name: &str,
-    waves: &ScriptTable,
+    (waves_name, waves): (&str, &ScriptTable),
+    (list_name, list): (&str, &ScriptTable),
     is_weapon: &impl Fn(&str) -> bool,
     gaps: &mut Vec<String>,
 ) -> Result<(), String> {
@@ -561,17 +602,17 @@ fn check_waves(
     }
     let mut numbers = Vec::new();
     let mut repeats = 0;
-    for row in waves.rows().filter(|row| cell(row, w::MARKER) == "1") {
+    for row in list.rows().filter(|row| cell(row, w::MARKER) == "1") {
         let Ok(number) = cell(row, w::NUMBER).parse::<u32>() else {
             gaps.push(format!(
-                "{waves_name}: wave row `{}` has no wave number in c{}",
+                "{list_name}: wave row `{}` has no wave number in c{}",
                 cell(row, 0),
                 w::NUMBER
             ));
             continue;
         };
         numbers.push(number);
-        let wave = format!("{waves_name}: wave {number}");
+        let wave = format!("{list_name}: wave {number}");
         let count = |text: &str| text.parse::<u32>().ok().filter(|count| *count > 0);
         let mut refs = Vec::new();
         match (cell(row, w::SQUAD), cell(row, w::SQUAD_COUNT)) {
@@ -629,12 +670,12 @@ fn check_waves(
             .any(|(number, want)| *number != want)
     {
         gaps.push(format!(
-            "{waves_name}: waves are not numbered 1 to N: {numbers:?}"
+            "{list_name}: waves are not numbered 1 to N: {numbers:?}"
         ));
     }
     if repeats == 0 {
         gaps.push(format!(
-            "{waves_name}: no wave is marked in c{} to repeat past the last",
+            "{list_name}: no wave is marked in c{} to repeat past the last",
             w::REPEAT
         ));
     }
@@ -1126,8 +1167,12 @@ fn check_armory_settings(gaps: &mut Vec<String>) -> Result<(), String> {
 /// Holds `PLAYER_DATA_TABLE` to what the script and the menus read: named
 /// fields, none twice, the plain numbers the script writes by name, and for
 /// a keyed field armory kinds of the armory table, each keying one field.
+/// With the player data schema loaded, every field is one of its numbers or
+/// numbers by key, keyed exactly where the table lists kinds, and every item
+/// of those kinds is a key of it.
 fn check_player_data(
     fields: &ScriptTable,
+    schema: Option<(&str, &structured_data_iw4::Definition)>,
     armory_name: &str,
     armory: &ScriptTable,
     gaps: &mut Vec<String>,
@@ -1145,6 +1190,9 @@ fn check_player_data(
         }
         names.push(name);
         let keyed: Vec<&str> = cell(row, 1).split_whitespace().collect();
+        if let Some((def_name, definition)) = schema {
+            check_schema_field(def_name, definition, name, &keyed, armory, gaps);
+        }
         let scalar = PLAYER_DATA_SCALARS
             .iter()
             .any(|scalar| scalar.eq_ignore_ascii_case(name));
@@ -1176,6 +1224,54 @@ fn check_player_data(
                 "{PLAYER_DATA_TABLE}: no `{scalar}` field, which the script writes"
             ));
         }
+    }
+}
+
+fn check_schema_field(
+    def_name: &str,
+    definition: &structured_data_iw4::Definition,
+    name: &str,
+    kinds: &[&str],
+    armory: &ScriptTable,
+    gaps: &mut Vec<String>,
+) {
+    use structured_data_iw4::DataType::{Bool, Byte, EnumArray, Int, Short};
+    use structured_data_iw4::Key::Name;
+    let number = |ty| matches!(ty, Int | Byte | Short | Bool);
+    let keyed = match definition.path_type(&[Name(name)]) {
+        Ok(ty) if number(ty) => false,
+        Ok(EnumArray(array))
+            if definition
+                .enum_arrays
+                .get(array)
+                .is_some_and(|array| number(array.element)) =>
+        {
+            true
+        }
+        other => {
+            gaps.push(format!(
+                "{PLAYER_DATA_TABLE}: `{name}` is no number or numbers by key of {def_name}: {other:?}"
+            ));
+            return;
+        }
+    };
+    if keyed == kinds.is_empty() {
+        gaps.push(format!(
+            "{PLAYER_DATA_TABLE}: `{name}` is {} in {def_name}, the table lists kinds {kinds:?}",
+            if keyed { "keyed" } else { "one number" }
+        ));
+        return;
+    }
+    let missing: Vec<&str> = armory
+        .rows()
+        .filter(|item| kinds.contains(&cell(item, ARMORY_KIND_COLUMN)))
+        .map(|item| cell(item, 1))
+        .filter(|reference| definition.lookup(&[Name(name), Name(reference)]).is_err())
+        .collect();
+    if !missing.is_empty() {
+        gaps.push(format!(
+            "{PLAYER_DATA_TABLE}: `{name}` of {def_name} has no key for the {kinds:?} items {missing:?}"
+        ));
     }
 }
 

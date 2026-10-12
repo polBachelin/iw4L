@@ -599,6 +599,17 @@ fn run_map(
         Ok(path) => frontend.runtime().find_mode_zones(&games, path, &mode),
         Err(e) => Err(e.clone()),
     };
+    if let Ok(path) = &zone_ff {
+        for (layer, found) in frontend.runtime().find_layer_zones(&games, path, &mode) {
+            match found {
+                Ok(at) => diag::info!(Launch, "mode layer `{layer}`: {}", at.display()),
+                Err(error) => diag::warn!(
+                    Launch,
+                    "mode layer gap: `{layer}` is not in the user's data ({error}); the mode runs without it"
+                ),
+            }
+        }
+    }
     let probe = launch_report(zone.clone(), common_mp.clone(), zone_ff.clone(), zone_alias);
     let game = parsed_game.or_else(|| {
         found

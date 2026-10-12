@@ -37,8 +37,6 @@ const PURCHASE_ROW: &str = "10001";
 /// How far in front of the armory, along the yaw it is placed with, the
 /// player stands to use it: well inside the engine's use reach.
 const ARMORY_STAND: f64 = 40.0;
-/// Damage dealt to the player to put it down: more than health plus armor.
-const DOWN_DAMAGE: u32 = 200;
 const MAX_BURSTS: u32 = 40;
 const MAX_REVIVE_TRIES: u32 = 20;
 
@@ -55,6 +53,7 @@ struct Settings {
     enemy_team: String,
     start_credits: i64,
     wave_bonus: i64,
+    max_health: i64,
     intermission_seconds: u64,
     eog_menu: String,
     armory_menu_prefix: String,
@@ -87,6 +86,7 @@ impl Settings {
             enemy_team: text("enemy_team")?,
             start_credits: number("start_credits")?,
             wave_bonus: number("wave_bonus")?,
+            max_health: number("max_health")?,
             intermission_seconds: u64::try_from(number("intermission_seconds")?)
                 .map_err(|e| format!("{SETTINGS} `intermission_seconds`: {e}"))?,
             eog_menu: text("eog_menu")?,
@@ -798,7 +798,16 @@ fn armory(game: &mut Game, settings: &Settings) -> Result<Value> {
     }))
 }
 
-fn laststand(game: &mut Game, wave: u32) -> Result<(Value, usize)> {
+/// Damage that puts the player down from full: its health and every point of
+/// the armor the start loadout gave, which a hit spends first.
+fn down_damage(game: &Game, settings: &Settings) -> Result<i64> {
+    let loadout = game.find(0, "loadout ").ok_or("no loadout line")?;
+    let armor = number(&game.lines[loadout], "armor")
+        .ok_or_else(|| format!("unreadable `{}`", game.lines[loadout]))?;
+    Ok(settings.max_health + armor)
+}
+
+fn laststand(game: &mut Game, settings: &Settings, wave: u32) -> Result<(Value, usize)> {
     let start = game.wait_line(0, &format!("wave={wave} start"), STEP_TIMEOUT * 2)?;
     game.wait(&format!("an enemy of wave {wave}"), STEP_TIMEOUT, |game| {
         (!game.live_enemies(start).is_empty()).then_some(())
@@ -816,15 +825,16 @@ fn laststand(game: &mut Game, wave: u32) -> Result<(Value, usize)> {
         "tp {PLAYER}; give weapon/{pistol}; give ammo; god"
     ))?;
     game.engine_line(gods, "god: client=0 off")?;
+    let damage = down_damage(game, settings)?;
     let from = game.lines.len();
-    game.play(&format!("damage {DOWN_DAMAGE}"))?;
+    game.play(&format!("damage {damage}"))?;
     let down = game.wait("the player to go down", STEP_TIMEOUT, |game| {
         game.find(from, "laststand client=0 ")
             .or_else(|| game.find(from, "player died client=0 "))
     })?;
     let line = game.lines[down].clone();
     ensure(line.starts_with("laststand "), || {
-        format!("`damage {DOWN_DAMAGE}` with a self-revive held: {line}")
+        format!("`damage {damage}` with a self-revive held: {line}")
     })?;
     let held = number(&line, "selfrevive").ok_or_else(|| format!("unreadable `{line}`"))?;
     ensure(held >= 1, || format!("`{line}` holds no self-revive"))?;
@@ -874,7 +884,7 @@ fn laststand(game: &mut Game, wave: u32) -> Result<(Value, usize)> {
 }
 
 fn gameover(game: &mut Game, settings: &Settings, wave: u32, from: usize) -> Result<Value> {
-    game.play(&format!("damage {DOWN_DAMAGE}"))?;
+    game.play(&format!("damage {}", down_damage(game, settings)?))?;
     let over = game.wait_line(from, "game over ", STEP_TIMEOUT)?;
     let window = &game.lines[from..over];
     ensure(!window.iter().any(|l| l.starts_with("laststand ")), || {
@@ -966,7 +976,7 @@ fn execute(game: &mut Game, settings: &Settings, run: &Path, manifest: &mut Valu
     })?;
     let mut revived = 0;
     phase(game, manifest, run, "laststand", |game, _| {
-        let (facts, at) = laststand(game, CLEARED_WAVES + 1)?;
+        let (facts, at) = laststand(game, settings, CLEARED_WAVES + 1)?;
         revived = at;
         Ok(facts)
     })?;
@@ -1003,7 +1013,7 @@ pub fn run(root: &Path, binary: &Path, cache: crate::CacheMode) -> Result<bool> 
             "weapon": WEAPON,
             "cleared_waves": CLEARED_WAVES,
             "purchase": { "kind": PURCHASE_KIND, "row": PURCHASE_ROW },
-            "down_damage": DOWN_DAMAGE,
+            "down_damage": "max_health + the start loadout's armor",
         },
         "gsc": { "installed": false },
         "phases": [],
