@@ -1,6 +1,5 @@
 /// How well one bot aims and how far it sees. The defaults are the host bots'
-/// own; a match that rates its bots (survival archetypes) scales them with
-/// [`BotTuning::scaled`].
+/// own.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BotTuning {
     pub max_yaw_deg_per_ms: f32,
@@ -28,25 +27,6 @@ impl Default for BotTuning {
             aim_error_pitch_deg: 2.0,
             sight_range_in: 5906.0,
             sight_fov_deg: 90.0,
-        }
-    }
-}
-
-impl BotTuning {
-    /// An aim `skill` of 1 is the default bot. Above 1 the bot turns onto a
-    /// target faster and holds its shot for a tighter line with a smaller
-    /// standing error; below 1 the reverse. Perception is not aim, so sight
-    /// range and field of view stay as they are.
-    pub fn scaled(self, skill: f32) -> Self {
-        Self {
-            max_yaw_deg_per_ms: self.max_yaw_deg_per_ms * skill,
-            max_pitch_deg_per_ms: self.max_pitch_deg_per_ms * skill,
-            max_yaw_accel_deg_per_ms2: self.max_yaw_accel_deg_per_ms2 * skill,
-            max_pitch_accel_deg_per_ms2: self.max_pitch_accel_deg_per_ms2 * skill,
-            fire_cone_deg: self.fire_cone_deg / skill,
-            aim_error_yaw_deg: self.aim_error_yaw_deg / skill,
-            aim_error_pitch_deg: self.aim_error_pitch_deg / skill,
-            ..self
         }
     }
 }

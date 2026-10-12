@@ -88,11 +88,7 @@ onstartgametype()
 	level.airstrikefx = loadfx( support( "airstrike_fx" ) );
 	precachemodel( support( "airstrike_plane" ) );
 	readgrants();
-	level.gasfx = loadfx( heavy( "gas_fx" ) );
 	level.chopperdeathfx = loadfx( heavy( "chopper_death_fx" ) );
-	precacheshellshock( heavy( "gas_shock_high" ) );
-	precacheshellshock( heavy( "gas_shock_med" ) );
-	precacheshellshock( heavy( "gas_shock_low" ) );
 	readlayer();
 	readspawns();
 	readwaves();
@@ -110,8 +106,8 @@ onstartgametype()
 	level.actorthink = maps\mp\_survival_actor::actor_think;
 	level.unsimulated = strtok( setting( "unsimulated_archetypes" ), " " );
 	level.humans = [];
+	level.actors = [];
 	level.friendlies = 0;
-	level.alliesrequested = 0;
 	level.allyqueue = [];
 	level.squads = [];
 	level.enemiesinplay = 0;
@@ -587,8 +583,8 @@ issimulated( archetype )
 }
 
 // Queues `count` enemies of `archetype` for the wave: a chopper flies the
-// map's chopper path, any other is a bot. Tallies them as skipped when no
-// bot can play them or the map has no chopper path.
+// map's chopper path, any other is an actor. Tallies them as skipped when no
+// actor can play them or the map has no chopper path.
 queueenemies( archetype, count )
 {
 	if ( archetypetrait( archetype ) == "chopper" )
@@ -652,10 +648,7 @@ runwave( wave, row )
 		logprint( "survival: wave " + wave + " skips " + level.waveskips[ i ] + " x" + level.waveskipped[ level.waveskips[ i ] ] + " (not simulated)\n" );
 	refill();
 	level thread spawnchoppers( level.wavevehicles );
-	// An enemy bot leaves the count when its client is gone, not when it
-	// dies: the session frees a client slot only once the kick has dropped
-	// it. A chopper leaves it when it is destroyed.
-	while ( level.wavekilled < level.wavetotal || level.enemiesinplay > 0 )
+	while ( level.wavekilled < level.wavetotal )
 	{
 		level waittill( "roster_changed" );
 		refill();
@@ -713,69 +706,53 @@ intermission( wave, row )
 	wait seconds;
 }
 
-// Client slots left for enemies: every client the wave did not ask for, the
-// players and their allies (in play, asked for or still owed a slot), holds
-// one.
+// Actors the wave's enemies may hold at once: `actor_budget` less the
+// allies in play or owed a place.
 enemybudget()
 {
 	return allyroom();
 }
 
-// Client slots allies could still take: every one no player or ally holds,
-// is asked for or is owed. Enemies give theirs up as they die.
+// Places allies could still take: every one no ally holds or is owed.
+// Enemies give theirs up as they die.
 allyroom()
 {
-	return getdvarint( "sv_maxclients" ) - level.humans.size - level.friendlies - level.alliesrequested - level.allyqueue.size;
+	return int( setting( "actor_budget" ) ) - level.friendlies - level.allyqueue.size;
 }
 
-// Client slots no client holds or has been asked for.
-freeslots()
+// Places no actor holds.
+freeplaces()
 {
-	return getdvarint( "sv_maxclients" ) - level.humans.size - level.friendlies - level.alliesrequested - level.enemiesinplay;
+	return int( setting( "actor_budget" ) ) - level.friendlies - level.enemiesinplay;
 }
 
-// Asks for the allies an armory squad is owed first, as many as there are
-// free slots, then for the next queued enemies, as many as the budget leaves
-// room for; one request per run of the same archetype.
+// Spawns the allies an armory squad is owed first, as many as there are free
+// places, then the next queued enemies, as many as the budget leaves room
+// for.
 refill()
 {
-	free = freeslots();
-	while ( free > 0 && level.allyqueue.size )
+	free = freeplaces();
+	for ( ; free > 0 && level.allyqueue.size; free-- )
 	{
 		archetype = level.allyqueue[ 0 ];
-		count = 0;
 		rest = [];
-		for ( i = 0; i < level.allyqueue.size; i++ )
-		{
-			if ( count < free && level.allyqueue[ i ] == archetype && rest.size == 0 )
-				count++;
-			else
-				rest[ rest.size ] = level.allyqueue[ i ];
-		}
+		for ( i = 1; i < level.allyqueue.size; i++ )
+			rest[ rest.size ] = level.allyqueue[ i ];
 		level.allyqueue = rest;
-		level.alliesrequested = level.alliesrequested + count;
-		free = free - count;
-		survival_requestallies( count, archetype );
-		logprint( "survival: requests ally " + archetype + " x" + count + " owed=" + level.allyqueue.size + " free=" + free + "\n" );
+		level.friendlies++;
+		level thread spawnally( archetype );
 	}
 	budget = enemybudget();
 	room = budget - level.enemiesinplay;
 	if ( room > free )
 		room = free;
-	while ( room > 0 && level.wavenext < level.wavequeue.size )
+	for ( ; room > 0 && level.wavenext < level.wavequeue.size; room-- )
 	{
 		archetype = level.wavequeue[ level.wavenext ];
-		count = 0;
-		for ( ; count < room && level.wavenext < level.wavequeue.size; level.wavenext++ )
-		{
-			if ( level.wavequeue[ level.wavenext ] != archetype )
-				break;
-			count++;
-		}
-		level.enemiesinplay = level.enemiesinplay + count;
-		room = room - count;
-		survival_requestenemies( count, archetype );
-		logprint( "survival: wave=" + level.wave + " requests " + archetype + " x" + count + " in_play=" + level.enemiesinplay + " budget=" + budget + "\n" );
+		level.wavenext++;
+		level.enemiesinplay++;
+		logprint( "survival: wave=" + level.wave + " sends " + archetype + " in_play=" + level.enemiesinplay + " budget=" + budget + "\n" );
+		level thread spawnenemy( archetype );
 	}
 }
 
@@ -880,7 +857,7 @@ addcredits( amount, reason )
 
 ishuman( entity )
 {
-	return isdefined( entity ) && isplayer( entity ) && !isdefined( entity.archetype );
+	return isdefined( entity ) && isplayer( entity );
 }
 
 // A player's kill pays the archetype's reward (c9), and advances every
@@ -908,24 +885,6 @@ rewardkill( archetype, means )
 
 onplayerconnect()
 {
-	self.archetype = self survival_archetype();
-	if ( isdefined( self.archetype ) )
-	{
-		// An armory squad's archetype is an ally, every other an enemy of the
-		// wave, which counted it in play when it asked.
-		self.side = "enemy";
-		if ( issquad( self.archetype ) )
-		{
-			self.side = "ally";
-			level.alliesrequested--;
-			level.friendlies++;
-		}
-		// The session answers a requested bot's team menu with the side it was
-		// asked for; it spawns on that answer.
-		self thread onteamanswer();
-		self openmenu( "team_marinesopfor" );
-		return;
-	}
 	level.humans[ level.humans.size ] = self;
 	self.sessionteam = setting( "human_team" );
 	self.team = self.sessionteam;
@@ -976,22 +935,8 @@ onteamanswer()
 		// The team field is what turrets and radius damage tell sides apart by.
 		self.sessionteam = response;
 		self.team = response;
-		if ( !isdefined( self.archetype ) )
-		{
-			logprint( "survival: client " + self getentitynumber() + " plays for " + response + "\n" );
-			continue;
-		}
-		if ( isdefined( self.spawnedbot ) )
-			continue;
-		self.spawnedbot = true;
-		logprint( "survival: " + self.side + " connected client=" + self getentitynumber() + " archetype=" + self.archetype + " team=" + response + " health=" + archetypefield( self.archetype, 7 ) + " trait=" + archetypetrait( self.archetype ) + "\n" );
-		self spawnbot();
+		logprint( "survival: client " + self getentitynumber() + " plays for " + response + "\n" );
 	}
-}
-
-isenemy()
-{
-	return isdefined( self.archetype ) && self.side == "enemy";
 }
 
 issquad( archetype )
@@ -1001,34 +946,13 @@ issquad( archetype )
 
 onplayerdisconnect()
 {
-	if ( !isdefined( self.archetype ) )
+	humans = [];
+	for ( i = 0; i < level.humans.size; i++ )
 	{
-		humans = [];
-		for ( i = 0; i < level.humans.size; i++ )
-		{
-			if ( level.humans[ i ] != self )
-				humans[ humans.size ] = level.humans[ i ];
-		}
-		level.humans = humans;
-		return;
+		if ( level.humans[ i ] != self )
+			humans[ humans.size ] = level.humans[ i ];
 	}
-	if ( !self isenemy() )
-	{
-		level.friendlies--;
-		level.squads[ self.archetype ]--;
-		logprint( "survival: ally left client=" + self getentitynumber() + " archetype=" + self.archetype + " squad=" + level.squads[ self.archetype ] + "\n" );
-		publishsquad( self.archetype );
-		level notify( "roster_changed" );
-		return;
-	}
-	level.enemiesinplay--;
-	if ( !isdefined( self.killed ) )
-	{
-		// It still owes the wave its kill: ask for it again.
-		level.wavequeue[ level.wavequeue.size ] = self.archetype;
-		logprint( "survival: enemy left client=" + self getentitynumber() + " archetype=" + self.archetype + " without a kill, asked again\n" );
-	}
-	level notify( "roster_changed" );
+	level.humans = humans;
 }
 
 spawnplayer()
@@ -1056,8 +980,22 @@ nearesthuman( origin )
 	return nearest;
 }
 
-// The enemy spawn point farthest from the players that no live client
-// stands on, undefined while every one is taken.
+// Whether a live client or actor stands on the point.
+spawntaken( origin )
+{
+	if ( positionwouldtelefrag( origin ) )
+		return true;
+	clearance = int( setting( "actor_spawn_clearance" ) );
+	for ( i = 0; i < level.actors.size; i++ )
+	{
+		if ( distancesquared( origin, level.actors[ i ].origin ) < clearance * clearance )
+			return true;
+	}
+	return false;
+}
+
+// The enemy spawn point farthest from the players that nobody stands on,
+// undefined while every one is taken.
 enemyspawnpoint()
 {
 	best = undefined;
@@ -1065,7 +1003,7 @@ enemyspawnpoint()
 	for ( i = 0; i < level.enemyspawns.size; i++ )
 	{
 		point = level.enemyspawns[ i ];
-		if ( positionwouldtelefrag( point.origin ) )
+		if ( spawntaken( point.origin ) )
 			continue;
 		distance = nearesthuman( point.origin );
 		if ( distance > bestdistance )
@@ -1077,8 +1015,8 @@ enemyspawnpoint()
 	return best;
 }
 
-// The player spawn point nearest the players that no live client stands on:
-// an armory squad joins the players where they are.
+// The player spawn point nearest the players that nobody stands on: an
+// armory squad joins the players where they are.
 allyspawnpoint()
 {
 	best = level.allyspawns[ randomint( level.allyspawns.size ) ];
@@ -1086,7 +1024,7 @@ allyspawnpoint()
 	for ( i = 0; i < level.allyspawns.size; i++ )
 	{
 		point = level.allyspawns[ i ];
-		if ( positionwouldtelefrag( point.origin ) )
+		if ( spawntaken( point.origin ) )
 			continue;
 		distance = nearesthuman( point.origin );
 		if ( bestdistance < 0 || distance < bestdistance )
@@ -1098,66 +1036,88 @@ allyspawnpoint()
 	return best;
 }
 
-botspawnpoint()
+// An actor of `archetype` on `team` at the spawn point, with its health (c7)
+// and a character of its archetype, running the actor behavior.
+spawnwaveactor( archetype, spawnpoint, team )
 {
-	if ( self.side != "enemy" )
-		return allyspawnpoint();
+	actor = spawnactor( spawnpoint.origin, spawnpoint.angles, team );
+	actor.archetype = archetype;
+	actor.maxhealth = int( archetypefield( archetype, 7 ) );
+	actor.health = actor.maxhealth;
+	character = archetypecharacter( archetype );
+	dress = "";
+	if ( isdefined( character ) )
+	{
+		actor setcharacter( character.body, character.head, character.hat );
+		dress = " character=" + character.body + "/" + character.head + "/" + character.hat;
+	}
+	level.actors[ level.actors.size ] = actor;
+	logprint( "survival: " + archetype + " spawned actor=" + actor getentitynumber() + " team=" + team + " at " + spawnpoint.origin + " health=" + actor.health + " trait=" + archetypetrait( archetype ) + dress + "\n" );
+	actor thread [[ level.actorthink ]]( archetype );
+	return actor;
+}
+
+// An enemy holds its place in the wave from the moment it is sent, and waits
+// while every enemy spawn point is taken.
+spawnenemy( archetype )
+{
+	level endon( "game_over" );
 	for ( ;; )
 	{
 		spawnpoint = enemyspawnpoint();
 		if ( isdefined( spawnpoint ) )
-			return spawnpoint;
+			break;
 		if ( !isdefined( waiting ) )
 		{
 			waiting = true;
-			logprint( "survival: client " + self getentitynumber() + " waits for a free enemy spawn\n" );
+			logprint( "survival: " + archetype + " waits for a free enemy spawn\n" );
 		}
 		wait 0.05;
 	}
+	actor = spawnwaveactor( archetype, spawnpoint, setting( "enemy_team" ) );
+	actor thread enemydeath();
 }
 
-spawnbot()
+spawnally( archetype )
 {
-	spawnpoint = self botspawnpoint();
-	weapon = archetypeweapon( self.archetype );
-	self.sessionstate = "playing";
-	self.maxhealth = int( archetypefield( self.archetype, 7 ) );
-	self.health = self.maxhealth;
-	self spawn( spawnpoint.origin, spawnpoint.angles );
-	character = archetypecharacter( self.archetype );
-	dress = "";
-	if ( isdefined( character ) )
+	actor = spawnwaveactor( archetype, allyspawnpoint(), setting( "human_team" ) );
+	actor thread allydeath();
+}
+
+// An enemy's death is a kill of the wave; a player's kill pays its reward.
+enemydeath()
+{
+	self waittill( "death", attacker, means, weapon );
+	forgetactor( self );
+	level.enemiesinplay--;
+	level.wavekilled++;
+	logprint( "survival: enemy killed actor=" + self getentitynumber() + " archetype=" + self.archetype + " remaining=" + ( level.wavetotal - level.wavekilled ) + " means=" + means + " weapon=" + weapon + " by=" + dealer( attacker ) + "\n" );
+	updatewavehud();
+	if ( ishuman( attacker ) )
+		attacker creditkill( self, means, weapon );
+	level notify( "roster_changed" );
+}
+
+allydeath()
+{
+	self waittill( "death" );
+	forgetactor( self );
+	level.friendlies--;
+	level.squads[ self.archetype ]--;
+	logprint( "survival: ally killed actor=" + self getentitynumber() + " archetype=" + self.archetype + " squad=" + level.squads[ self.archetype ] + "\n" );
+	publishsquad( self.archetype );
+	level notify( "roster_changed" );
+}
+
+forgetactor( actor )
+{
+	actors = [];
+	for ( i = 0; i < level.actors.size; i++ )
 	{
-		self setcharacter( character.body, character.head, character.hat );
-		dress = " character=" + character.body + "/" + character.head + "/" + character.hat;
+		if ( level.actors[ i ] != actor )
+			actors[ actors.size ] = level.actors[ i ];
 	}
-	self takeallweapons();
-	self giveweapon( weapon );
-	self givemaxammo( weapon );
-	summary = weapon;
-	offhand = archetypefield( self.archetype, 6 );
-	if ( offhand != "" )
-	{
-		offhand = weaponfor( offhand );
-		if ( weaponinventorytype( offhand ) == "offhand" )
-			self setoffhandprimaryclass( offhand );
-		self giveweapon( offhand );
-		self givemaxammo( offhand );
-		summary = summary + " " + offhand;
-	}
-	self setspawnweapon( weapon );
-	self switchtoweapon( weapon );
-	speed = tablelookup( "survival/archetypes.csv", 0, self.archetype, 4 );
-	if ( speed != "" )
-	{
-		self setmovespeedscale( int( speed ) / 100 );
-		summary = summary + " speed=" + speed + "%";
-	}
-	logprint( "survival: " + self.archetype + " spawned client=" + self getentitynumber() + " at " + spawnpoint.origin + " weapons=" + summary + " health=" + self.health + dress + "\n" );
-	if ( archetypetrait( self.archetype ) == "claymore" )
-		self thread layclaymores();
-	self notify( "spawned_player" );
-	level notify( "player_spawned", self );
+	level.actors = actors;
 }
 
 loadoutslot( slot, column )
@@ -1225,13 +1185,6 @@ onplayerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpo
 {
 	if ( self isfriendlyfire( attackerent ) )
 		return;
-	// The explosive juggernaut takes extra damage from explosives.
-	if ( isdefined( self.archetype ) && archetypetrait( self.archetype ) == "explosive" && isexplosive( mod ) )
-	{
-		scaled = int( dmg * int( heavy( "explosive_damage_percent" ) ) / 100 );
-		logprint( "survival: explosive weakness client=" + self getentitynumber() + " archetype=" + self.archetype + " means=" + mod + " weapon=" + weaponname + " damage=" + dmg + " scaled=" + scaled + "\n" );
-		dmg = scaled;
-	}
 	if ( isdefined( self.armor ) && self.armor > 0 )
 		dmg = self absorbarmor( dmg, mod );
 	self finishplayerdamage( inflictorent, attackerent, dmg, dmgflags, mod, weaponname, hitpoint, hitdir, hitloc, timeoff );
@@ -1262,33 +1215,6 @@ isfriendlyfire( attacker )
 onplayerkilled( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc, timeoff, animlen )
 {
 	self.sessionstate = "dead";
-	if ( isdefined( self.archetype ) )
-	{
-		if ( isdefined( self.killed ) )
-			return;
-		self.killed = true;
-		self notify( "death" );
-		if ( self isenemy() )
-		{
-			level.wavekilled++;
-			logprint( "survival: enemy killed client=" + self getentitynumber() + " archetype=" + self.archetype + " remaining=" + ( level.wavetotal - level.wavekilled ) + " means=" + mod + " weapon=" + weaponname + " by=" + dealer( attackerent ) + "\n" );
-			updatewavehud();
-			if ( ishuman( attackerent ) )
-				attackerent creditkill( self, mod, weaponname );
-		}
-		else
-			logprint( "survival: ally killed client=" + self getentitynumber() + " archetype=" + self.archetype + "\n" );
-		// A martyr's C4 and a chemical enemy's gas are its own: it stays
-		// connected, dead, until they are spent, then leaves.
-		trait = archetypetrait( self.archetype );
-		if ( trait == "martyrdom" )
-			self thread martyrdom();
-		else if ( trait == "gas" )
-			self thread gascloud();
-		else
-			kick( self getentitynumber() );
-		return;
-	}
 	self notify( "death" );
 	self.downed = undefined;
 	if ( isdefined( self.armory ) )
@@ -1298,7 +1224,7 @@ onplayerkilled( inflictorent, attackerent, dmg, mod, weaponname, hitdir, hitloc,
 		gameover();
 }
 
-// A player's kill of an enemy, a bot or a chopper: it is counted and paid,
+// A player's kill of an enemy, an actor or a chopper: it is counted and paid,
 // and gets a downed player up.
 creditkill( victim, means, weapon )
 {
@@ -1546,7 +1472,7 @@ purchaseblock( ref, kind, price, rank, most )
 	if ( grant == "predator" && weapontype( missilefor( ref ) ) != "projectile" )
 		return missilefor( ref ) + " is a " + weapontype( missilefor( ref ) ) + " weapon, no missile to steer";
 	if ( grant == "squad" && allyroom() < int( setting( "squad_" + ref ) ) )
-		return "only " + allyroom() + " client slots are left for allies";
+		return "only " + allyroom() + " places are left for allies";
 	return "";
 }
 
@@ -2128,169 +2054,16 @@ squadsize( ref )
 }
 
 // An armory squad is `squad_<ref>` allies of the waves table's archetype
-// `ref`, owed a client slot each until one is free.
+// `ref`, owed a place each until one is free.
 requestsquad( ref )
 {
 	size = int( setting( "squad_" + ref ) );
 	for ( i = 0; i < size; i++ )
 		level.allyqueue[ level.allyqueue.size ] = ref;
 	level.squads[ ref ] = squadsize( ref ) + size;
-	logprint( "survival: allies requested " + size + " archetype=" + ref + " free=" + freeslots() + "\n" );
+	logprint( "survival: allies requested " + size + " archetype=" + ref + " free=" + freeplaces() + "\n" );
 	publishsquad( ref );
 	refill();
-}
-
-isexplosive( means )
-{
-	explosive = strtok( heavy( "explosive_means" ), " " );
-	for ( i = 0; i < explosive.size; i++ )
-	{
-		if ( explosive[ i ] == means )
-			return true;
-	}
-	return false;
-}
-
-// The nearest live player within `range` of the client, undefined when none.
-nearesthumanwithin( range )
-{
-	nearest = undefined;
-	best = range * range;
-	for ( i = 0; i < level.humans.size; i++ )
-	{
-		human = level.humans[ i ];
-		if ( human.sessionstate != "playing" )
-			continue;
-		distance = distancesquared( self.origin, human.origin );
-		if ( distance <= best )
-		{
-			nearest = human;
-			best = distance;
-		}
-	}
-	return nearest;
-}
-
-// A martyr drops its C4 where it died, and the C4 goes off
-// `martyrdom_delay_ms` later as the weapon's own blast, in the martyr's name.
-martyrdom()
-{
-	weapon = weaponfor( heavy( "martyrdom_weapon" ) );
-	origin = self.origin;
-	c4 = magicbullet( weapon, origin + ( 0, 0, int( heavy( "martyrdom_drop_height" ) ) ), origin, self );
-	logprint( "survival: martyrdom c4 dropped client=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
-	wait heavyseconds( "martyrdom_delay_ms" );
-	c4 detonate();
-	logprint( "survival: martyrdom c4 detonated client=" + self getentitynumber() + " at " + origin + " weapon=" + weapon + "\n" );
-	wait int( support( "support_settle_ms" ) ) / 1000;
-	kick( self getentitynumber() );
-}
-
-// A claymore enemy plants `claymore_count` claymores at its feet, each facing
-// the nearest player within `claymore_plant_range` when it is planted.
-layclaymores()
-{
-	self endon( "death" );
-	self endon( "disconnect" );
-	weapon = weaponfor( heavy( "claymore_weapon" ) );
-	count = int( heavy( "claymore_count" ) );
-	for ( planted = 0; planted < count; planted++ )
-	{
-		for ( ;; )
-		{
-			target = self nearesthumanwithin( int( heavy( "claymore_plant_range" ) ) );
-			if ( isdefined( target ) )
-				break;
-			wait heavyseconds( "claymore_poll_ms" );
-		}
-		yaw = vectortoyaw( target.origin - self.origin );
-		forward = anglestoforward( ( 0, yaw, 0 ) );
-		start = self.origin + ( 0, 0, int( heavy( "claymore_plant_height" ) ) );
-		claymore = magicbullet( weapon, start, self.origin + forward * int( heavy( "claymore_plant_reach" ) ), self );
-		level thread claymoretrip( claymore, yaw, self, weapon );
-		wait heavyseconds( "claymore_arm_ms" );
-	}
-}
-
-// Armed `claymore_arm_ms` after it is planted, a claymore goes off
-// `claymore_trip_delay_ms` after a live player comes within
-// `claymore_trip_radius` and `claymore_trip_arc` degrees of the way it faces.
-// Its blast is its planter's, so it is disarmed when the planter leaves (a
-// killed enemy is kicked): with no planter its damage would be nobody's, and
-// would spare no team.
-claymoretrip( claymore, yaw, owner, weapon )
-{
-	claymore endon( "death" );
-	planter = owner getentitynumber();
-	level thread claymoredisarm( claymore, owner, planter );
-	claymore endon( "disarmed" );
-	wait heavyseconds( "claymore_arm_ms" );
-	logprint( "survival: claymore planted client=" + planter + " at " + claymore.origin + " yaw " + int( yaw ) + " weapon=" + weapon + "\n" );
-	forward = anglestoforward( ( 0, yaw, 0 ) );
-	radius = int( heavy( "claymore_trip_radius" ) );
-	arc = cos( int( heavy( "claymore_trip_arc" ) ) );
-	for ( ;; )
-	{
-		wait heavyseconds( "claymore_poll_ms" );
-		for ( i = 0; i < level.humans.size; i++ )
-		{
-			human = level.humans[ i ];
-			if ( human.sessionstate != "playing" || distancesquared( human.origin, claymore.origin ) > radius * radius )
-				continue;
-			if ( vectordot( vectornormalize( human.origin - claymore.origin ), forward ) < arc )
-				continue;
-			logprint( "survival: claymore tripped by client=" + human getentitynumber() + " planter=" + planter + " at " + claymore.origin + "\n" );
-			wait heavyseconds( "claymore_trip_delay_ms" );
-			claymore detonate();
-			logprint( "survival: claymore detonated planter=" + planter + " at " + claymore.origin + "\n" );
-			return;
-		}
-	}
-}
-
-// A chemical enemy's tanks burst where it died: for `gas_ms` the cloud deals
-// `gas_damage` in its name within `gas_radius` every `gas_interval_ms`, and
-// shocks each player in it by how deep they stand.
-gascloud()
-{
-	origin = self.origin;
-	radius = int( heavy( "gas_radius" ) );
-	damage = int( heavy( "gas_damage" ) );
-	playfx( level.gasfx, origin );
-	logprint( "survival: chemical gas at " + origin + " radius=" + radius + " ms=" + heavy( "gas_ms" ) + " client=" + self getentitynumber() + "\n" );
-	for ( end = gettime() + int( heavy( "gas_ms" ) ); gettime() < end; )
-	{
-		radiusdamage( origin, radius, damage, damage, self, heavy( "gas_means" ) );
-		for ( i = 0; i < level.humans.size; i++ )
-			level.humans[ i ] gasshock( origin, radius );
-		wait heavyseconds( "gas_interval_ms" );
-	}
-	logprint( "survival: chemical gas at " + origin + " cleared client=" + self getentitynumber() + "\n" );
-	kick( self getentitynumber() );
-}
-
-gasshock( origin, radius )
-{
-	if ( self.sessionstate != "playing" )
-		return;
-	distance = distance( self.origin, origin );
-	if ( distance > radius )
-		return;
-	shock = heavy( "gas_shock_low" );
-	if ( distance <= int( heavy( "gas_high_radius" ) ) )
-		shock = heavy( "gas_shock_high" );
-	else if ( distance <= int( heavy( "gas_med_radius" ) ) )
-		shock = heavy( "gas_shock_med" );
-	self shellshock( shock, heavyseconds( "gas_shock_ms" ) );
-	logprint( "survival: gas shock client=" + self getentitynumber() + " shock=" + shock + " distance=" + int( distance ) + "\n" );
-}
-
-claymoredisarm( claymore, owner, planter )
-{
-	claymore endon( "death" );
-	owner waittill( "disconnect" );
-	claymore notify( "disarmed" );
-	logprint( "survival: claymore disarmed planter=" + planter + " left, at " + claymore.origin + "\n" );
 }
 
 // MW3's own chopper path on the map: the entities whose script_noteworthy is

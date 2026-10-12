@@ -10,9 +10,9 @@ Bots submit `TickInput.cmds` like players — [`SIM-STEP.md`](SIM-STEP.md).
 A bot's client id is its entity number, so the roster hands out ids 1 to
 `MAX_CLIENTS - 1` round-robin and a full set of client slots mints nothing more.
 A bot the authority drops (a script `kick`, a connection fault) leaves the
-roster with it: `bots: retired client N`. Bots a match script asks for (the
-survival director, [`SURVIVAL.md`](SURVIVAL.md)) join bound to an archetype and
-pick no class on join or on any later life; the script arms and spawns them.
+roster with it: `bots: retired client N`. No match script asks for bots:
+survival's waves and allies are actors ([`SURVIVAL.md`](SURVIVAL.md)), and
+every bot is one the rules or the console added.
 
 | file | owns |
 |---|---|
@@ -61,13 +61,10 @@ weapon skill never reloads or switches away from a shield.
 ## Tuning and the survival hunt
 
 Each controller carries a `BotTuning`; its defaults are the host bots' own
-values and every multiplayer bot keeps them. `BotTuning::scaled(skill)`
-multiplies the turn rates and accelerations by `skill` and divides the fire
-cone and the per-bot aim error by it; sight range and field of view stay as
-they are. Survival scales its bots by their archetype's skill
-([`SURVIVAL.md`](SURVIVAL.md)).
+values and every bot keeps them.
 
-In a survival match (`GameModeKind::Survival`), a bot on the enemy team is
+In a survival match (`GameModeKind::Survival`), a bot added on the enemy team
+(`bot add`) is
 told where every live client of the human team stands (`BotObservation::quarry`,
 `PublicMode` contacts). Its Hunt walks the graph to the nearest of them,
 keeps that target while it lives unless another is 256 units nearer, and

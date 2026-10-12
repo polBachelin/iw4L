@@ -44,6 +44,8 @@ armory_replacement_continue,continue
 armory_replacement_grants,launcher
 primary_slots,2
 pause_menu,iw4l_pause
+actor_budget,17
+actor_spawn_clearance,32
 actor_think_ms,250
 actor_blend_ms,200
 actor_goal_radius,64
