@@ -94,6 +94,7 @@ onstartgametype()
 	precacheshellshock( heavy( "gas_shock_med" ) );
 	precacheshellshock( heavy( "gas_shock_low" ) );
 	level.chopperdeathfx = loadfx( heavy( "chopper_death_fx" ) );
+	level.splodefx = loadfx( heavy( "splode_fx" ) );
 	readlayer();
 	readspawns();
 	readwaves();
@@ -109,6 +110,8 @@ onstartgametype()
 	readplacements();
 	readchallenges();
 	level.actorthink = maps\mp\_survival_actor::actor_think;
+	level.dogthink = maps\mp\_survival_dog::dog_think;
+	level.dogarchetypes = strtok( setting( "dog_archetypes" ), " " );
 	level.unsimulated = strtok( setting( "unsimulated_archetypes" ), " " );
 	level.humans = [];
 	level.actors = [];
@@ -575,6 +578,16 @@ runwaves()
 		runwave( wave, row );
 		intermission( wave, row );
 	}
+}
+
+isdog( archetype )
+{
+	for ( i = 0; i < level.dogarchetypes.size; i++ )
+	{
+		if ( level.dogarchetypes[ i ] == archetype )
+			return true;
+	}
+	return false;
 }
 
 issimulated( archetype )
@@ -1049,7 +1062,8 @@ allyspawnpoint()
 }
 
 // An actor of `archetype` on `team` at the spawn point, with its health (c7)
-// and a character of its archetype, running the actor behavior.
+// and a character of its archetype, running the dog behavior for a
+// `dog_archetypes` one and the actor behavior for any other.
 spawnwaveactor( archetype, spawnpoint, team )
 {
 	actor = spawnactor( spawnpoint.origin, spawnpoint.angles, team );
@@ -1065,7 +1079,10 @@ spawnwaveactor( archetype, spawnpoint, team )
 	}
 	level.actors[ level.actors.size ] = actor;
 	logprint( "survival: " + archetype + " spawned actor=" + actor getentitynumber() + " team=" + team + " at " + spawnpoint.origin + " health=" + actor.health + " trait=" + archetypetrait( archetype ) + dress + "\n" );
-	actor thread [[ level.actorthink ]]( archetype );
+	if ( isdog( archetype ) )
+		actor thread [[ level.dogthink ]]( archetype );
+	else
+		actor thread [[ level.actorthink ]]( archetype );
 	return actor;
 }
 

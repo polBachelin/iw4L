@@ -20,9 +20,9 @@ make launcher            # or: cargo build --profile play -p launcher
 ```
 
 What works: waves from MW3's table (21 waves, repeating), enemy archetypes including
-juggernauts, martyrdom, claymore and chemical enemies, the chopper boss, credits, MW3's
+juggernauts, martyrdom, claymore and chemical enemies, dogs, the chopper boss, credits, MW3's
 weapon, equipment and air support armories, last stand with self-revive, revive at wave
-end, a pause that freezes solo play, and MW3's end-of-game summary. Not yet: dogs, last
+end, a pause that freezes solo play, and MW3's end-of-game summary. Not yet: last
 stand HUD, per-archetype enemy bodies, co-op.
 
 Details: [Survival mode](docs/SURVIVAL.md), [run recipes](docs/RUN.md). Regression run:

@@ -18,7 +18,7 @@ layer_enemy_spawn_noteworthy,leader follower
 layer_armory_targetname,armory_
 layer_waves_table,sp/so_survival/tier_<tier>.csv
 layer_tiers,1 2 3 4
-unsimulated_archetypes,dog_reg dog_splode
+unsimulated_archetypes,
 test_wave,
 max_health,100
 start_credits,0
@@ -60,6 +60,12 @@ actor_eye_height,60
 actor_crouch_eye_height,40
 actor_corpse_ms,10000
 actor_explosive_means,MOD_GRENADE MOD_GRENADE_SPLASH MOD_EXPLOSIVE MOD_PROJECTILE MOD_PROJECTILE_SPLASH
+dog_archetypes,dog_reg dog_splode
+dog_attack_range,96
+dog_bite_radius,32
+dog_bite_damage,30
+dog_bite_ms,300
+dog_attack_rest_ms,500
 player_viewhands,viewhands_player_delta
 player_character,delta_a
 player_blend_ms,200

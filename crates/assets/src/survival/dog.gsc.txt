@@ -1,0 +1,104 @@
+#include maps\mp\_survival_actor;
+#using_animtree( "dog" );
+
+heavy( key )
+{
+	return tablelookup( "survival/heavies.csv", 0, key, 1 );
+}
+
+// Entry point for a dog of `archetype` spawned by spawnactor and dressed: it
+// runs over the path nodes to the nearest living enemy, bites it within
+// dog_attack_range, flinches when hurt and plays its death. A dog of the
+// `splode` trait explodes where it dies. Its speed (c4) is its
+// survival/archetypes.csv row's.
+dog_think( archetype )
+{
+	readanims();
+	self useanimtree( #animtree );
+	table = "survival/archetypes.csv";
+	self.archetype = archetype;
+	self.animset = "dog";
+	self.pose = "stand";
+	self.runrate = 1;
+	speed = tablelookup( table, 0, archetype, 4 );
+	if ( speed != "" )
+		self.runrate = int( speed ) / 100;
+	self.splode = tablelookup( table, 0, archetype, 3 ) == "splode";
+	self setgoalradius( int( setting( "actor_goal_radius" ) ) );
+	self.hitdirection = "b";
+	self.inpain = false;
+	self thread actorpain();
+	self thread dogdeath();
+	self dogloop();
+}
+
+dogloop()
+{
+	self endon( "death" );
+	for ( ;; )
+	{
+		while ( self.inpain )
+			wait 0.05;
+		target = self nearestenemy( false );
+		if ( !isdefined( target ) )
+			self idle();
+		else if ( distance( self.origin, target.origin ) <= int( setting( "dog_attack_range" ) ) )
+		{
+			self bite( target );
+			continue;
+		}
+		else
+			self run( target );
+		wait settingseconds( "actor_think_ms" );
+	}
+}
+
+run( target )
+{
+	self.moveplaybackrate = self.runrate;
+	self setgoalpos( target.origin );
+	self.moving = true;
+	self playloop( "run" );
+}
+
+// Stops, faces `target` and plays an attack; dog_bite_ms into it, a target
+// still in range takes dog_bite_damage. Then it rests dog_attack_rest_ms.
+bite( target )
+{
+	self stopmoving();
+	self faceat( target );
+	self.loopstate = undefined;
+	name = self pickanim( "attack", "" );
+	if ( name != "" )
+		self setanimknob( name, 1, settingseconds( "actor_blend_ms" ) );
+	wait settingseconds( "dog_bite_ms" );
+	if ( !self.inpain && isalive( target ) && distance( self.origin, target.origin ) <= int( setting( "dog_attack_range" ) ) )
+	{
+		// Centred on the target's eye, so the radius does not reach the dog.
+		damage = int( setting( "dog_bite_damage" ) );
+		radiusdamage( target targeteye(), int( setting( "dog_bite_radius" ) ), damage, damage, self, "MOD_MELEE" );
+	}
+	wait settingseconds( "dog_attack_rest_ms" );
+}
+
+dogdeath()
+{
+	self waittill( "death", attacker, means );
+	self.moving = undefined;
+	if ( self.splode )
+		self splode();
+	self playonce( "death", self.hitdirection );
+	wait settingseconds( "actor_corpse_ms" );
+	while ( isdefined( self.deatheffectactive ) )
+		wait 0.05;
+	self delete();
+}
+
+splode()
+{
+	origin = self.origin;
+	radius = int( heavy( "splode_radius" ) );
+	playfx( level.splodefx, origin );
+	radiusdamage( origin, radius, int( heavy( "splode_damage_max" ) ), int( heavy( "splode_damage_min" ) ), self, heavy( "splode_means" ) );
+	logprint( "survival: dog exploded actor=" + self getentitynumber() + " at " + origin + " radius=" + radius + "\n" );
+}
