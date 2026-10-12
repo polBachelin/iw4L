@@ -19,9 +19,9 @@ pub fn model_kind(name: &str) -> Option<ModelKind> {
     } else if name.starts_with("weapon_") || is_t5_world_weapon(name) {
         Some(ModelKind::WorldWeapon)
     } else if name.starts_with("mp_body_")
-        || name.starts_with("head_")
         || name.contains("_mp_body_")
         || name.contains("_mp_head_")
+        || crate::soldiers::is_character_model(name)
     {
         Some(ModelKind::Soldier)
     } else {

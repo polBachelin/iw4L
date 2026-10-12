@@ -30,6 +30,14 @@ A pure evaluator, used by **both** the authority **and** the client:
 * `RetainedModelCapability` — pose, `XBoneInfo`, collSurf/collTris for hitscan;
 * `build_body_head_weapon_dobj` — body + head on `j_spine4` + weapon on its tag.
 
+Character models captured into `BodyMeshCatalog` (with bone names, parents and
+bind pose), by name family: `mp_body_*`, `*_mp_body_*`, `*_mp_head_*`
+(MP), `c_*_mp_*_fb` (T6 bodies), `body_*`, `fullbody_*`, `head_*`, `hat_*`
+(SP), plus the dog model `german_sheperd_dog`. `by_name` reaches any of them,
+like `get`, with no extra name filter; `kits()` still builds
+team kits from the MP bodies only. `torso_stabilizer` is optional: SP bodies
+parent `j_spinelower` and the hips straight to `j_mainroot`.
+
 A missing clip **never** turns into the bind pose; additive nodes are a typed
 gap, not "ordinary blending".
 

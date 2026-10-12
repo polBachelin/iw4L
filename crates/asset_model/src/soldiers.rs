@@ -72,6 +72,14 @@ fn is_head_model(name: &str) -> bool {
     name.starts_with("head_") || name.contains("_mp_head_")
 }
 
+pub fn is_character_model(name: &str) -> bool {
+    name.starts_with("body_")
+        || name.starts_with("fullbody_")
+        || name.starts_with("head_")
+        || name.starts_with("hat_")
+        || name == "german_sheperd_dog"
+}
+
 pub fn is_arms_model(name: &str) -> bool {
     name.starts_with("viewhands_")
         || (name.starts_with("viewmodel_") && name.ends_with("_arms"))
