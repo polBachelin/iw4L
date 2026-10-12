@@ -67,7 +67,7 @@ struct RemoteKitOwner {
 #[derive(bevy::prelude::Resource, Default)]
 pub(crate) struct PreparedRemoteKits {
     owner: Option<RemoteKitOwner>,
-    kits: HashMap<(bool, u32, u8), Option<PreparedRemoteKit>>,
+    kits: HashMap<asset_model::SoldierKit, HashMap<(u32, u8), Option<PreparedRemoteKit>>>,
     built: HashMap<KitModels, Option<Arc<xmodel_runtime::DObj>>>,
 }
 
@@ -109,20 +109,25 @@ impl PreparedRemoteKits {
         }
     }
 
-    pub(crate) fn get(&self, axis: bool, weapon: u32, camo: u8) -> Option<&PreparedRemoteKit> {
+    pub(crate) fn get(
+        &self,
+        kit: &asset_model::SoldierKit,
+        weapon: u32,
+        camo: u8,
+    ) -> Option<&PreparedRemoteKit> {
         self.kits
-            .get(&(axis, weapon, camo))
+            .get(kit)
+            .and_then(|kits| kits.get(&(weapon, camo)))
             .and_then(Option::as_ref)
     }
 
     pub(crate) fn prepare(
         &mut self,
         bodies: &assets::PreparedBodies,
-        soldiers: &asset_game::SoldierPresentations,
+        soldier: &asset_game::SoldierPresentation,
         weapons: &assets::PreparedWeapons,
         world_weapons: &assets::PreparedWorldWeapons,
         compositions: &mut PreparedItemCompositions,
-        axis: bool,
         handle: asset_game::WeaponHandle,
         camo: u8,
     ) {
@@ -131,7 +136,7 @@ impl PreparedRemoteKits {
             return;
         };
         let weapon = bound.wire_id();
-        if self.kits.contains_key(&(axis, weapon, camo)) {
+        if self.get_slot(soldier.kit(), weapon, camo).is_some() {
             return;
         }
         let shared = if weapon == 0 || bound.world_facts().is_some_and(|facts| facts.is_shield()) {
@@ -140,17 +145,13 @@ impl PreparedRemoteKits {
             match compositions.prepare(weapons, world_weapons, handle, camo) {
                 Ok(shared) => Some(shared),
                 Err(_) => {
-                    self.kits.insert((axis, weapon, camo), None);
+                    self.insert(soldier.kit(), weapon, camo, None);
                     return;
                 }
             }
         };
-        let Ok(soldier) = soldiers.side(axis) else {
-            self.kits.insert((axis, weapon, camo), None);
-            return;
-        };
         if !soldier.owns_bodies(&bodies.0) {
-            self.kits.insert((axis, weapon, camo), None);
+            self.insert(soldier.kit(), weapon, camo, None);
             return;
         }
         let kit = self.compile(
@@ -162,7 +163,33 @@ impl PreparedRemoteKits {
             camo,
             shared.as_deref(),
         );
-        self.kits.insert((axis, weapon, camo), kit);
+        self.insert(soldier.kit(), weapon, camo, kit);
+    }
+
+    fn get_slot(
+        &self,
+        kit: &asset_model::SoldierKit,
+        weapon: u32,
+        camo: u8,
+    ) -> Option<&Option<PreparedRemoteKit>> {
+        self.kits
+            .get(kit)
+            .and_then(|kits| kits.get(&(weapon, camo)))
+    }
+
+    fn insert(
+        &mut self,
+        kit: &asset_model::SoldierKit,
+        weapon: u32,
+        camo: u8,
+        prepared: Option<PreparedRemoteKit>,
+    ) {
+        if !self.kits.contains_key(kit) {
+            self.kits.insert(kit.clone(), HashMap::new());
+        }
+        if let Some(kits) = self.kits.get_mut(kit) {
+            kits.insert((weapon, camo), prepared);
+        }
     }
 
     fn compile(
@@ -305,6 +332,15 @@ pub(crate) fn occupy_remote_kit_dobj<'a>(
             source: KitSource::Body(kit.head.as_deref().expect("prepared head name")),
         });
     }
+    if let Some(hat) = soldier.hat().ok()? {
+        let entry = hat.entry();
+        skels.push(KitModel {
+            name: entry.skel.name.as_str(),
+            skel: &entry.skel,
+            hide_tags: Vec::new(),
+            source: KitSource::Body(hat.name()),
+        });
+    }
     if weapon != 0
         && !weapons
             .and_then(|w| {
@@ -362,8 +398,10 @@ pub(crate) fn occupy_remote_kit_dobj<'a>(
 pub struct RemoteModelSet<'a> {
     pub body_name: String,
     pub head_name: String,
+    pub hat_name: String,
     pub body: &'a asset_model::BodyMeshEntry,
     pub head: Option<&'a asset_model::BodyMeshEntry>,
+    pub hat: Option<(&'a asset_model::BodyMeshEntry, usize)>,
     pub gun: Option<&'a asset_model::WorldWeaponEntry>,
 
     pub world_gun_gap: Option<WorldGunGap>,
@@ -376,6 +414,9 @@ pub struct RemoteModelSet<'a> {
     pub shield: Option<sim::ShieldAttachment>,
 }
 
+/// Body, head, hat and gun LODs, in that order.
+pub type RemoteLodTuple = (Option<u8>, Option<u8>, Option<u8>, Option<u8>);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldGunGap {
     pub weapon: u32,
@@ -387,13 +428,14 @@ pub struct WorldGunGap {
 pub struct RemoteModelLods {
     pub body: u8,
     pub head: Option<u8>,
+    pub hat: Option<u8>,
     pub gun: Option<u8>,
     pub attachments: Vec<Option<u8>>,
 }
 
 impl RemoteModelLods {
-    pub const fn tuple(&self) -> (Option<u8>, Option<u8>, Option<u8>) {
-        (Some(self.body), self.head, self.gun)
+    pub const fn tuple(&self) -> RemoteLodTuple {
+        (Some(self.body), self.head, self.hat, self.gun)
     }
 }
 
@@ -407,9 +449,12 @@ pub fn select_remote_lods(
     };
     let body = slot_lod(0, &models.body.skel)?;
     let head = models.head.and_then(|head| slot_lod(1, &head.skel));
+    let hat = models
+        .hat
+        .and_then(|(hat, model)| slot_lod(model, &hat.skel));
     let gun = models
         .gun
-        .and_then(|gun| slot_lod(usize::from(models.head.is_some()) + 1, &gun.skel));
+        .and_then(|gun| slot_lod(models.gun_model_index, &gun.skel));
     let attachments = models
         .attachments
         .iter()
@@ -418,6 +463,7 @@ pub fn select_remote_lods(
     Some(RemoteModelLods {
         body,
         head,
+        hat,
         gun,
         attachments,
     })
@@ -427,10 +473,11 @@ pub fn remote_dobj_reuse_key(
     e_type: i32,
     body_name: &str,
     head_name: &str,
+    hat_name: &str,
     gun_name: &str,
     attachment_names: &[&str],
 ) -> xmodel_runtime::DObjReuseKey {
-    let mut parts = vec![body_name, head_name, gun_name];
+    let mut parts = vec![body_name, head_name, hat_name, gun_name];
     parts.extend_from_slice(attachment_names);
     xmodel_runtime::DObjReuseKey {
         e_type,
@@ -477,6 +524,22 @@ pub(crate) fn select_remote_models<'a>(
                 }),
             ));
             Some(entry)
+        }
+    };
+    let hat = match soldier.hat().map_err(str::to_owned)? {
+        None => None,
+        Some(hat) => {
+            let entry = hat.entry();
+            let hat_pose = entry.skel.pose.as_ref().expect("prepared hat pose");
+            let model = dobj_models.len();
+            dobj_models.push((
+                hat_pose,
+                Some(xmodel_runtime::Attach {
+                    parent_model: 0,
+                    tag: hat.tag().into(),
+                }),
+            ));
+            Some((entry, model))
         }
     };
     let gun_model_index = dobj_models.len();
@@ -550,8 +613,10 @@ pub(crate) fn select_remote_models<'a>(
     Ok(RemoteModelSet {
         body_name: kit.body.clone(),
         head_name: kit.head.clone().unwrap_or_default(),
+        hat_name: kit.hat.as_deref().unwrap_or("").to_owned(),
         body,
         head,
+        hat,
         gun,
         world_gun_gap,
         dobj_models,
@@ -584,6 +649,7 @@ pub fn ensure_remote_dobj(
         e_type,
         models.body_name.as_str(),
         models.head_name.as_str(),
+        models.hat_name.as_str(),
         gun_name,
         &attachment_names,
     );

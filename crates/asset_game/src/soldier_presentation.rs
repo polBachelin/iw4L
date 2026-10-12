@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use asset_anim::{
@@ -29,22 +30,36 @@ impl SoldierBodyAnimation {
         if !sources.decode_errors().is_empty() {
             return Err("character animation source decode failed".into());
         }
+        Self::bind(
+            bodies,
+            kit,
+            sources.family(),
+            sources.compiled().and_then(|tree| tree.as_ref().ok()),
+            sources
+                .parsed_script()
+                .and_then(|script| script.as_ref().ok()),
+            catalog,
+        )
+    }
+
+    fn bind(
+        bodies: &Arc<BodyMeshCatalog>,
+        kit: &SoldierKit,
+        family: Option<FamilyId>,
+        tree: Option<&Arc<CompiledAnimTreeDefinition>>,
+        script: Option<&Arc<ParsedPlayerAnimScript>>,
+        catalog: &Arc<XAnimCatalog>,
+    ) -> Result<Arc<Self>, String> {
         let body = bodies.get(&kit.body).ok_or("character body missing")?;
-        if sources.family() != Some(body.namespace) {
+        if family != Some(body.namespace) {
             return Err(format!(
                 "{} character requires its own animation tree and script; supplied family {:?}",
                 body.namespace.as_str(),
-                sources.family()
+                family
             ));
         }
-        let tree = sources
-            .compiled()
-            .and_then(|tree| tree.as_ref().ok())
-            .ok_or("character tree is not compiled")?;
-        let script = sources
-            .parsed_script()
-            .and_then(|script| script.as_ref().ok())
-            .ok_or("character script is not parsed")?;
+        let tree = tree.ok_or("character tree is not compiled")?;
+        let script = script.ok_or("character script is not parsed")?;
         let pose = body
             .skel
             .pose
@@ -143,31 +158,33 @@ pub struct SoldierHead {
 }
 
 impl SoldierHead {
+    /// A head or hat model mounted on the kit body's head tag.
     fn prepare(
         bodies: &Arc<BodyMeshCatalog>,
         kit: &SoldierKit,
+        part: Option<&String>,
         family: FamilyId,
     ) -> Result<Option<Self>, String> {
-        let Some(name) = &kit.head else {
+        let Some(name) = part else {
             return Ok(None);
         };
         let body = bodies.get(&kit.body).ok_or("soldier body missing")?;
         let entry = bodies
             .get(name)
-            .ok_or_else(|| format!("soldier head `{name}` missing"))?;
+            .ok_or_else(|| format!("soldier model `{name}` missing"))?;
         if entry.namespace != family {
-            return Err("soldier head differs from body family".into());
+            return Err(format!("soldier model `{name}` differs from body family"));
         }
         let body_pose = body
             .skel
             .pose
             .as_ref()
-            .ok_or("soldier body pose missing for head")?;
+            .ok_or_else(|| format!("soldier body pose missing for `{name}`"))?;
         let head_pose = entry
             .skel
             .pose
             .as_ref()
-            .ok_or("soldier head pose missing")?;
+            .ok_or_else(|| format!("soldier model `{name}` pose missing"))?;
         let tag = xmodel_runtime::tp_head_attach_tag(&body.skel.bone_names)
             .ok_or("soldier head mount missing")?;
         DObj::build(&[
@@ -192,6 +209,10 @@ impl SoldierHead {
         self.bodies.get(&self.name).expect("prepared soldier head")
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn tag(&self) -> &str {
         &self.tag
     }
@@ -206,6 +227,7 @@ pub struct SoldierPresentation {
     mounts: Arc<[HandMounts]>,
     kit_hands: Result<Option<SoldierHands>, String>,
     head: Result<Option<SoldierHead>, String>,
+    hat: Result<Option<SoldierHead>, String>,
     animation: Result<Arc<SoldierBodyAnimation>, String>,
 }
 
@@ -242,7 +264,8 @@ impl SoldierPresentation {
             Ok(choice.key().is_some().then_some(choice))
         };
         let mut presentation = Self {
-            head: SoldierHead::prepare(bodies, &kit, family),
+            head: SoldierHead::prepare(bodies, &kit, kit.head.as_ref(), family),
+            hat: SoldierHead::prepare(bodies, &kit, kit.hat.as_ref(), family),
             animation: SoldierBodyAnimation::prepare(bodies, &kit, sources, catalog),
             kit,
             family,
@@ -257,6 +280,38 @@ impl SoldierPresentation {
                 .transpose()
         });
         Ok(Arc::new(presentation))
+    }
+
+    /// A script-chosen body, head and hat drawn over `team`'s hands; any
+    /// model it names that cannot be drawn refuses the whole character.
+    fn dress(
+        team: &Self,
+        kit: &SoldierKit,
+        animation: Result<Arc<SoldierBodyAnimation>, String>,
+    ) -> Result<Arc<Self>, String> {
+        let body = team
+            .bodies
+            .get(&kit.body)
+            .ok_or_else(|| format!("character body `{}` missing", kit.body))?;
+        if body.namespace != team.family {
+            return Err(format!(
+                "character body `{}` differs from map family",
+                kit.body
+            ));
+        }
+        let head = SoldierHead::prepare(&team.bodies, kit, kit.head.as_ref(), team.family)?;
+        let hat = SoldierHead::prepare(&team.bodies, kit, kit.hat.as_ref(), team.family)?;
+        Ok(Arc::new(Self {
+            kit: kit.clone(),
+            family: team.family,
+            bodies: Arc::clone(&team.bodies),
+            meshes: Arc::clone(&team.meshes),
+            mounts: Arc::clone(&team.mounts),
+            kit_hands: team.kit_hands.clone(),
+            head: Ok(head),
+            hat: Ok(hat),
+            animation: Ok(animation?),
+        }))
     }
 
     fn bind_hands(&self, choice: FpvHands) -> Result<SoldierHands, String> {
@@ -300,6 +355,13 @@ impl SoldierPresentation {
 
     pub fn head(&self) -> Result<Option<&SoldierHead>, &str> {
         self.head
+            .as_ref()
+            .map(Option::as_ref)
+            .map_err(String::as_str)
+    }
+
+    pub fn hat(&self) -> Result<Option<&SoldierHead>, &str> {
+        self.hat
             .as_ref()
             .map(Option::as_ref)
             .map_err(String::as_str)
@@ -362,6 +424,8 @@ impl SoldierFpvPresentation {
 #[derive(Clone, Debug, Resource)]
 pub struct SoldierPresentations {
     sides: [Result<Arc<SoldierPresentation>, String>; 2],
+    characters: HashMap<SoldierKit, Result<Arc<SoldierPresentation>, String>>,
+    sources_decoded: bool,
     bodies: Arc<BodyMeshCatalog>,
     meshes: Arc<FpvMeshCatalog>,
     catalog: Arc<XAnimCatalog>,
@@ -408,6 +472,8 @@ impl SoldierPresentations {
         };
         Self {
             sides: [allies, axis],
+            characters: HashMap::new(),
+            sources_decoded: sources.decode_errors().is_empty(),
             bodies: Arc::clone(bodies),
             meshes: Arc::clone(meshes),
             catalog: Arc::clone(catalog),
@@ -462,5 +528,55 @@ impl SoldierPresentations {
         self.sides[usize::from(axis)]
             .as_ref()
             .map_err(String::as_str)
+    }
+
+    /// `character`'s presentation once [`Self::dress`] prepared it, else the
+    /// team kit's.
+    pub fn soldier(
+        &self,
+        axis: bool,
+        character: Option<&SoldierKit>,
+    ) -> Result<&Arc<SoldierPresentation>, &str> {
+        match character.and_then(|kit| self.characters.get(kit)) {
+            Some(Ok(dressed)) => Ok(dressed),
+            _ => self.side(axis),
+        }
+    }
+
+    /// Prepares `character` for [`Self::soldier`]. A character that cannot be
+    /// drawn is reported once and left to the team kit.
+    pub fn dress(&mut self, character: &SoldierKit) {
+        if self.characters.contains_key(character) {
+            return;
+        }
+        let team = self.sides.iter().find_map(|side| side.as_ref().ok());
+        let dressed = match team {
+            None => Err("no team kit to dress".to_owned()),
+            Some(team) => {
+                let animation = if self.sources_decoded {
+                    SoldierBodyAnimation::bind(
+                        &self.bodies,
+                        character,
+                        self.animation_family,
+                        self.tree.as_ref(),
+                        self.script.as_ref(),
+                        &self.catalog,
+                    )
+                } else {
+                    Err("character animation source decode failed".into())
+                };
+                SoldierPresentation::dress(team, character, animation)
+            }
+        };
+        if let Err(error) = &dressed {
+            diag::warn!(
+                World,
+                "character body={} head={:?} hat={:?} drawn in its team kit: {error}",
+                character.body,
+                character.head,
+                character.hat
+            );
+        }
+        self.characters.insert(character.clone(), dressed);
     }
 }

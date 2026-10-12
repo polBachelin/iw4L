@@ -139,6 +139,17 @@ pub struct SnapshotMeta {
     pub item_ammo: Vec<DroppedItemAmmo>,
 
     pub item_pickups: Vec<ItemPickupRecord>,
+
+    /// Script-chosen character models by entity number; an entity absent
+    /// here is drawn in its team's kit.
+    pub characters: Vec<(i32, CharacterSelection)>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct CharacterSelection {
+    pub body: String,
+    pub head: Option<String>,
+    pub hat: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -174,6 +185,13 @@ pub struct RngDebugMeta {
 impl SnapshotMeta {
     pub fn for_client(&self, id: ClientId) -> Option<&ClientSnapshotMeta> {
         self.clients.iter().find(|(c, _)| *c == id).map(|(_, m)| m)
+    }
+
+    pub fn character(&self, entnum: i32) -> Option<&CharacterSelection> {
+        self.characters
+            .iter()
+            .find(|(number, _)| *number == entnum)
+            .map(|(_, selection)| selection)
     }
 
     pub fn events_for(&self, id: ClientId) -> impl Iterator<Item = &SimEvent> {

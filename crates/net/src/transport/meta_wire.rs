@@ -448,6 +448,7 @@ pub fn encode_snapshot_meta_body(
     encode_sound_alias_cs(out, &meta.hud_materials);
     encode_hud_strings(out, &meta.hud_strings);
     encode_rng_debug(out, &meta.rng);
+    encode_characters(out, &meta.characters);
     sizes.aliases = section_span(out, mark);
     mark = out.len();
     encode_entity_dobjs(out, &meta.entity_dobjs);
@@ -531,6 +532,7 @@ pub(super) fn decode_snapshot_meta_body(
     let hud_materials = decode_sound_alias_cs(input)?;
     let hud_strings = decode_hud_strings(input)?;
     let rng = decode_rng_debug(input)?;
+    let characters = decode_characters(input)?;
     remaining_after[2] = input.remaining();
     let entity_dobjs = decode_entity_dobjs(input)?;
     remaining_after[3] = input.remaining();
@@ -581,6 +583,7 @@ pub(super) fn decode_snapshot_meta_body(
             corpses,
             item_ammo,
             item_pickups,
+            characters,
         },
         world_wire: wire,
         world_update,
@@ -752,6 +755,46 @@ fn decode_hud_strings(input: &mut WireReader<'_>) -> Result<Vec<(u16, String)>, 
         occupied.push((index, text));
     }
     Ok(occupied)
+}
+
+fn encode_characters(out: &mut WireWriter, characters: &[(i32, sim::CharacterSelection)]) {
+    debug_assert!(characters.len() <= u16::MAX as usize);
+    out.put_u16(characters.len() as u16);
+    for (entnum, selection) in characters {
+        out.put_i32(*entnum);
+        for name in [
+            Some(selection.body.as_str()),
+            selection.head.as_deref(),
+            selection.hat.as_deref(),
+        ] {
+            let bytes = name.unwrap_or("").as_bytes();
+            debug_assert!(bytes.len() <= u8::MAX as usize);
+            out.put_u8(bytes.len() as u8);
+            out.put_bytes(bytes);
+        }
+    }
+}
+
+fn decode_characters(
+    input: &mut WireReader<'_>,
+) -> Result<Vec<(i32, sim::CharacterSelection)>, WireError> {
+    let count = input.get_u16()? as usize;
+    let mut characters = Vec::with_capacity(count.min(64));
+    for _ in 0..count {
+        let entnum = input.get_i32()?;
+        let mut name = || -> Result<Option<String>, WireError> {
+            let mut bytes = vec![0u8; input.get_u8()? as usize];
+            input.get_bytes(&mut bytes)?;
+            let name = String::from_utf8(bytes)
+                .map_err(|_| WireError::Malformed("character model name is not utf-8"))?;
+            Ok((!name.is_empty()).then_some(name))
+        };
+        let body = name()?.ok_or(WireError::Malformed("character has no body"))?;
+        let head = name()?;
+        let hat = name()?;
+        characters.push((entnum, sim::CharacterSelection { body, head, hat }));
+    }
+    Ok(characters)
 }
 
 fn decode_sound_alias_cs(input: &mut WireReader<'_>) -> Result<Vec<(u8, String)>, WireError> {

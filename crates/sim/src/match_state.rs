@@ -41,8 +41,8 @@ pub use player_data::{
     MatchDataDecl, MatchDataError, MatchDataField, MatchDataValue, MatchPlayerData,
 };
 pub use snapshot_meta::{
-    ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta, ScriptDvars, SnapshotMeta,
-    TargetBoxDvar,
+    CharacterSelection, ClientSnapshotMeta, DroppedItemAmmo, ItemPickupRecord, RngDebugMeta,
+    ScriptDvars, SnapshotMeta, TargetBoxDvar,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
