@@ -7,6 +7,7 @@ const SETTINGS: &str = include_str!("survival/settings.csv");
 
 const WEAPON_ALIASES_TABLE: &str = "survival/weapon_aliases.csv";
 const ARCHETYPES_TABLE: &str = "survival/archetypes.csv";
+const CHARACTERS_TABLE: &str = "survival/characters.csv";
 const HUD_TABLE: &str = "survival/hud.csv";
 const CHALLENGES_TABLE: &str = "survival/challenges.csv";
 const EOG_TABLE: &str = "survival/eog.csv";
@@ -17,12 +18,13 @@ const PLAYER_DATA_TABLE: &str = "survival/playerdata.csv";
 
 /// The tables survival authors itself, beside the MW3 tables it reads from
 /// the user's zones: only what those tables lack.
-const TABLES: [(&str, &str); 9] = [
+const TABLES: [(&str, &str); 10] = [
     (
         WEAPON_ALIASES_TABLE,
         include_str!("survival/weapon_aliases.csv"),
     ),
     (ARCHETYPES_TABLE, include_str!("survival/archetypes.csv")),
+    (CHARACTERS_TABLE, include_str!("survival/characters.csv")),
     (HUD_TABLE, include_str!("survival/hud.csv")),
     (CHALLENGES_TABLE, include_str!("survival/challenges.csv")),
     (EOG_TABLE, include_str!("survival/eog.csv")),
@@ -225,12 +227,24 @@ const AIRSUPPORT_NAMES: [&str; 4] = [
 /// `AIRSUPPORT_TABLE` rows that name a weapon of the loaded zones.
 const AIRSUPPORT_WEAPONS: [&str; 1] = ["airstrike_bomb"];
 
-/// `ARCHETYPES_TABLE`: ref, weapon, body, trait, move speed in percent.
+/// `ARCHETYPES_TABLE`: ref, weapon, character ids (space separated, one
+/// drawn per spawn), trait, move speed in percent.
 mod fill_in_column {
     pub(super) const WEAPON: usize = 1;
+    pub(super) const CHARACTERS: usize = 2;
     pub(super) const TRAIT: usize = 3;
     pub(super) const SPEED: usize = 4;
 }
+
+/// `CHARACTERS_TABLE`: id, body model, head models (space separated, one
+/// drawn per spawn), hat model or empty.
+mod character_column {
+    pub(super) const BODY: usize = 1;
+    pub(super) const HEADS: usize = 2;
+}
+
+/// A body model whose name starts so carries its own head.
+const FULLBODY_PREFIX: &str = "fullbody_";
 
 /// What the gametype script does for an archetype beyond its weapon and
 /// health (`ARCHETYPES_TABLE` c3), and the `HEAVIES_TABLE` rows each reads.
@@ -283,6 +297,7 @@ const TRAITS: [(&str, &[&str]); 5] = [
         "chopper",
         &[
             "chopper_vehicle",
+            "chopper_model",
             "chopper_path_noteworthy",
             "chopper_start_targetname",
             "chopper_death_fx",
@@ -304,12 +319,13 @@ const TRAITS: [(&str, &[&str]); 5] = [
 /// rather than a whole number.
 const HEAVIES_WEAPONS: [&str; 2] = ["martyrdom_weapon", "claymore_weapon"];
 const HEAVIES_MEANS: [&str; 2] = ["explosive_means", "gas_means"];
-const HEAVIES_NAMES: [&str; 8] = [
+const HEAVIES_NAMES: [&str; 9] = [
     "gas_fx",
     "gas_shock_high",
     "gas_shock_med",
     "gas_shock_low",
     "chopper_vehicle",
+    "chopper_model",
     "chopper_path_noteworthy",
     "chopper_start_targetname",
     "chopper_death_fx",
@@ -466,6 +482,8 @@ pub fn survival_data_check(
     }
     let waves_name = required_setting("waves_table")?;
     let waves = table(waves_name)?;
+    let characters = table(CHARACTERS_TABLE)?;
+    check_characters(characters, &mut gaps);
     for row in table(ARCHETYPES_TABLE)?.rows() {
         let (archetype, weapon) = (cell(row, 0), cell(row, fill_in_column::WEAPON));
         let trait_name = cell(row, fill_in_column::TRAIT);
@@ -494,6 +512,13 @@ pub fn survival_data_check(
             gaps.push(format!(
                 "{ARCHETYPES_TABLE}: `{archetype}` -> `{weapon}` (`{resolved}`) is no weapon of the loaded zones"
             ));
+        }
+        for character in cell(row, fill_in_column::CHARACTERS).split_whitespace() {
+            if !characters.rows().any(|row| cell(row, 0) == character) {
+                gaps.push(format!(
+                    "{ARCHETYPES_TABLE}: `{archetype}` character `{character}` is no row of {CHARACTERS_TABLE}"
+                ));
+            }
         }
     }
     let (list_name, list) = match layer_waves_tables(tables)?[..] {
@@ -971,6 +996,28 @@ fn check_airsupport(
             other => gaps.push(format!(
                 "{AIRSUPPORT_TABLE}: `{key}` is no weapon of the loaded zones: {other:?}"
             )),
+        }
+    }
+}
+
+/// Holds `CHARACTERS_TABLE` to what `setcharacter` takes: one row per id,
+/// each with a body, and no head on a `fullbody_` body (it draws its own).
+fn check_characters(characters: &ScriptTable, gaps: &mut Vec<String>) {
+    let mut seen = std::collections::BTreeSet::new();
+    for row in characters.rows() {
+        let (id, body) = (cell(row, 0), cell(row, character_column::BODY));
+        if id.is_empty() || !seen.insert(id) {
+            gaps.push(format!(
+                "{CHARACTERS_TABLE}: `{id}` is empty or names more than one row"
+            ));
+        }
+        if body.is_empty() {
+            gaps.push(format!("{CHARACTERS_TABLE}: `{id}` has no body"));
+        }
+        if body.starts_with(FULLBODY_PREFIX) && !cell(row, character_column::HEADS).is_empty() {
+            gaps.push(format!(
+                "{CHARACTERS_TABLE}: `{id}` has heads on its full body `{body}`"
+            ));
         }
     }
 }

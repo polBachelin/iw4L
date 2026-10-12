@@ -99,7 +99,7 @@ onstartgametype()
 	for ( i = 0; i < level.archetypes.size; i++ )
 	{
 		if ( archetypetrait( level.archetypes[ i ] ) == "chopper" )
-			precachemodel( archetypebody( level.archetypes[ i ] ) );
+			precachemodel( heavy( "chopper_model" ) );
 	}
 	readchopperpath();
 	readarmory();
@@ -790,10 +790,24 @@ archetypetrait( archetype )
 	return tablelookup( "survival/archetypes.csv", 0, archetype, 3 );
 }
 
-// The archetype's model (archetypes.csv c2): a chopper's vehicle model.
-archetypebody( archetype )
+// One of the archetype's characters (archetypes.csv c2, rows of
+// characters.csv) at random: its body, one of its heads at random and its
+// hat, "" for no head or hat. Undefined when the archetype names none.
+archetypecharacter( archetype )
 {
-	return tablelookup( "survival/archetypes.csv", 0, archetype, 2 );
+	ids = strtok( tablelookup( "survival/archetypes.csv", 0, archetype, 2 ), " " );
+	if ( ids.size == 0 )
+		return undefined;
+	id = ids[ randomint( ids.size ) ];
+	table = "survival/characters.csv";
+	character = spawnstruct();
+	character.body = tablelookup( table, 0, id, 1 );
+	heads = strtok( tablelookup( table, 0, id, 2 ), " " );
+	character.head = "";
+	if ( heads.size > 0 )
+		character.head = heads[ randomint( heads.size ) ];
+	character.hat = tablelookup( table, 0, id, 3 );
+	return character;
 }
 
 archetypeweapon( archetype )
@@ -1109,6 +1123,13 @@ spawnbot()
 	self.maxhealth = int( archetypefield( self.archetype, 7 ) );
 	self.health = self.maxhealth;
 	self spawn( spawnpoint.origin, spawnpoint.angles );
+	character = archetypecharacter( self.archetype );
+	dress = "";
+	if ( isdefined( character ) )
+	{
+		self setcharacter( character.body, character.head, character.hat );
+		dress = " character=" + character.body + "/" + character.head + "/" + character.hat;
+	}
 	self takeallweapons();
 	self giveweapon( weapon );
 	self givemaxammo( weapon );
@@ -1131,7 +1152,7 @@ spawnbot()
 		self setmovespeedscale( int( speed ) / 100 );
 		summary = summary + " speed=" + speed + "%";
 	}
-	logprint( "survival: " + self.archetype + " spawned client=" + self getentitynumber() + " at " + spawnpoint.origin + " weapons=" + summary + " health=" + self.health + "\n" );
+	logprint( "survival: " + self.archetype + " spawned client=" + self getentitynumber() + " at " + spawnpoint.origin + " weapons=" + summary + " health=" + self.health + dress + "\n" );
 	if ( archetypetrait( self.archetype ) == "claymore" )
 		self thread layclaymores();
 	self notify( "spawned_player" );
@@ -2350,14 +2371,14 @@ spawnchoppers( choppers )
 	}
 }
 
-// A chopper is a vehicle of the archetype's model (archetypes.csv c2) with no
+// A chopper is a vehicle of heavies.csv's chopper_model with no
 // owner, on `enemy_team`, with the archetype's health (c7) and its gun
 // (archetypes.csv c1).
 spawnchopper( archetype )
 {
 	start = level.chopperstarts[ level.chopperstartnext % level.chopperstarts.size ];
 	level.chopperstartnext++;
-	chopper = spawnvehicle( archetypebody( archetype ), archetype, heavy( "chopper_vehicle" ), start.origin, start.angles );
+	chopper = spawnvehicle( heavy( "chopper_model" ), archetype, heavy( "chopper_vehicle" ), start.origin, start.angles );
 	chopper.archetype = archetype;
 	chopper.team = setting( "enemy_team" );
 	chopper.health = int( archetypefield( archetype, 7 ) );
@@ -2366,7 +2387,7 @@ spawnchopper( archetype )
 	chopper setvehweapon( chopper.weapon );
 	chopper vehicle_setspeed( int( heavy( "chopper_speed" ) ), int( heavy( "chopper_accel" ) ) );
 	first = start.links[ randomint( start.links.size ) ];
-	logprint( "survival: chopper spawned path=" + first.script_linkname + " from " + start.origin + " health=" + chopper.health + " weapon=" + chopper.weapon + " type=" + weapontype( chopper.weapon ) + " firetime=" + weaponfiretime( chopper.weapon ) + " model=" + archetypebody( archetype ) + " team=" + chopper.team + "\n" );
+	logprint( "survival: chopper spawned path=" + first.script_linkname + " from " + start.origin + " health=" + chopper.health + " weapon=" + chopper.weapon + " type=" + weapontype( chopper.weapon ) + " firetime=" + weaponfiretime( chopper.weapon ) + " model=" + heavy( "chopper_model" ) + " team=" + chopper.team + "\n" );
 	chopper thread chopperdeath();
 	chopper thread chopperfly( first );
 	chopper thread chopperfire();
