@@ -31,6 +31,7 @@ struct Wanted {
     solid: bool,
     part_ops: Vec<(Arc<str>, bool)>,
     anim_op: Option<Option<Arc<str>>>,
+    anim_tree: Option<Option<xmodel_runtime::XAnimTreeSnapshot>>,
 }
 
 fn near(a: [f32; 3], b: [f32; 3]) -> bool {
@@ -232,7 +233,11 @@ fn present(world: &mut World, now: i32) {
             frame.set_script_mover_pose(mover.state.number, now, want.origin, want.angles);
         }
         let reshaped = want.model != shown.model || want.attachments != shown.attachments;
-        if reshaped || !want.part_ops.is_empty() || want.anim_op.is_some() {
+        if reshaped
+            || !want.part_ops.is_empty()
+            || want.anim_op.is_some()
+            || want.anim_tree.is_some()
+        {
             present_model(&mut frame, &want);
         }
         updates.push((
@@ -355,13 +360,22 @@ fn collect_wanted(world: &mut World) -> Vec<Wanted> {
         let origin = vector(&mut runtime, object, "origin");
         let angles = vector(&mut runtime, object, "angles");
         let model = model_field(&mut runtime, object);
+        let remodeled = runtime
+            .shown
+            .get(&object)
+            .is_none_or(|shown| shown.model != model);
         let entity = runtime.entities.get_mut(&object).unwrap();
         let part_ops = std::mem::take(&mut entity.part_ops);
         let anim_op = entity.anim_op.take();
+        let anim_tree = entity.anim_blend.as_deref_mut().and_then(|blend| {
+            let dirty = std::mem::take(&mut blend.dirty);
+            (dirty || remodeled).then(|| blend.snapshot())
+        });
         let attachments = entity.attachments.clone();
         let collision_only = matches!(entity.kind, EntityKind::Missile(_));
         let unchanged = part_ops.is_empty()
             && anim_op.is_none()
+            && anim_tree.is_none()
             && runtime.shown.get(&object).is_some_and(|shown| {
                 !shown.moving
                     && shown.hidden == hidden
@@ -388,6 +402,7 @@ fn collect_wanted(world: &mut World) -> Vec<Wanted> {
             solid,
             part_ops,
             anim_op,
+            anim_tree,
         });
     }
     wanted
@@ -444,7 +459,11 @@ fn present_model(frame: &mut FrameWorld, want: &Wanted) {
             dobj.begin_script_model_play_anim(clip, anim.looping, anim.frequency);
         }
         Some(None) => dobj.clear_script_model_play_anim(),
-        None => {}
+        None => {
+            if let Some(tree) = &want.anim_tree {
+                dobj.set_script_anim_tree(tree.clone());
+            }
+        }
     }
 }
 

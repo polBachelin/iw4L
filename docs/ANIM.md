@@ -51,4 +51,12 @@ gap, not "ordinary blending".
   material. Remote kits (`PreparedRemoteKits`: models, hide bits, shared DObj)
   and dropped items are composed at install, not on first sight.
 
+Script entities with an anim tree (`sim::script::host::script_anim`) are the
+exception to "semantics, not a tree": the blend state is authoritative on the script
+entity and reaches the DObj as an `XAnimTreeSnapshot` (one blend root, one leaf per
+animation, see [`GSC-RUNTIME.md`](GSC-RUNTIME.md)). `render_anim` resolves it like any
+other tree: each leaf's tracks bind to the model's bones by name, tracks for bones the
+model lacks are skipped, and the leaves blend by weight. A leaf whose clip is not
+loaded on the client refuses the pose instead of falling back to the bind pose.
+
 To watch it live: `IW4L_PERF=1` / [`PERF.md`](PERF.md).

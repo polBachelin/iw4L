@@ -387,6 +387,18 @@ pub fn apply_prepared_match(
                 },
             ))
         }));
+        content.set_script_anim_notetracks(xanims.0.names().filter_map(|name| {
+            let notifies = &xanims.0.get(anim_namespace, name)?.parts.notifies;
+            (!notifies.is_empty()).then(|| {
+                (
+                    name.to_owned(),
+                    notifies
+                        .iter()
+                        .map(|notify| (notify.name.clone(), notify.time))
+                        .collect(),
+                )
+            })
+        }));
         content.set_mantle_xanims(sim::MantleXAnimBind::from_clips(|fast, i| {
             let name = sim::MantleXAnimBind::clip_name(fast, i)?;
             xanims

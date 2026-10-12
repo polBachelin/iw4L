@@ -48,7 +48,10 @@ pub struct Catalog {
 }
 impl Catalog {
     pub fn iw4() -> Self {
-        Self::from_list(crate::script::Realm::Iw4, super::iw4_catalog::IW4)
+        Self::from_lists(
+            crate::script::Realm::Iw4,
+            &[super::iw4_catalog::IW4, super::anim_tree_catalog::ANIM_TREE],
+        )
     }
     /// The IW4 builtins plus the survival gametype's own.
     pub fn survival() -> Self {
@@ -64,14 +67,17 @@ impl Catalog {
         catalog
     }
     pub fn t5() -> Self {
-        Self::from_list(crate::script::Realm::T5, super::t5_catalog::T5)
+        Self::from_lists(
+            crate::script::Realm::T5,
+            &[super::t5_catalog::T5, super::anim_tree_catalog::ANIM_TREE],
+        )
     }
-    fn from_list(realm: crate::script::Realm, list: &[Builtin]) -> Self {
+    fn from_lists(realm: crate::script::Realm, lists: &[&[Builtin]]) -> Self {
         let mut catalog = Self {
             realm,
             names: BTreeMap::new(),
         };
-        for builtin in list {
+        for builtin in lists.iter().copied().flatten() {
             catalog.insert(builtin.clone());
         }
         catalog

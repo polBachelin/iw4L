@@ -2226,6 +2226,14 @@ impl SimState {
             .copied()
     }
 
+    pub(crate) fn script_anim_notetracks(&self, name: &str) -> content::Notetracks {
+        self.content
+            .script_anim_notetracks()
+            .get(&name.to_ascii_lowercase())
+            .cloned()
+            .unwrap_or_else(|| Arc::from([]))
+    }
+
     pub(crate) fn player_anim_clip(&self, legs_anim: i32) -> Option<Arc<xmodel_runtime::AnimClip>> {
         let definition = self.content.player_anim_tree().as_ref()?;
         let value = PlayerAnimValue::from_raw((legs_anim as u16) & PLAYER_ANIM_RAW_MASK)?;
