@@ -349,22 +349,26 @@ fn acquire(world: &mut World, object: u64, turret: &Turret, from: [f32; 3]) -> O
     let base = field_vector(world, object, "angles");
     let range = weapon_range(world, turret.weapon);
     let ignore = ignore_self(world, object);
-    let candidates: Vec<(u32, u64)> = world
-        .resource::<Runtime>()
+    let runtime = world.resource::<Runtime>();
+    let candidates: Vec<(Option<u32>, u64)> = runtime
         .players
         .iter()
         .filter(|(_, slot)| &*slot.sessionstate == "playing")
-        .map(|(client, slot)| (*client, slot.object))
+        .map(|(client, slot)| (Some(*client), slot.object))
+        .chain(runtime.actors.keys().map(|object| (None, *object)))
         .collect();
     let mut best: Option<(f32, u64, Vec3)> = None;
     for (client, player) in candidates {
-        let alive = {
-            let frame = FrameWorld::from_world(world);
-            frame
+        let origin = if let Some(client) = client {
+            FrameWorld::from_world(world)
                 .player(ClientId(client))
                 .and_then(|ps| (ps.health > 0).then_some(ps.origin))
+        } else if super::natives::actor::alive(world, player) {
+            Some(field_vector(world, player, "origin"))
+        } else {
+            None
         };
-        let Some(origin) = alive else { continue };
+        let Some(origin) = origin else { continue };
         if !hostile(world, turret, player) {
             continue;
         }

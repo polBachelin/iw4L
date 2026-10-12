@@ -1276,12 +1276,6 @@ pub(crate) fn disconnect_player(world: &mut World, client: u32) {
             now,
         );
     }
-    // After the disconnect callback, which may still read it. The roster
-    // reuses client ids, so a binding left behind would hand the next bot on
-    // this id the departed one's archetype.
-    world
-        .resource_mut::<crate::script_bots::ScriptBots>()
-        .release(ClientId(client));
     let Some(slot) = slot else {
         return;
     };

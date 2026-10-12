@@ -259,7 +259,9 @@ const ACTOR_DIRECTIONS: [&str; 4] = ["f", "b", "l", "r"];
 
 /// Settings rows the actor script reads as whole numbers, and those of them
 /// that are percents.
-const ACTOR_NUMBERS: [&str; 13] = [
+const ACTOR_NUMBERS: [&str; 15] = [
+    "actor_budget",
+    "actor_spawn_clearance",
     "actor_think_ms",
     "actor_blend_ms",
     "actor_goal_radius",
@@ -734,7 +736,7 @@ fn layer_waves_tables(tables: &BTreeMap<String, ScriptTable>) -> Result<Vec<Stri
 /// Holds every wave row (of `list`: the map layer's waves table, else the
 /// waves table itself) to the archetypes (of `waves`) and armories the
 /// script plays it with: waves numbered 1 to N with a repeat block, refs that
-/// name archetypes, parallel special counts, and for every archetype a bot
+/// name archetypes, parallel special counts, and for every archetype an actor
 /// plays a weapon of the loaded zones and a health.
 fn check_waves(
     archetypes: &ScriptTable,
@@ -1400,6 +1402,11 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
                 "{SETTINGS_TABLE}: `{key}` is not a whole number from 0 to {most}: `{value}`"
             ));
         }
+    }
+    if required_setting("actor_budget")? == "0" {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `actor_budget` 0 lets no wave enemy in"
+        ));
     }
     if required_setting("actor_explosive_means")?.is_empty() {
         gaps.push(format!(

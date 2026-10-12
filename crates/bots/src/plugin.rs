@@ -111,7 +111,6 @@ impl Plugin for BotsPlugin {
                 Update,
                 (
                     fill_bots_from_rules,
-                    drain_script_bot_requests,
                     retire_departed_bots,
                     drain_bot_add_queue,
                     evict_bots_claiming_local_client,
@@ -192,18 +191,6 @@ fn fill_bots_from_rules(
     }
 }
 
-fn drain_script_bot_requests(
-    mut queue: ResMut<BotAddQueue>,
-    world: Option<ResMut<AuthorityWorld>>,
-) {
-    let Some(mut world) = world else {
-        return;
-    };
-    for request in world.0.take_script_bot_requests() {
-        queue.push_script(request);
-    }
-}
-
 // A bot leaves when the match script kicks it or its connection faults: the
 // authority drops the client. Its slot goes too, so the roster stops driving a
 // client that is gone and its id is free for the next bot.
@@ -221,12 +208,9 @@ fn retire_departed_bots(mut roster: ResMut<BotRoster>, world: Option<Res<Authori
         }
         diag::info!(
             Sim,
-            "bots: retired client {} ({}{}) — it left the match",
+            "bots: retired client {} ({}) — it left the match",
             bot.id.0,
             bot.name,
-            bot.archetype
-                .as_deref()
-                .map_or(String::new(), |archetype| format!(" archetype={archetype}")),
         );
         false
     });
@@ -252,14 +236,7 @@ fn drain_bot_add_queue(
     }
     for request in requests {
         let count = request.count;
-        let added = roster.add_bots(
-            count,
-            &taken,
-            request.dummy,
-            request.side,
-            request.archetype.as_ref(),
-            request.skill,
-        );
+        let added = roster.add_bots(count, &taken, request.dummy, request.side);
         if added.len() < count as usize {
             diag::warn!(
                 Sim,
@@ -269,15 +246,8 @@ fn drain_bot_add_queue(
         }
         diag::info!(
             Sim,
-            "bots: add {count} (dummy={}){} → clients {:?}",
+            "bots: add {count} (dummy={}) → clients {:?}",
             request.dummy,
-            request
-                .archetype
-                .as_deref()
-                .map_or(String::new(), |archetype| format!(
-                    " archetype={archetype} skill={}",
-                    request.skill
-                )),
             added.iter().map(|id| id.0).collect::<Vec<_>>()
         );
     }
@@ -372,19 +342,13 @@ fn boot_bots(
             );
             continue;
         }
-        // A bot the script asked for joins bound to its archetype and picks no
-        // class: the script's connect callback reads the archetype and gives
-        // the loadout itself.
-        if let Some(archetype) = &bot.archetype {
-            world.0.bind_script_bot(bot.id, archetype.clone());
-        }
         let index = default_class_index(seed, bot.id, bot.class_picks);
         // The authority applies a client's actions in request-id order, so the
         // ids follow the order the join must play out: the team answer lands
         // before the class pick, which would otherwise autoassign a team first.
         let join_id = request_ids.allocate();
         let team_request = team.map(|_| request_ids.allocate());
-        let class_request = bot.archetype.is_none().then(|| request_ids.allocate());
+        let class_request = request_ids.allocate();
         let name_request = request_ids.allocate();
         let queued = [
             actions.push(
@@ -409,12 +373,13 @@ fn boot_bots(
                     _ => Ok(()),
                 }
             }),
-            class_request.map_or(Ok(()), |request_id| {
-                actions.push(
-                    bot.id,
-                    ClientAction::ChooseDefaultClass { request_id, index },
-                )
-            }),
+            actions.push(
+                bot.id,
+                ClientAction::ChooseDefaultClass {
+                    request_id: class_request,
+                    index,
+                },
+            ),
             actions.push(
                 bot.id,
                 ClientAction::SetName {
@@ -428,24 +393,13 @@ fn boot_bots(
             continue;
         }
         bot.joined = true;
-        match (class_request, bot.archetype.as_deref()) {
-            (Some(class_request), _) => {
-                bot.class_picks += 1;
-                diag::info!(
-                    Sim,
-                    "bots: JoinMatch+changeclass client={} team={} pick={index} request_id={class_request}",
-                    bot.id.0,
-                    team.unwrap_or("auto"),
-                );
-            }
-            (None, archetype) => diag::info!(
-                Sim,
-                "bots: JoinMatch client={} team={} archetype={} — no class, the script arms it",
-                bot.id.0,
-                team.unwrap_or("auto"),
-                archetype.unwrap_or("none"),
-            ),
-        }
+        bot.class_picks += 1;
+        diag::info!(
+            Sim,
+            "bots: JoinMatch+changeclass client={} team={} pick={index} request_id={class_request}",
+            bot.id.0,
+            team.unwrap_or("auto"),
+        );
     }
 }
 
@@ -589,8 +543,7 @@ fn think_bots(mut p: ThinkBots) {
             }
             continue;
         }
-        // The script arms the bots it asked for on every spawn it gives them.
-        if bot.archetype.is_none() && bot.class_picked_in != Some(meta.life_sequence) {
+        if bot.class_picked_in != Some(meta.life_sequence) {
             bot.class_picked_in = Some(meta.life_sequence);
             let index = default_class_index(seed, bot.id, bot.class_picks);
             let request_id = p.request_ids.allocate();

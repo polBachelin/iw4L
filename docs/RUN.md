@@ -19,8 +19,10 @@ local player still joins and spawns; `wait world` waits for the installed
 world instead of a drawn scene. With no swapchain to pace it, each headless
 frame waits for its own GPU work. `serve` is always headless. Survival plays
 the local player on `human_team` and every bot on `enemy_team` (both rows of
-`settings.csv`), so `bot add` adds enemies beside the wave's own (clients 1–7
-of wave 1). A repeatable clear of wave 1 on mp_paris: each of the seven
+`settings.csv`), so `bot add` adds enemies beside the wave's own. The wave's
+enemies are actors, not clients ([`SURVIVAL.md`](SURVIVAL.md)): `bot tp` and
+`bot hold` do not reach them, and the recipes below that move wave enemies
+with `bot tp` wait on console commands for actors. A repeatable clear of wave 1 on mp_paris: each of the seven
 enemies is brought in front of the player and shot three times, then the
 intermission runs into wave 2. Read it back from the log (`survival: enemy
 killed client=N archetype=easy remaining=R` seven times, each followed by

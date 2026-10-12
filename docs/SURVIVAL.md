@@ -27,7 +27,7 @@ a weapon themselves.
   `mode_zones`, laid over them; `actor_anim_zones`, see Actors), table names, teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
-  `unsimulated_archetypes` (archetypes no bot can play: the waves skip them),
+  `unsimulated_archetypes` (archetypes no actor can play: the waves skip them),
   `test_wave` (a development aid, empty in the tree: archetype refs that, when
   set, make wave 1 one enemy of each instead of the table's),
   health, `start_credits`, `wave_bonus` (the credits each player gets when a
@@ -52,7 +52,11 @@ a weapon themselves.
   `continue`, `launcher`), `primary_slots` (how many primaries a player
   carries, 2), pause menu, `player_viewhands` (the players' first-person
   hands, `viewhands_player_delta` of `common_survival`: used ahead of the
-  map kit's hands while the loaded zones hold the model, the kit's otherwise). Credits, bonus, start rank, timings, squad sizes
+  map kit's hands while the loaded zones hold the model, the kit's otherwise),
+  `actor_budget` (the most enemy and ally actors in play at once, 17: the
+  enemies one player used to get from 18 client slots) and
+  `actor_spawn_clearance` (how near a live actor may stand to a spawn point
+  before the point is taken, 32 units). Credits, bonus, start rank, timings, squad sizes
   and primary slots are provisional values: MW3's data has no starting
   credits, no wave-end bonus rule, no starting rank (SP kept the player's),
   no bleed-out or shock time, no squad size, no slot count. That only the
@@ -104,9 +108,8 @@ a weapon themselves.
   `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
   characters are `characters.csv` ids, space separated; each spawn wears one
   of them at random (see Characters). The trait is one of
-  `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is the
-  bot's move speed in percent (`setmovespeedscale`), empty for 100, and an
-  actor's run rate. Accuracy (percent of shots aimed true) and burst (shots
+  `explosive`, `martyrdom`, `claymore`, `gas`, `chopper` or empty; the speed is an
+  actor's run rate in percent, empty for 100. Accuracy (percent of shots aimed true) and burst (shots
   per burst) are an actor's (see Actors), empty on the archetypes no actor
   plays. Traits, speeds, accuracies and bursts are ours: MW3's table has only the archetype descriptions they
   follow (`Guys strapped with C4 that explode on death`, `Guys that place
@@ -155,61 +158,37 @@ a weapon themselves.
 
 ## Enemies
 
-The script cannot create clients (`addtestclient` is refused). It asks the
-session for them with `survival_requestenemies(count, archetype)` or
-`survival_requestallies(count, archetype)`; an archetype that names no row of
-the waves table, or a count below 1, faults the script. The host's bot roster
-mints the clients, binds each to its archetype and joins it on `enemy_team`
-(enemies) or `human_team` (allies) with no class pick. On connect
-`self survival_archetype()` returns that archetype (undefined for a player); the
-script opens the team menu, and on the session's answer spawns the bot with the
-archetype's health (c7) and weapon (`archetypes.csv`, else c5). An enemy that
-dies is kicked, never respawned, and the roster retires its client.
-
-A wave enemy always knows where the players are, as MW3's survival AI does:
-its Hunt goes through the navigation graph to the nearest live client of
-`human_team`, and roams only while none is alive. It still has to see a
-player to fight. Its aim is the default bot's scaled by the archetype's c8
-(`BotTuning::scaled`, [`BOTS.md`](BOTS.md)): 0.9 for `easy` up to 1.3 for
-`elite`. That c8 is an aim skill is our reading of the table, not an
-established fact: it is the one column that rises with the tiers. A c8 that is
-not a positive number faults the request. c11 is not read. 
+Every wave enemy is an actor (`spawnactor`), never a client: the waves use
+no bot and take no client slot. The script spawns it on `enemy_team` with
+its archetype's health (c7), dresses it (see Characters) and runs
+`actor_think( archetype )` on it (see Actors), which gives it its weapon
+(`archetypes.csv`, else c5) and speed. c6 (offhand), c8 and c11 are not read:
+an actor throws no offhand grenades, and its aim is its `archetypes.csv` accuracy. Its
+`death` notify is the wave's kill: the kill is counted, a player who dealt
+it is paid, and the actor plays its death and is deleted after
+`actor_corpse_ms`.
 
 ## Heavy archetypes
 
 Every archetype plays its row of the waves table: health (c7), weapon and
-offhand, reward. What sets the heavy ones apart is its `archetypes.csv` trait
-and speed:
+reward. Juggernauts run at their archetype's speed (75%). Actor damage passes
+through the gametype before health changes: `friendly_fire` protects teammates,
+and the `explosive` trait multiplies explosive damage by
+`explosive_damage_percent`.
 
-* the juggernauts (`jug_*`, health 1000 or 2000 in c7) move at their speed
-  (75%). `jug_riotshield` holds `iw5_riotshieldjugg_mp`: a bot with a shield
-  in hand closes to melee reach and bashes with the melee button
-  ([`BOTS.md`](BOTS.md)), and keeps the shield rather than reloading.
-* `explosive` (`jug_explosive`): damage whose means is in `explosive_means`
-  is scaled by `explosive_damage_percent` before it is dealt.
-* `martyrdom`: where it dies it drops its `martyrdom_weapon` (MW3's
-  survival `c4`) with `magicbullet`, and detonates it `martyrdom_delay_ms`
-  later: the C4's own blast, in the martyr's name. The martyr stays
-  connected, dead, until then, and leaves `support_settle_ms` after.
-* `claymore`: each time a live player is within `claymore_plant_range` it
-  plants a `claymore_weapon` (MW3's survival `claymore`) at its feet facing
-  that player, up to `claymore_count`. Armed after `claymore_arm_ms`, the
-  claymore goes off `claymore_trip_delay_ms` after a live player is within
-  `claymore_trip_radius` and `claymore_trip_arc` of the way it faces, as the
-  weapon's own blast. A claymore is disarmed when its planter leaves (a
-  killed enemy is kicked at once): its blast would be in nobody's name and
-  spare no team, so killing the planter defuses its claymores.
-* `gas` (`chemical`): where it dies its tanks burst: `gas_fx` (MW3's
-  `smoke/so_chemical_explode_smoke`) plays once, and for `gas_ms` the cloud
-  deals `gas_damage` as `radiusdamage` within `gas_radius` every
-  `gas_interval_ms`, in the chemical enemy's name, and shellshocks every live
-  player in it with MW3's `radiation_high`, `radiation_med` or `radiation_low`
-  by depth. It stays connected, dead, until the cloud clears.
+A `martyrdom` enemy places a C4 charge on death and detonates it after
+`martyrdom_delay_ms`. A `claymore` enemy plants `claymore_count` charges facing
+the nearest player in range; they arm, trip and detonate at the distances,
+angles and delays in `heavies.csv`, and are removed when their planter dies.
+`placecharge` creates a stationary charge using the weapon's projectile model;
+`detonate` uses that weapon's blast radius, damage, cone and explosion event.
+A `gas` enemy emits its cloud on death, dealing periodic radius damage and
+shellshock for `gas_ms`. Charges and gas retain their actor as damage source,
+so team protection also applies to their victims. A corpse with an active death
+effect remains until that effect finishes.
 
-With `friendly_fire` 0 an enemy's C4, claymore and gas spare the other
-enemies and hurt the players, and the players' explosives spare each other.
 * `chopper` (MW3's `Enemy Attack Chopper`, row 112: health 1500, reward
-  600): no bot. It is a vehicle (`spawnvehicle`) of `heavies.csv`'s
+  600): no actor. It is a vehicle (`spawnvehicle`) of `heavies.csv`'s
   `chopper_model` (`vehicle_little_bird_armed`) with no owner, on `enemy_team`, with its c7
   health and its `archetypes.csv` gun (`minigun_littlebird`, both of
   common_survival). It flies MW3's own chopper path on the map, read at
@@ -225,8 +204,7 @@ enemies and hurt the players, and the players' explosives spare each other.
   `chopper_range` its gun can see (`vehicle_canturrettargetpoint`), each shot
   off the aim point by up to `chopper_spread`. Its hits are in its own name:
   a turret's or vehicle's bullet that hits a client passes that entity as
-  eInflictor, and as eAttacker when it has no owner, so friendly fire spares
-  the other enemies. A player who destroys it is paid its c9 like any kill,
+  eInflictor, and as eAttacker when it has no owner. A player who destroys it is paid its c9 like any kill,
   and its death is a kill of the wave; it is then deleted after its
   `chopper_death_fx`. Its speeds, timings, range and spread are ours; the
   vehicle definition is passed by name only, since the IW5 lane captures no
@@ -236,11 +214,11 @@ enemies and hurt the players, and the players' explosives spare each other.
 
 ## Characters
 
-On spawn a bot is dressed (`setcharacter`) in a character of its archetype:
+On spawn an actor is dressed (`setcharacter`) in a character of its archetype:
 `archetypecharacter` draws one of its `archetypes.csv` ids, then one of that
 row's heads, and returns the body, head and hat (`""` for none). The spawn
 line ends `character=<body>/<head>/<hat>`. A model the renderer cannot draw
-(not captured, or of another family than the map's) leaves the bot in its
+(not captured, or of another family than the map's) leaves the actor in its
 team's kit and is warned once (`character body=… drawn in its team kit`).
 Which archetype wears which character is ours:
 
@@ -266,13 +244,13 @@ gametype keeps its entry point in `level.actorthink`; a script that spawns an
 actor (`spawnactor`) and dresses it calls `actor_think( archetype )` on it.
 It loops, every `actor_think_ms`, through these states:
 
-* idle: no living human of the other side is left (or the actor is on
-  `human_team`): it stands still and plays `idle`;
-* move to target: no human is seen within `actor_engage_range`: it runs
-  (`run`) over the path nodes toward the nearest living human, and walks
+* idle: no living player or actor of the other side is left: it stands
+  still and plays `idle`;
+* move to target: no enemy is seen within `actor_engage_range`: it runs
+  (`run`) over the path nodes toward the nearest living enemy, and walks
   (`walk`, at `actor_walk_rate_percent` of its rate) once within
   `actor_walk_range`. Its rate (`moveplaybackrate`) is its archetype's speed;
-* engage: the nearest human it sees (a bullet trace from its eye,
+* engage: the nearest enemy it sees (a bullet trace from its eye,
   `actor_eye_height` or `actor_crouch_eye_height`, to theirs) is within
   range: it stops, stands or crouches (`actor_crouch_percent`), faces them,
   aims (`aim`), then fires one burst (`fire`) of its archetype's burst length
@@ -314,26 +292,24 @@ The first wave starts once a player has connected. A wave's enemies are its
 squad (c3 × c4), its specials (each c5 ref × its c6 count), then one of each
 boss (c7) and vehicle (c8), in that order. An archetype in
 `unsimulated_archetypes` is left out of the wave and logged, never dropped
-silently: dogs have no bot body (out of scope). A chopper (c8 in MW3's
-table: two on waves 6 and 15, three on 21) takes no client slot: it counts
-toward the wave's total and its enemies left, and the wave ends only once it
-is destroyed.
+silently: dogs have no actor body (out of scope). A chopper (c8 in MW3's
+table: two on waves 6 and 15, three on 21) is no actor: it counts toward the
+wave's total and its enemies left, and the wave ends only once it is
+destroyed.
 
-The wave's budget is `sv_maxclients` minus every client it did not ask for:
-the players (any client without an archetype, a console `bot add` bot
-included) and the allies. The script asks for enemies, one request per run
-of one archetype, until the enemies in play fill the budget, and asks for more
-each time one leaves. An enemy is in play from its request until its client
-is gone: the session frees a slot only once the kick has dropped the client,
-so a refill sent on the kill itself could find no slot. A killed enemy is
-kicked and never comes back; an enemy that leaves without a kill is asked for
-again. A wave is complete when every enemy is killed and none is in play.
+The wave's budget is `actor_budget` less the allies in play or owed a place.
+The script sends enemies, one actor each, until the enemies in play fill the
+budget, and sends the next each time one dies. An enemy is in play from the
+moment it is sent until its `death`. A killed enemy never comes back. A wave
+is complete when every enemy is killed.
 
-Every enemy spawns on the `enemy_spawn_classname` point farthest from the
-nearest player that no live client stands on (`positionwouldtelefrag`), and
-waits while every point is taken. It is given its archetype's weapon and its
-offhand (c6, through `weapon_aliases.csv`; an offhand-class weapon becomes its
-primary offhand) and its health (c7).
+Enemies enter on the Special Ops layer's structs whose script_noteworthy is
+one of `layer_enemy_spawn_noteworthy` (the addon entities the map's zones
+add: MW3's squad leaders and followers; that they are where enemies enter is
+our reading), else on `enemy_spawn_classname`. Each spawns on the point
+farthest from the nearest player that nobody stands on (no live client,
+`positionwouldtelefrag`, and no live actor within `actor_spawn_clearance`),
+and waits while every point is taken.
 
 Between waves the intermission lasts `intermission_seconds`; at its start the
 armory the wave names in c10 unlocks (weapon after wave 1, equipment after 2,
@@ -515,18 +491,19 @@ Otherwise its price is spent (`reason=purchase:<ref>`) and it is granted as
   `sentry_gun_so`) with its `grants.csv` model, carried in front of the player and placed
   with `+attack` where `canplayerplacesentry` fits it. Placed, it is in
   `sentry` mode on the player's team: the turret host picks the nearest
-  visible hostile and the script fires it at the weapon's fire time. Its kills
+  visible hostile player or actor and the script fires it at the weapon's fire time. Its kills
   are the player's. It is never destroyed and never expires, so c10 caps how
   many a player ever places. `shootturret` fires by the weapon's type:
   `sentry_minigun_so` (bullet) traces, `sentry_gun_so` (projectile) launches
   its grenade, so a grenade-launcher kill is `MOD_PROJECTILE_SPLASH`.
 * `friendly_support_delta`, `friendly_support_riotshield`: `squad_<ref>`
   allies of that archetype (rows 115/116: health 500, `iw5_m16_mp` or
-  `iw5_mp5_mp`, `fraggrenade`). They take client slots like enemies: the
-  players and allies (connected, asked for or owed) come off the wave's
-  budget, owed allies are asked for first as slots free up, and an ally spawns
-  on the player spawn nearest the players. Enemy bots hunt them as they hunt
-  players (both are on `human_team`). They wear Delta and GIGN characters
+  `iw5_mp5_mp`, `fraggrenade`). They are actors on `human_team` and take
+  places of `actor_budget` like enemies: allies in play or owed come off the
+  wave's budget, owed allies spawn first as places free up, and an ally
+  spawns on the player spawn nearest the players that nobody stands on. The
+  actor behavior targets hostile players and actors on both sides (see Actors).
+  An ally's death frees its place and its squad's count. They wear Delta and GIGN characters
   (see Characters). The riot squad has no riot shield (c5 names the MP5).
 * a perk of `perks_table` enabled in its c6 (`specialty_quickdraw`,
   `specialty_bulletaccuracy`, `specialty_stalker`, `specialty_longersprint`,
@@ -568,20 +545,20 @@ zones, an archetype names no row of the waves table, or a placement's kind,
 origin, yaw or model is unreadable. The waves are held to the same: numbered
 1 to N with at least one c9 repeat row, every c3/c5/c7/c8 ref an archetype,
 c4 and each c6 count positive and c6 parallel to c5, c10 empty or an armory
-kind, every `unsimulated_archetypes` ref an archetype, and every archetype a
-bot plays given a weapon and offhand of the loaded zones and a positive
+kind, every `unsimulated_archetypes` ref an archetype, and every archetype an
+actor plays given a weapon and offhand of the loaded zones and a positive
 health and a whole reward. `start_credits` and `wave_bonus` must be whole
 credits, `hud.csv` must lay out `wave`, `enemies` and `credits` in full, and
 every `challenges.csv` ref must be a challenge of `challenge_table` with a
 positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
-1, every `test_wave` ref an archetype (held to what a bot plays like any
+1, every `test_wave` ref an archetype (held to what an actor plays like any
 wave's), every `archetypes.csv` trait one of the five, speed a whole
 percent above zero, accuracy a whole percent 0–100, burst a whole count
 above zero and character an id of `characters.csv`, every
 `actor_anims.csv` row a state, stance and direction the actor script picks
 by with every state given a row, every `actor_*` setting a whole number
-(its percents 0–100) and `actor_explosive_means` naming something, every
+(its percents 0–100, `actor_budget` above zero) and `actor_explosive_means` naming something, every
 `characters.csv` id named once with a body and no head on a `fullbody_*`
 body, and for each trait in use its `heavies.csv` rows: weapon
 refs that are weapons of the loaded zones (through `weapon_aliases.csv`),
@@ -591,7 +568,7 @@ keys, and whole numbers above zero, `getup_shock`,
 be 2 to 4, and every `eog.csv` row an unused summary row 1–9 with an `@`
 label and a stat the script keeps. Every `squad_<archetype>` row must name an
 archetype of the waves table with a whole size above zero, and that archetype
-is held to what a bot plays like any wave's. `airsupport.csv`'s numbers must
+is held to what an actor plays like any wave's. `airsupport.csv`'s numbers must
 be whole and above zero, `action_slot` 1–4, its selector, effect, means and
 plane must name something, and `airstrike_bomb` must be a weapon of the
 loaded zones. Every `grants.csv` ref must be an item of `armory_table` and no
@@ -629,25 +606,16 @@ a hit on armor;
 played <ref>…` the challenges as read.
 `gsc log: survival: wave=N start squad=<a> xK [specials=<a> xK,…]
 [bosses=<a>,…] [vehicles=<a>,…] total=T budget=B [repeats=W]` opens a wave
-(T counts the enemies bots play and the choppers; `repeats` names the table wave a wave past
+(T counts the enemies actors play and the choppers; `repeats` names the table wave a wave past
 the last plays); `gsc log: survival: wave N skips <a> xK (not simulated)` each
-archetype it leaves out; `gsc log: survival: wave=N requests <a> xK
-in_play=P budget=B` a request;
-`bots: add K (dummy=false) archetype=<a> skill=S → clients [...]` and
-`bots: JoinMatch client=N team=axis archetype=<a> — no class` its admission;
-`gsc log: survival: enemy connected client=N archetype=<a> team=axis
-health=H trait=<t>` and `gsc log: survival: <a> spawned client=N at (…)
-weapons=… [speed=P%] health=…` the spawn;
-`bots: id=N tick=T hunt=clientM dist=D target=(…)` a hunt's choice of target,
-then the same line with `origin=(…)` each time it closes by 512 units, and
-`hunt=clientM dist=D` on the bot's task trace; `bots: id=N … hunt=clientM
-unreachable …` a target the graph cannot reach, and `bots: id=N … hunts nobody`
-the fall back to roaming;
-`gsc log: survival: enemy killed client=N archetype=<a> remaining=R
-means=<MOD> weapon=<w> by=<clientM|chopper|world>` (R:
-the wave's total less its kills) then `bots: retired client N (…)` the end of
-one, and `gsc log: survival: enemy left client=N archetype=<a> without a
-kill, asked again` one that left alive. `gsc log: survival: hud wave=W
+archetype it leaves out; `gsc log: survival: wave=N sends <a> in_play=P
+budget=B` an enemy sent;
+`gsc log: survival: <a> spawned actor=N team=axis at (…) health=H trait=<t>
+[character=<body>/<head>/<hat>]` its spawn;
+`gsc log: survival: enemy killed actor=N archetype=<a> remaining=R
+means=<MOD> weapon=<w> by=<clientM|chopper|world>` (R: the wave's total
+less its kills) its death, and `gsc log: survival: ally killed actor=N
+archetype=<a> squad=K` an ally's. `gsc log: survival: hud wave=W
 enemies=E players=P` each time the wave's dvars and hudelems change (its
 start and every kill); `gsc log: survival: credits client=N credits=C
 delta=D reason=<start|kill:<a>|challenge:<ref>|wave_bonus:W>` each change of
@@ -693,19 +661,9 @@ launched … from (…)` then `gsc log: survival: predator impact at (…)
 kills=K`; `gsc log: survival: sentry carried`, `sentry does not fit at (…)`,
 `sentry placed weapon=<w> at (…) team=<t> firetime=F` and `sentry kill
 client=N victim=M archetype=<a> weapon=<w>`; `gsc log: survival: allies
-requested K archetype=<a> free=F`, `requests ally <a> xK owed=O free=F`,
-`ally connected client=N archetype=<a> team=allies` and `ally left …`;
+requested K archetype=<a> free=F`, `<a> spawned actor=N team=allies …` and
+`ally killed …`;
 `gsc log: survival: perk <ref> set`. The air support recipe in
-[`RUN.md`](RUN.md) produces them.
-`gsc log: survival: explosive weakness client=N archetype=<a> means=<MOD>
-weapon=<w> damage=D scaled=S` an explosive hit on an `explosive` archetype;
-`gsc log: survival: martyrdom c4 dropped client=N at (…) weapon=<w>` then
-`martyrdom c4 detonated …`; `gsc log: survival: claymore planted client=N at
-(…) yaw Y weapon=<w>`, `claymore tripped by client=M planter=N at (…)`,
-`claymore detonated planter=N at (…)` and `claymore disarmed planter=N left,
-at (…)`; `gsc log: survival: chemical gas at (…) radius=R ms=T client=N`,
-`gas shock client=M shock=<shock> distance=D` each interval a player is in
-it, and `chemical gas at (…) cleared`. The heavy archetype recipe in
 [`RUN.md`](RUN.md) produces them.
 `gsc log: survival: chopper path starts=S nodes=N links=L dangling=D` the
 map's chopper path as read; `gsc log: survival: chopper spawned path=<first

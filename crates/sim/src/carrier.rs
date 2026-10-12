@@ -29,7 +29,6 @@ impl Default for SimWorld {
         ecs.insert_resource(crate::LocalPlayerProfile::default());
         ecs.insert_resource(crate::PersistentDataStore::default());
         ecs.insert_resource(crate::script::Runtime::default());
-        ecs.insert_resource(crate::script_bots::ScriptBots::default());
         ecs.insert_resource(crate::script::Mechanics::default());
         ecs.insert_resource(crate::script::NativeRegistry::default());
         Self {
@@ -55,11 +54,6 @@ impl Clone for SimWorld {
         );
         ecs.insert_resource(*self.ecs.resource::<crate::LocalPlayerProfile>());
         ecs.insert_resource(self.ecs.resource::<crate::PersistentDataStore>().clone());
-        ecs.insert_resource(
-            self.ecs
-                .resource::<crate::script_bots::ScriptBots>()
-                .clone(),
-        );
         crate::script::copy_state(&self.ecs, &mut ecs);
         Self {
             ecs,
@@ -198,28 +192,6 @@ impl SimWorld {
 
     pub fn script_seats(&self) -> Vec<(ClientId, crate::ScriptSeat)> {
         crate::script::script_seats(&self.ecs)
-    }
-
-    /// Bots the match script asked for since the last call, in request order.
-    pub fn take_script_bot_requests(&mut self) -> Vec<crate::ScriptBotRequest> {
-        if !self
-            .ecs
-            .resource::<crate::script_bots::ScriptBots>()
-            .has_requests()
-        {
-            return Vec::new();
-        }
-        self.ecs
-            .resource_mut::<crate::script_bots::ScriptBots>()
-            .take_requests()
-    }
-
-    /// Ties a client minted for a script request to its archetype. Bind
-    /// before the client joins: the script's connect callback reads it.
-    pub fn bind_script_bot(&mut self, client: ClientId, archetype: std::sync::Arc<str>) {
-        self.ecs
-            .resource_mut::<crate::script_bots::ScriptBots>()
-            .bind(client, archetype);
     }
 
     pub fn take_script_fault(&mut self) -> Option<crate::script::Fault> {

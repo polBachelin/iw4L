@@ -33,8 +33,6 @@ pub use persistent_defaults::{CustomClassesError, PlayerDataDefaults, custom_cla
 mod presence;
 mod remote_missile;
 pub mod script;
-mod script_bots;
-pub use script_bots::{ScriptBotRequest, ScriptBotSide};
 mod weapon_lock;
 pub use weapon_lock::WeaponLock;
 pub mod player_anim_script;

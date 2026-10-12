@@ -10,6 +10,7 @@ pub(crate) struct EntityHit {
     pub target: ScriptModelId,
     pub amount: i32,
     pub attacker: Option<ClientId>,
+    pub inflictor: Option<crate::ScriptModelId>,
     pub means: &'static str,
     pub weapon: u32,
     pub point: [f32; 3],
@@ -28,6 +29,7 @@ pub(crate) fn means_named(name: &str) -> Result<&'static str, String> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScriptBlast {
+    pub cone: Option<([f32; 3], f32)>,
     pub origin: [f32; 3],
     pub radius: f32,
     pub max: f32,
@@ -36,6 +38,16 @@ pub(crate) struct ScriptBlast {
     pub inflictor: Option<ScriptModelId>,
     pub means: &'static str,
     pub weapon: u32,
+}
+
+impl ScriptBlast {
+    pub(crate) fn contains(&self, point: [f32; 3]) -> bool {
+        self.cone.is_none_or(|(forward, cosine)| {
+            let delta = glam::Vec3::from_array(point) - glam::Vec3::from_array(self.origin);
+            delta.length() <= f32::EPSILON
+                || delta.dot(glam::Vec3::from_array(forward)) >= cosine * delta.length()
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +110,7 @@ pub(crate) fn apply_script_blasts(world: &mut World, tick: crate::Tick) {
                         target,
                         amount: hit.amount,
                         attacker: hit.attacker,
+                        inflictor: hit.inflictor,
                         means: hit.means,
                         weapon: hit.weapon,
                         point: hit.origin,
@@ -113,7 +126,7 @@ pub(crate) fn apply_script_blasts(world: &mut World, tick: crate::Tick) {
         let mut frame = FrameWorld::from_world(world);
         crate::damage::apply_script_blast(&mut frame, tick, &blast);
         for (target, mid, dist) in radius_targets(world, blast.origin, blast.radius) {
-            if Some(target) == blast.inflictor {
+            if Some(target) == blast.inflictor || !blast.contains(mid) {
                 continue;
             }
             let amount =
@@ -127,6 +140,7 @@ pub(crate) fn apply_script_blasts(world: &mut World, tick: crate::Tick) {
                     target,
                     amount,
                     attacker: blast.attacker,
+                    inflictor: blast.inflictor,
                     means: blast.means,
                     weapon: blast.weapon,
                     point: mid,
@@ -214,9 +228,16 @@ pub(crate) fn damage_entity(world: &mut World, hit: &EntityHit) -> bool {
         })
         .unwrap_or_default();
     let weapon = crate::script_player::weapon_name(&frame, hit.weapon);
-    let attacker = hit.attacker.map_or(Value::Undefined, |a| {
-        super::players::player_object(world, a.0)
-    });
+    let attacker = hit
+        .attacker
+        .map(|a| super::players::player_object(world, a.0))
+        .filter(|attacker| *attacker != Value::Undefined)
+        .or_else(|| {
+            hit.inflictor
+                .and_then(|presence| world.resource::<Runtime>().presented_by(presence))
+                .map(Value::Object)
+        })
+        .unwrap_or(Value::Undefined);
     match world.resource::<Runtime>().entities[&object].kind {
         super::entities::EntityKind::Vehicle => {
             super::vehicles::damage(world, object, hit, attacker, &weapon, &tag);

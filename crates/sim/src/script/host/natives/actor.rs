@@ -2,7 +2,7 @@
 //! is a script mover with a team, health and a weapon; scripts give it its
 //! character (`setcharacter`), its anim tree and its behavior.
 
-use super::super::args::{float, optional, string, vector};
+use super::super::args::{arg, float, int, optional, string, vector};
 use super::super::entities::EntityKind;
 use super::super::entity_damage::EntityHit;
 use super::actor_path::{self, Nav};
@@ -37,13 +37,30 @@ fn health(runtime: &mut Runtime, object: u64) -> i32 {
     }
 }
 
-fn alive(world: &mut World, object: u64) -> bool {
+pub(crate) fn alive(world: &mut World, object: u64) -> bool {
     let mut runtime = world.resource_mut::<Runtime>();
     runtime.live(&object) && health(&mut runtime, object) > 0
 }
 
 pub(crate) fn register(registry: &mut NativeRegistry) {
     actor_path::register(registry);
+    registry.register(Method, "finishactordamage", |world, receiver, args| {
+        let object = actor(world, receiver)?;
+        let amount = int(args, 0)?;
+        let attacker = arg(args, 1)?.clone();
+        let direction = vector(args, 2)?;
+        let point = vector(args, 3)?;
+        let means = string(args, 4)?;
+        let tag = string(args, 5)?;
+        let location = string(args, 6)?;
+        let flags = int(args, 7)?;
+        let weapon = string(args, 8)?;
+        finish_damage(
+            world, object, amount, attacker, direction, point, &means, &tag, &location, flags,
+            &weapon,
+        );
+        Ok(Value::Undefined)
+    });
     registry.register(Function, "spawnactor", |world, _, args| {
         let origin = vector(args, 0)?;
         let angles = vector(args, 1)?;
@@ -240,7 +257,57 @@ pub(crate) fn damage(world: &mut World, object: u64, hit: &EntityHit, attacker: 
         }
     }
     let weapon = crate::script_player::weapon_name(&frame, hit.weapon);
-    if amount <= 0 {
+    let location = weapon_iw4::HITLOC_NAMES
+        .get(usize::from(hitloc))
+        .copied()
+        .unwrap_or("none");
+    let callback = "maps/mp/gametypes/_callbacksetup::codecallback_actordamage";
+    if world
+        .resource::<Runtime>()
+        .program
+        .as_ref()
+        .is_some_and(|p| p.names.contains_key(callback))
+    {
+        let now = super::super::players::now_ms(world);
+        let _ = crate::script::runtime::run_now(
+            world,
+            callback,
+            Value::Object(object),
+            vec![
+                Value::Int(amount),
+                attacker,
+                Value::Vector(hit.dir),
+                Value::Vector(hit.point),
+                Value::string(means),
+                Value::string(tag),
+                Value::string(location),
+                Value::Int(hit.flags),
+                Value::string(&weapon),
+            ],
+            now,
+        );
+    } else {
+        finish_damage(
+            world, object, amount, attacker, hit.dir, hit.point, means, tag, location, hit.flags,
+            &weapon,
+        );
+    }
+}
+
+fn finish_damage(
+    world: &mut World,
+    object: u64,
+    amount: i32,
+    attacker: Value,
+    direction: [f32; 3],
+    point: [f32; 3],
+    means: &str,
+    tag: &str,
+    location: &str,
+    flags: i32,
+    weapon: &str,
+) {
+    if amount <= 0 || !alive(world, object) {
         return;
     }
     let (model, after) = {
@@ -249,10 +316,6 @@ pub(crate) fn damage(world: &mut World, object: u64, hit: &EntityHit, attacker: 
         runtime.set_object_field(object, "health", Value::Int(after));
         (runtime.object_field(object, "model"), after)
     };
-    let location = weapon_iw4::HITLOC_NAMES
-        .get(usize::from(hitloc))
-        .copied()
-        .unwrap_or("none");
     let receiver = Value::Object(object);
     raise(
         world,
@@ -261,14 +324,14 @@ pub(crate) fn damage(world: &mut World, object: u64, hit: &EntityHit, attacker: 
         vec![
             Value::Int(amount),
             attacker.clone(),
-            Value::Vector(hit.dir),
-            Value::Vector(hit.point),
+            Value::Vector(direction),
+            Value::Vector(point),
             Value::string(means),
             model,
             Value::string(tag),
             Value::string(location),
-            Value::Int(hit.flags),
-            Value::string(&weapon),
+            Value::Int(flags),
+            Value::string(weapon),
         ],
     );
     if after <= 0 {
@@ -279,7 +342,7 @@ pub(crate) fn damage(world: &mut World, object: u64, hit: &EntityHit, attacker: 
             world,
             receiver,
             "death",
-            vec![attacker, Value::string(means), Value::string(&weapon)],
+            vec![attacker, Value::string(means), Value::string(weapon)],
         );
     }
 }

@@ -89,7 +89,7 @@ playonce( state, direction )
 }
 
 // Entry point for an actor of `archetype` spawned by spawnactor and dressed:
-// it runs to the nearest living human, engages the one it sees in range,
+// it runs to the nearest living enemy, engages the one it sees in range,
 // flinches when hurt and plays its death. Accuracy (c5), burst length (c6)
 // and speed (c4) are its survival/archetypes.csv row's.
 actor_think( archetype )
@@ -134,14 +134,14 @@ actorloop()
 	{
 		while ( self.inpain )
 			wait 0.05;
-		target = self nearesthuman( true );
+		target = self nearestenemy( true );
 		if ( isdefined( target ) && distance( self.origin, target.origin ) <= int( setting( "actor_engage_range" ) ) )
 		{
 			self engage( target );
 			continue;
 		}
 		if ( !isdefined( target ) )
-			target = self nearesthuman( false );
+			target = self nearestenemy( false );
 		if ( isdefined( target ) )
 			self movetoward( target );
 		else
@@ -224,44 +224,59 @@ faceat( target )
 // point up to actor_miss_spread units off it.
 aimpoint( target )
 {
-	point = target geteye();
+	point = target targeteye();
 	if ( randomfloat( 1 ) < self.aimaccuracy )
 		return point;
 	spread = int( setting( "actor_miss_spread" ) );
 	return point + ( randomfloatrange( 0 - spread, spread ), randomfloatrange( 0 - spread, spread ), randomfloatrange( 0 - spread, spread ) );
 }
 
+targeteye()
+{
+	if ( isplayer( self ) )
+		return self geteye();
+	return self eye();
+}
+
 eye()
 {
-	if ( self.pose == "crouch" )
+	if ( isdefined( self.pose ) && self.pose == "crouch" )
 		return self.origin + ( 0, 0, int( setting( "actor_crouch_eye_height" ) ) );
 	return self.origin + ( 0, 0, int( setting( "actor_eye_height" ) ) );
 }
 
 cansee( target )
 {
-	return bullettracepassed( self eye(), target geteye(), false, self );
+	trace = bullettrace( self eye(), target targeteye(), true, self );
+	return trace[ "fraction" ] == 1 || ( isdefined( trace[ "entity" ] ) && trace[ "entity" ] == target );
 }
 
-// The nearest living human of the other side, only one the actor sees when
-// `visible`.
-nearesthuman( visible )
+nearestenemy( visible )
 {
-	if ( self getteam() == setting( "human_team" ) || !isdefined( level.humans ) )
-		return undefined;
+	candidates = [];
+	if ( isdefined( level.humans ) )
+	{
+		for ( i = 0; i < level.humans.size; i++ )
+			candidates[ candidates.size ] = level.humans[ i ];
+	}
+	if ( isdefined( level.actors ) )
+	{
+		for ( i = 0; i < level.actors.size; i++ )
+			candidates[ candidates.size ] = level.actors[ i ];
+	}
 	nearest = undefined;
 	best = 0;
-	for ( i = 0; i < level.humans.size; i++ )
+	for ( i = 0; i < candidates.size; i++ )
 	{
-		human = level.humans[ i ];
-		if ( !isalive( human ) )
+		target = candidates[ i ];
+		if ( target == self || !isalive( target ) || target.team == self.team )
 			continue;
-		dist = distancesquared( self.origin, human.origin );
+		dist = distancesquared( self.origin, target.origin );
 		if ( isdefined( nearest ) && dist >= best )
 			continue;
-		if ( visible && !self cansee( human ) )
+		if ( visible && !self cansee( target ) )
 			continue;
-		nearest = human;
+		nearest = target;
 		best = dist;
 	}
 	return nearest;
@@ -322,5 +337,7 @@ actordeath()
 		state = "explode";
 	self playonce( state, self.hitdirection );
 	wait settingseconds( "actor_corpse_ms" );
+	while ( isdefined( self.deatheffectactive ) )
+		wait 0.05;
 	self delete();
 }
