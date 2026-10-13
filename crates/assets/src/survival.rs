@@ -487,12 +487,10 @@ pub fn survival_base_zones() -> Result<asset_transport::BaseZones, String> {
 /// those base zones, then the Special Ops layers (`layer_zones`) the user's
 /// data has. Survival reads its tables, menus, weapons and sounds from the
 /// mode's zones, so a settings file that names none is refused rather than
-/// read as a mode without zones. `actor_anim_zones` are walked for the
-/// actors' animations alone.
+/// read as a mode without zones.
 pub fn survival_mode_zones() -> Result<asset_transport::ModeZones, String> {
     let zones = asset_transport::ModeZones::parse(required_setting("mode_zones")?)
-        .with_layers(required_setting("layer_zones")?)
-        .with_anims(required_setting("actor_anim_zones")?);
+        .with_layers(required_setting("layer_zones")?);
     if zones.is_empty() {
         return Err(format!("{SETTINGS_TABLE}: `mode_zones` names no zone"));
     }
@@ -574,7 +572,6 @@ fn pick_table_anims(
         return missing;
     }
     let mut first: BTreeMap<(String, String), String> = BTreeMap::new();
-    let mut missing = std::collections::BTreeSet::new();
     for row in anims.cells.chunks_exact_mut(columns).take(anims.rows) {
         let state = (
             row[actor_anim_column::SET].clone(),

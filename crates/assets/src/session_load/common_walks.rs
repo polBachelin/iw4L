@@ -255,7 +255,7 @@ pub(super) fn resolve_foreign_material_donor(
             return None;
         }
     };
-    if runtime_common.is_some_and(|path| path == donor.path.as_path()) {
+    if runtime_common.is_some_and(runtime_is_iw5) {
         return None;
     }
     match peek_zone_version(&donor.path) {
@@ -569,14 +569,20 @@ pub(super) fn resolve_iw5_weapon_donor(
             return None;
         }
     };
-    if runtime_common.is_some_and(|path| path == donor.path.as_path()) {
+    if let Some(anchor) = runtime_common.filter(|path| runtime_is_iw5(path)) {
         report.push(format!(
-            "iw5 weapons: skip, runtime common is already IW5 ({})",
-            donor.path.display()
+            "iw5 weapons: skip, runtime base is already IW5 ({})",
+            anchor.display()
         ));
         return None;
     }
     Some(donor.path)
+}
+
+// The base anchor is not necessarily `common_mp` (Survival anchors on the SP
+// set), so an IW5 runtime is told apart by its envelope, not its path.
+fn runtime_is_iw5(anchor: &Path) -> bool {
+    peek_zone_version(anchor) == Some(fastfile_iw5::ZONE_VERSION_PC)
 }
 
 pub(super) fn walk_iw5_weapon_bundle(

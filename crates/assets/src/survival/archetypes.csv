@@ -3,10 +3,10 @@ regular,,,,,30,4
 hardened,,,,,40,5
 veteran,,,,,50,5
 elite,,,,,60,6
-jug_regular,m60jugg,,,75,30,10
-jug_riotshield,riotshieldjugg,,,75,30,4
-jug_explosive,m60jugg,,explosive,75,30,10
-jug_minigun,m60jugg,,,75,20,15
+jug_regular,,,,75,30,10
+jug_riotshield,,,,75,30,4
+jug_explosive,,,explosive,75,30,10
+jug_minigun,,,,75,20,15
 martyrdom,,,martyrdom,,25,3
 claymore,,,claymore,,30,4
 chemical,,,gas,,30,4

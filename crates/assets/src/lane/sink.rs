@@ -6,6 +6,7 @@ use fastfile_iw4::{
 };
 
 use super::helpers::MapXModelCatalog;
+use super::zone_refs::{RefKind, ZoneRefs};
 
 fn is_cac_table(name: &str) -> bool {
     asset_game::is_stats_table_name(name)
@@ -226,6 +227,7 @@ pub(crate) struct ZoneWalkSink {
     xmodel_surface_names: HashMap<Ptr, Ptr>,
 
     pub sound: Option<asset_audio::ZoneSoundCapture>,
+    pub refs: ZoneRefs,
 }
 
 #[derive(Default)]
@@ -281,9 +283,18 @@ pub(crate) struct CommonWalkSink {
     pub path_graph: asset_world::PathGraph,
 
     pub sound: Option<asset_audio::ZoneSoundCapture>,
+    pub refs: ZoneRefs,
 }
 
 impl ZoneWalkSink {
+    fn note_sound_ref(&mut self, stream: &fastfile_iw5::ZoneStream<'_>, list: fastfile_iw5::Ptr) {
+        if let Ok(fastfile_iw5::ZonePtr::Offset(name)) = stream.ptr_at(list, 0)
+            && let Ok(name) = stream.cstr(stream.resolve_alias(name))
+        {
+            self.refs.note(RefKind::Sound, name);
+        }
+    }
+
     pub(crate) fn with_stage(stage: StageHandle) -> Self {
         Self {
             stage: Some(stage),
@@ -324,6 +335,14 @@ impl ZoneWalkSink {
 }
 
 impl CommonWalkSink {
+    fn note_sound_ref(&mut self, stream: &fastfile_iw5::ZoneStream<'_>, list: fastfile_iw5::Ptr) {
+        if let Ok(fastfile_iw5::ZonePtr::Offset(name)) = stream.ptr_at(list, 0)
+            && let Ok(name) = stream.cstr(stream.resolve_alias(name))
+        {
+            self.refs.note(RefKind::Sound, name);
+        }
+    }
+
     pub(crate) fn with_stage(stage: StageHandle) -> Self {
         Self {
             stage: Some(stage),
@@ -425,6 +444,7 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
             sound.iw5_loaded(stream, ty, slot, insert_slot);
         }
         self.materials.iw5_loaded(stream, ty, slot, insert_slot);
+        note_iw5_loaded_ref(&mut self.refs, stream, ty);
         note_iw5_fx_tracer_loaded(&mut self.fx, &mut self.tracers, ty, slot, insert_slot);
         if ty == fastfile_iw5::AssetType::XModel {
             if let Some(skel) = self.map_xmodels.capture_iw5(
@@ -460,6 +480,9 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
         stream: &fastfile_iw5::ZoneStream<'_>,
         geometry: fastfile_iw5::FxEffectDefGeometry,
     ) -> fastfile_iw5::Result<()> {
+        if let Some(name) = geometry.name.and_then(|ptr| stream.cstr(ptr).ok()) {
+            self.refs.note(RefKind::Fx, name);
+        }
         self.fx
             .capture_iw5(stream, geometry, &self.materials, &self.xmodel_names_iw5);
         Ok(())
@@ -588,7 +611,7 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
         Ok(())
     }
 
-    asset_audio::forward_iw5_sound!();
+    asset_audio::forward_iw5_sound!(note_sound_ref);
 }
 
 impl fastfile_iw5::AssetSink for CommonWalkSink {
@@ -664,6 +687,9 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
             .name
             .and_then(|ptr| stream.cstr(ptr).ok())
             .map(str::to_owned);
+        if let Some(name) = &self.last_fx_name_iw5 {
+            self.refs.note(RefKind::Fx, name);
+        }
         self.fx
             .capture_iw5(stream, geometry, &self.materials, &self.xmodel_names_iw5);
         Ok(())
@@ -717,6 +743,7 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
             sound.iw5_loaded(stream, ty, slot, insert_slot);
         }
         self.materials.iw5_loaded(stream, ty, slot, insert_slot);
+        note_iw5_loaded_ref(&mut self.refs, stream, ty);
         if ty == fastfile_iw5::AssetType::AddonMapEnts {
             match asset_world::addon_map_ents_iw5(stream) {
                 Some((name, text, brush_models)) => self.scripts.capture_addon_entities(
@@ -902,7 +929,7 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
         Ok(())
     }
 
-    asset_audio::forward_iw5_sound!();
+    asset_audio::forward_iw5_sound!(note_sound_ref);
 }
 
 impl fastfile_t5::AssetSink for CommonWalkSink {
@@ -2272,6 +2299,27 @@ fn iw5_iw4_ptr(p: fastfile_iw5::Ptr) -> Ptr {
     Ptr {
         block: p.block,
         offset: p.offset,
+    }
+}
+
+fn note_iw5_loaded_ref(
+    refs: &mut ZoneRefs,
+    stream: &fastfile_iw5::ZoneStream<'_>,
+    ty: fastfile_iw5::AssetType,
+) {
+    let (kind, name) = match ty {
+        fastfile_iw5::AssetType::XModel => (
+            RefKind::Model,
+            stream.latest_xmodel().and_then(|geometry| geometry.name),
+        ),
+        fastfile_iw5::AssetType::Material => (
+            RefKind::Material,
+            stream.latest_material().and_then(|geometry| geometry.name),
+        ),
+        _ => return,
+    };
+    if let Some(name) = name.and_then(|ptr| stream.cstr(ptr).ok()) {
+        refs.note(kind, name);
     }
 }
 
