@@ -378,7 +378,7 @@ macro_rules! forward_iw4_sound {
 
 #[macro_export]
 macro_rules! forward_iw5_sound {
-    () => {
+    ($($on_sound:ident)?) => {
         fn capture_loaded_sound(
             &mut self,
             s: &fastfile_iw5::ZoneStream<'_>,
@@ -418,6 +418,7 @@ macro_rules! forward_iw5_sound {
             count: usize,
             head: Option<fastfile_iw5::Ptr>,
         ) -> fastfile_iw5::Result<()> {
+            $(self.$on_sound(s, list);)?
             if let Some(sound) = self.sound.as_mut()
                 && let Some(capture) = sound.iw5()
             {
