@@ -1393,6 +1393,40 @@ pub(crate) fn phase_trace(
                     flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
                 }
             }
+            // An actor's body is flesh: damage it before the event is built,
+            // as a player is above, so the head and fatal variants play.
+            let mut actor_damaged = false;
+            if !exit
+                && segment.surf_type == weapon_iw4::SURF_TYPE_FLESH as u8
+                && let Some(ColliderId::EntityDObjBone {
+                    owner,
+                    bone,
+                    part_classification,
+                    ..
+                }) = segment.collider
+            {
+                let head = hud_iw4::obituary_is_headshot(part_classification);
+                let mut fatal = false;
+                if world.publishes_snapshot()
+                    && scaled > 0
+                    && let Some(target) = owner.script_model()
+                {
+                    let was_alive = actor_alive(world, target);
+                    shot_damage_entity(world, &em, segment.end, target, Some(bone), scaled);
+                    actor_damaged = true;
+                    fatal = was_alive && !actor_alive(world, target);
+                    diag::info!(
+                        Sim,
+                        "combat: actor hit entity={} bone={bone} hitloc={} surf=flesh damage={scaled} head={head} fatal={fatal}",
+                        world.gentity_number(target).unwrap_or(ENTITYNUM_NONE),
+                        weapon_iw4::HITLOC_NAMES
+                            .get(usize::from(part_classification))
+                            .copied()
+                            .unwrap_or("none"),
+                    );
+                }
+                flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
+            }
             let payload = crate::EntityEventPayload {
                 number: em.attacker.0 as i32,
                 attacker_entity_num: em.attacker.0 as i32,
@@ -1509,35 +1543,12 @@ pub(crate) fn phase_trace(
                     {
                         continue;
                     }
-                    if let Some(target) = owner.script_model() {
+                    if !actor_damaged && let Some(target) = owner.script_model() {
                         let bone = match segment.collider {
-                            Some(ColliderId::EntityDObjBone { bone, .. }) => {
-                                Some(usize::from(bone))
-                            }
+                            Some(ColliderId::EntityDObjBone { bone, .. }) => Some(bone),
                             _ => None,
                         };
-                        let means = crate::script_player::means(
-                            world,
-                            DamageSource::Shot(em.shot_id),
-                            em.weapon,
-                            0,
-                            false,
-                        );
-                        crate::script::damage_entity(
-                            world.ecs(),
-                            &crate::script::EntityHit {
-                                target,
-                                amount: scaled,
-                                attacker: Some(em.attacker),
-                                inflictor: None,
-                                means,
-                                weapon: em.weapon,
-                                point: segment.end,
-                                dir: em.direction,
-                                bone,
-                                flags: 0,
-                            },
-                        );
+                        shot_damage_entity(world, &em, segment.end, target, bone, scaled);
                     }
                 }
                 Some(ColliderId::World { .. }) => {
@@ -1566,6 +1577,42 @@ pub(crate) fn phase_trace(
     }
     world.record_shot_collision_verdicts(&output.shot_verdicts);
     output
+}
+
+fn shot_damage_entity(
+    world: &mut FrameWorld,
+    em: &Emission,
+    point: [f32; 3],
+    target: crate::ScriptModelId,
+    bone: Option<u16>,
+    amount: i32,
+) {
+    let means =
+        crate::script_player::means(world, DamageSource::Shot(em.shot_id), em.weapon, 0, false);
+    crate::script::damage_entity(
+        world.ecs(),
+        &crate::script::EntityHit {
+            target,
+            amount,
+            attacker: Some(em.attacker),
+            inflictor: None,
+            means,
+            weapon: em.weapon,
+            point,
+            dir: em.direction,
+            bone: bone.map(usize::from),
+            flags: 0,
+        },
+    );
+}
+
+/// Whether the actor a script model presents is alive.
+fn actor_alive(world: &mut FrameWorld, target: crate::ScriptModelId) -> bool {
+    let world = world.ecs();
+    world
+        .get_resource::<crate::script::Runtime>()
+        .and_then(|runtime| runtime.presented_by(target))
+        .is_some_and(|object| crate::script::host::natives::actor::alive(world, object))
 }
 
 fn fire_weapon_melee(

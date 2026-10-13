@@ -175,6 +175,6 @@ pub use transport::wire::{WireError, WireReader, WireWriter};
 
 pub use svc_script_audio::SvcScriptAudio;
 
-pub const PROTOCOL_VERSION: u32 = 116;
+pub const PROTOCOL_VERSION: u32 = 117;
 
 pub use client::fire_verdict::{FireVerdictState, PredictedFireStatus};

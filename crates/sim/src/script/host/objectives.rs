@@ -131,6 +131,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
 
 pub(crate) fn publish(world: &mut World) {
     let vehicles = super::vehicles::compass_rows(world);
+    let actors = compass_actor_rows(world);
     let vehicle_targets = super::vehicles::hud_targets(world);
     let rows: Vec<(u8, ScriptObjective)> = world
         .resource::<Runtime>()
@@ -245,6 +246,7 @@ pub(crate) fn publish(world: &mut World) {
         scores,
         compass,
         vehicles,
+        actors,
         vehicle_targets,
         server_info,
         game_end_time,
@@ -263,4 +265,37 @@ pub(crate) fn publish(world: &mut World) {
         night_vision,
         pain_vision,
     };
+}
+
+/// The live actors, in id order: a dead actor's corpse stays until
+/// `actor_corpse_ms` runs out and is no compass contact.
+fn compass_actor_rows(world: &mut World) -> Vec<crate::CompassActor> {
+    let mut ids: Vec<u64> = world.resource::<Runtime>().actors.keys().copied().collect();
+    ids.sort_unstable();
+    ids.into_iter()
+        .filter_map(|id| {
+            if !super::natives::actor::alive(world, id) {
+                return None;
+            }
+            let Value::Vector(origin) = super::players::entity_field(world, id, "origin") else {
+                return None;
+            };
+            let yaw = match super::players::entity_field(world, id, "angles") {
+                Value::Vector(v) => v[1],
+                _ => 0.0,
+            };
+            let team = match super::players::entity_field(world, id, "team") {
+                Value::String(team) if &*team == "axis" => entity_iw4::TEAM_AXIS,
+                Value::String(team) if &*team == "allies" => entity_iw4::TEAM_ALLIES,
+                _ => entity_iw4::TEAM_FREE,
+            };
+            let number = world.resource::<Runtime>().entities.get(&id)?.number;
+            Some(crate::CompassActor {
+                origin,
+                yaw,
+                team,
+                number,
+            })
+        })
+        .collect()
 }

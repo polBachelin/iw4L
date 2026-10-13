@@ -30,12 +30,22 @@ const OWNER_DRAW_PLAYER: i32 = 150;
 
 const OWNER_DRAW_ENEMIES: i32 = 175;
 
+/// Ping materials for actors, first the zones hold wins: MW3's SP zones may
+/// name them without the multiplayer suffix.
+const ACTOR_ENEMY_PINGS: [&str; 2] = ["compassping_enemy", COMPASS_ENEMY_FIRING_PING_IMAGE];
+const ACTOR_FRIENDLY_PINGS: [&str; 2] = ["compassping_friendly", "compassping_friendly_mp"];
+
 #[derive(Component)]
 pub(crate) struct CompassRaster;
 
 #[derive(Resource, Default)]
 pub(crate) struct CompassPingLatch {
     actors: HashMap<u32, PingActor>,
+    /// Fire pings of actors, by entity number: actors have no client slot.
+    actor_fire: HashMap<i32, PingActor>,
+    actor_log: Option<String>,
+    /// The objective icons last drawn, as logged.
+    objective_log: Option<String>,
     last_time: Option<i32>,
     radar_progress: f32,
     radar_last_ms: Option<i32>,
@@ -297,7 +307,19 @@ pub(crate) fn update_compass(
             o.shows_to(team, local.0.0) && !o.icon.is_empty() && (team_mode || o.viewer.is_some())
         });
         let size = map_item.rect.h * COMPASS_SIZE_DEFAULT;
+        let mut drawn = Vec::new();
+        let mut imaged = false;
         for objective in objectives {
+            let image = hud_images
+                .get(chrome, &objective.icon, &mut images)
+                .is_some();
+            imaged |= image;
+            drawn.push(format!(
+                "{}:{}{}",
+                objective.index,
+                objective.icon,
+                if image { "" } else { " (no image)" }
+            ));
             let offset = world_pos_to_compass_partial(
                 north,
                 player_xy,
@@ -334,6 +356,19 @@ pub(crate) fn update_compass(
                 layer: 1,
             });
         }
+        // Drawing an objective's icon is the path the gap stands for, font
+        // or not (Survival's compass has no objective text).
+        if imaged {
+            gaps.clear(HudGap::CompassObjectives);
+        }
+        let line =
+            (!drawn.is_empty()).then(|| format!("compass: objectives drawn [{}]", drawn.join(" ")));
+        if line != latch.objective_log {
+            if let Some(line) = &line {
+                diag::info!(Ui, "{line}");
+            }
+            latch.objective_log = line;
+        }
         if team_mode
             && let Some(font) = catalog
                 .as_ref()
@@ -353,7 +388,57 @@ pub(crate) fn update_compass(
         jam_fade,
         chrome,
     ));
+    let actor_quads = match presented.snapshot() {
+        Some(snapshot) if !snapshot.meta.objectives.actors.is_empty() => {
+            let mode = (snapshot.meta.kind == gamemode_iw4::GameModeKind::Survival)
+                .then(assets::survival_compass_actors);
+            let mut pick = |names: [&'static str; 2]| {
+                names
+                    .into_iter()
+                    .find(|name| hud_images.get(chrome, name, &mut images).is_some())
+            };
+            let materials = [pick(ACTOR_ENEMY_PINGS), pick(ACTOR_FRIENDLY_PINGS)];
+            let line = format!(
+                "survival compass: actors mode={} enemy={} friendly={} local_team={local_team}",
+                match &mode {
+                    Some(Ok(mode)) => format!("{mode:?}").to_ascii_lowercase(),
+                    Some(Err(error)) => error.clone(),
+                    None => "off (not survival)".into(),
+                },
+                materials[0].unwrap_or("none"),
+                materials[1].unwrap_or("none"),
+            );
+            if latch.actor_log.as_ref() != Some(&line) {
+                diag::info!(Ui, "{line} rows={}", snapshot.meta.objectives.actors.len());
+                latch.actor_log = Some(line);
+            }
+            let (cmds, quads) = actor_draws(
+                &surface,
+                map_item,
+                items.enemies,
+                &snapshot.meta.objectives.actors,
+                ActorView {
+                    local_team,
+                    mode: mode.and_then(Result::ok),
+                    fire: &latch.actor_fire,
+                    now_ms: cg_clock.time(),
+                    north,
+                    player_xy,
+                    view_yaw: ps.viewangles[1],
+                    max_range: drawable.max_range,
+                    ping_size: [ping_w, ping_h],
+                    materials,
+                    jam_fade,
+                    chrome,
+                },
+            );
+            list.cmds.extend(cmds);
+            quads
+        }
+        _ => Vec::new(),
+    };
     let (mut quads, _) = crate::draw2d::tessellate_fonts(&list, &fonts);
+    quads.extend(actor_quads);
     if let Some(snapshot) = presented.snapshot() {
         for vehicle in &snapshot.meta.objectives.vehicles {
             let friendly = vehicle.owner == local.0.0 || same_team(local_team, vehicle.team);
@@ -589,6 +674,95 @@ fn enemy_ping_cmds(
     cmds
 }
 
+/// What the compass needs to place actors for the local player.
+struct ActorView<'a> {
+    local_team: i32,
+    mode: Option<assets::SurvivalCompassActors>,
+    fire: &'a HashMap<i32, PingActor>,
+    now_ms: i32,
+    north: [f32; 2],
+    player_xy: [f32; 2],
+    view_yaw: f32,
+    max_range: f32,
+    ping_size: [f32; 2],
+    /// The enemy and the friendly ping material, if the zones hold one.
+    materials: [Option<&'static str>; 2],
+    jam_fade: f32,
+    chrome: asset_core::AssetNamespace,
+}
+
+/// Actors on the compass: hostiles as enemy pings, always or for a while
+/// after they fire (`compass_actors`), friendlies as friendly markers turned
+/// to their facing. Actors of no side, or seen by a player of none, are left
+/// out, as clients are.
+fn actor_draws(
+    surface: &crate::surface::Hud2dSurface,
+    map_item: &MenuItem,
+    enemies: Option<(usize, &MenuItem)>,
+    actors: &[sim::CompassActor],
+    view: ActorView<'_>,
+) -> (Vec<Draw2dCmd>, Vec<crate::draw2d::Draw2dQuad>) {
+    let size = map_item.rect.h * COMPASS_SIZE_DEFAULT;
+    let offset = |xy: [f32; 2]| {
+        world_pos_to_compass_partial(view.north, view.player_xy, xy, size, view.max_range)
+    };
+    let mut hostile = Vec::new();
+    let mut quads = Vec::new();
+    for actor in actors {
+        if !matches!(view.local_team, 1 | 2) || !matches!(actor.team, 1 | 2) {
+            continue;
+        }
+        if same_team(view.local_team, actor.team) {
+            let Some(material) = view.materials[1] else {
+                continue;
+            };
+            quads.push(friendly_quad(
+                surface,
+                map_item,
+                offset([actor.origin[0], actor.origin[1]]),
+                view.ping_size,
+                view.view_yaw - actor.yaw,
+                view.jam_fade,
+                material,
+                [0.0, 0.0, 1.0, 1.0],
+                Draw2dProvenance::OwnerDraw(158),
+                view.chrome,
+            ));
+            continue;
+        }
+        match view.mode {
+            Some(assets::SurvivalCompassActors::Always) => {
+                hostile.push((offset([actor.origin[0], actor.origin[1]]), 1.0));
+            }
+            Some(assets::SurvivalCompassActors::Firing) => {
+                let Some(ping) = view.fire.get(&actor.number) else {
+                    continue;
+                };
+                if let Some(alpha) =
+                    compass_sound_ping_fade(view.now_ms, ping.begin_fade_ms, ping.fade_seconds)
+                {
+                    hostile.push((offset(ping.last_pos), alpha));
+                }
+            }
+            None => {}
+        }
+    }
+    let cmds = match view.materials[0] {
+        Some(material) => enemy_ping_cmds(
+            surface,
+            map_item,
+            enemies,
+            view.ping_size,
+            material,
+            &hostile,
+            view.jam_fade,
+            view.chrome,
+        ),
+        None => Vec::new(),
+    };
+    (cmds, quads)
+}
+
 fn same_team(local: i32, other: i32) -> bool {
     matches!(local, 1 | 2) && local == other
 }
@@ -659,16 +833,33 @@ fn take_fire_pings(
 ) -> i32 {
     if latch.last_time.is_some_and(|last| cg_time_ms < last) || presented.snapshot().is_none() {
         latch.actors.clear();
+        latch.actor_fire.clear();
         latch.radar_progress = 0.0;
         latch.radar_last_ms = None;
     }
     latch.last_time = Some(cg_time_ms);
-    latch.actors.retain(|_, actor| {
+    let fading = |actor: &mut PingActor| {
         compass_sound_ping_fade(cg_time_ms, actor.begin_fade_ms, actor.fade_seconds).is_some()
-    });
+    };
+    latch.actors.retain(|_, actor| fading(actor));
+    latch.actor_fire.retain(|_, actor| fading(actor));
+    let actors = presented
+        .snapshot()
+        .map_or(&[][..], |snapshot| &snapshot.meta.objectives.actors[..]);
     let n = bus.pings.len() as i32;
     for ping in bus.pings.drain(..) {
         if ping.number == local.0 as i32 {
+            continue;
+        }
+        if actors.iter().any(|actor| actor.number == ping.number) {
+            latch.actor_fire.insert(
+                ping.number,
+                PingActor {
+                    begin_fade_ms: cg_time_ms,
+                    fade_seconds: hud_iw4::COMPASS_SOUND_PING_FADE_TIME_DEFAULT,
+                    last_pos: ping.origin_xy,
+                },
+            );
             continue;
         }
         let Ok(id) = u32::try_from(ping.number) else {
@@ -826,4 +1017,63 @@ pub(crate) fn resolve(
         },
         north_yaw,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compass_draws_survival_actors() {
+        let surface = crate::surface::Hud2dSurface::new(1280.0, 720.0);
+        let mut map_item = MenuItem::default();
+        map_item.rect.w = 100.0;
+        map_item.rect.h = 100.0;
+        let actor = |team, x| sim::CompassActor {
+            origin: [x, 0.0, 0.0],
+            yaw: 0.0,
+            team,
+            number: 20,
+        };
+        let actors = [actor(1, 200.0), actor(2, -200.0)];
+        let fire = HashMap::new();
+        let fire = &fire;
+        let view = move |mode| ActorView {
+            local_team: 2,
+            mode: Some(mode),
+            fire,
+            now_ms: 0,
+            north: [0.0, 1.0],
+            player_xy: [0.0, 0.0],
+            view_yaw: 0.0,
+            max_range: 2500.0,
+            ping_size: [8.0, 8.0],
+            materials: [Some(ACTOR_ENEMY_PINGS[0]), Some(ACTOR_FRIENDLY_PINGS[0])],
+            jam_fade: 1.0,
+            chrome: asset_core::AssetNamespace::Iw5,
+        };
+        let (cmds, quads) = actor_draws(
+            &surface,
+            &map_item,
+            None,
+            &actors,
+            view(assets::SurvivalCompassActors::Always),
+        );
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].material, ACTOR_ENEMY_PINGS[0]);
+        assert_eq!(quads.len(), 1);
+        assert_eq!(quads[0].material, ACTOR_FRIENDLY_PINGS[0]);
+        let (cmds, quads) = actor_draws(
+            &surface,
+            &map_item,
+            None,
+            &actors,
+            view(assets::SurvivalCompassActors::Firing),
+        );
+        assert!(
+            cmds.is_empty(),
+            "a hostile that has not fired shows in firing mode"
+        );
+        assert_eq!(quads.len(), 1);
+    }
 }

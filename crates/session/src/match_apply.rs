@@ -402,10 +402,10 @@ pub fn apply_prepared_match(
                 )
             })
         }));
+        // The map's own family: an IW5 map's anims are not found under IW4,
+        // and an actor's tree and anim-driven walk need its clips.
         let script_anim_clips = Arc::clone(&xanims.0);
-        content.set_script_anim_clips(move |name| {
-            script_anim_clips.clip(asset_core::AssetNamespace::Iw4, name)
-        });
+        content.set_script_anim_clips(move |name| script_anim_clips.clip(anim_namespace, name));
         content.set_mantle_xanims(sim::MantleXAnimBind::from_clips(|fast, i| {
             let name = sim::MantleXAnimBind::clip_name(fast, i)?;
             xanims
@@ -1014,6 +1014,7 @@ fn preflight_match_install(
         }
     }
     let mut sources = Sources(std::mem::take(&mut prepared.scripts));
+    let mut locomotion_gap = None;
     if kind == gamemode_iw4::GameModeKind::Survival {
         let picks = assets::survival_pick_weapons(&mut sources.0, |name| {
             weapons.registry().resolve_script_name(name).is_some()
@@ -1030,6 +1031,32 @@ fn preflight_match_install(
                 "survival actor and player anims not loaded, their state's first row plays instead: {}",
                 missing.join(" ")
             );
+        }
+        // Actors move as far as their run and walk anims carry them, so an
+        // anim with no root motion would hold them in place.
+        let still: Vec<String> = assets::survival_locomotion_anims(&sources.0)
+            .into_iter()
+            .filter_map(|(set, state, anim)| {
+                let clip = prepared_map
+                    .namespace
+                    .filter(|_| !anim.is_empty())
+                    .and_then(|namespace| xanims.0.clip(namespace, &anim));
+                let why = match clip {
+                    None => "not loaded".to_owned(),
+                    Some(clip) if !clip.has_delta() => "no delta track".to_owned(),
+                    Some(clip) if clip.move_speed() <= 0.0 => {
+                        format!("delta does not move over {}s", clip.duration())
+                    }
+                    Some(_) => return None,
+                };
+                Some(format!("{set} {state} `{anim}` ({why})"))
+            })
+            .collect();
+        if !still.is_empty() {
+            locomotion_gap = Some(format!(
+                "survival/actor_anims.csv: run and walk anims must move (no root motion or not loaded): {}",
+                still.join(", ")
+            ));
         }
     }
     let player_body_anims = (kind == gamemode_iw4::GameModeKind::Survival).then(|| {
@@ -1146,6 +1173,16 @@ fn preflight_match_install(
             |name| matches!(weapons.registry().resolve_index(name), Ok(Some(index)) if index != 0),
         )
         .map_err(|gap| script_refusal(zone, gametype, "install", &gap))?;
+        assets::survival_strings_check(&sources.0, &strings)
+            .map_err(|gap| script_refusal(zone, gametype, "install", &gap))?;
+        for line in assets::survival_icons_check(&sources.0, catalog)
+            .map_err(|gap| script_refusal(zone, gametype, "install", &gap))?
+        {
+            diag::info!(Ui, "{line}");
+        }
+        if let Some(gap) = locomotion_gap {
+            return Err(script_refusal(zone, gametype, "install", &gap));
+        }
     }
     let config = sources
         .0

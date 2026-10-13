@@ -31,6 +31,7 @@ armor_absorb_percent,100
 getup_shock,laststand_getup_pc
 getup_shock_seconds,2
 hud_menus,surhud_display waves enemies credit
+compass_actors,always
 eog_menu,sp_eog_summary
 eog_value_column,4
 eog_deadquote,@DEADQUOTE_SO_SURVIVAL_LAST_STAND
@@ -42,6 +43,13 @@ armory_close_response,quit
 armory_replacement_menu,survival_armory_replacement_warning
 armory_replacement_continue,continue
 armory_replacement_grants,launcher
+armory_hint_weapon,@SO_SURVIVAL_ARMORY_USE_WEAPON
+armory_hint_equipment,@SO_SURVIVAL_ARMORY_USE_EQUIPMENT
+armory_hint_airsupport,@SO_SURVIVAL_ARMORY_USE_AIRSUPPORT
+armory_icon_weapon,specops_ui_weaponstore
+armory_icon_equipment,specops_ui_equipmentstore
+armory_icon_airsupport,specops_ui_airsupport
+armory_icon_height,64
 primary_slots,2
 pause_menu,iw4l_pause
 actor_budget,17
@@ -59,8 +67,11 @@ actor_miss_spread,48
 actor_eye_height,60
 actor_crouch_eye_height,40
 actor_corpse_ms,10000
+actor_turn_rate,360
+actor_aim_tolerance,15
 actor_explosive_means,MOD_GRENADE MOD_GRENADE_SPLASH MOD_EXPLOSIVE MOD_PROJECTILE MOD_PROJECTILE_SPLASH
 dog_archetypes,dog_reg dog_splode
+nodrop_archetypes,jug_regular jug_riotshield jug_explosive jug_minigun
 dog_attack_range,96
 dog_bite_radius,32
 dog_bite_damage,30

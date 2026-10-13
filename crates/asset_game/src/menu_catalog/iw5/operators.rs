@@ -361,3 +361,36 @@ pub(super) fn evaluator_op(op: i32) -> Result<i32, String> {
     };
     hud_iw4::op_by_name(name).ok_or_else(|| format!("op-{name}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The MW3-only operators the HUD menus (weaponbar_hd, dpad_hd,
+    /// perks_info_hd, the survival HUD, SP weaponinfo/dpad/mantlehint) name:
+    /// a miss hides the whole menu.
+    #[test]
+    fn hud_menu_operators_resolve() {
+        for name in [
+            "isdemoplaying",
+            "isdemofollowcamera",
+            "isdemofreecamera",
+            "isdemocapturingscreenshot",
+            "select",
+            "menuistopmost",
+            "localclientuimilliseconds",
+            "levelforexperienceso",
+            "usingvehicle",
+            "gamemsgwndactive",
+        ] {
+            let op = OPERATORS
+                .iter()
+                .position(|known| *known == name)
+                .unwrap_or_else(|| panic!("{name} is no MW3 operator"));
+            assert!(
+                evaluator_op(op as i32).is_ok(),
+                "{name} has no evaluator op"
+            );
+        }
+    }
+}

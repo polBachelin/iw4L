@@ -962,3 +962,29 @@ fn census_common_zone(
 
 const IW5_DEFAULT_ALLIES: &str = "sas_urban";
 const IW5_DEFAULT_AXIS: &str = "opforce_henchmen";
+
+#[cfg(test)]
+mod zz_probe {
+    #[test]
+    fn zz_dump_impact() {
+        for zone in ["common", "code_post_gfx", "mp_paris"] {
+            let path = std::path::PathBuf::from(format!(
+                "/Users/polbachelin/Games/iw4l/MW3 (iw4play)/zone/english/{zone}.ff"
+            ));
+            let image = asset_transport::open_zone(&path).unwrap();
+            let census = super::load_mode_zone(
+                &path,
+                &image,
+                &asset_transport::LoadProgress::default(),
+                Default::default(),
+            );
+            let Some(t) = census.impact_fx else {
+                eprintln!("{zone}: none");
+                continue;
+            };
+            for (i, e) in t.entries.iter().enumerate() {
+                eprintln!("{zone} row {i}: flesh={:?} surf0={:?} wood={:?}", e.flesh, e.nonflesh[0], e.nonflesh[1]);
+            }
+        }
+    }
+}

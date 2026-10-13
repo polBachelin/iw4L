@@ -104,6 +104,31 @@ struct ScriptModelPoseLocals<'w, 's> {
     remap: Local<'s, Vec<Option<usize>>>,
     lod_skinned: Res<'w, render_scene::LodRampSkinnedDvar>,
     gfx_scene: Res<'w, HostGfxScene>,
+    time: Res<'w, Time>,
+    /// The presented snapshot's tick and the frame time it was first posed.
+    anim_since: Local<'s, Option<(sim::Tick, f32)>>,
+}
+
+/// Seconds an animated script model's tree is played on past the snapshot
+/// it came in: the frame time since that snapshot was first posed, at most
+/// one authority tick, so poses move every frame instead of at the snapshot
+/// rate and never run ahead of the next state.
+fn anim_time_since_snapshot(
+    since: &mut Option<(sim::Tick, f32)>,
+    tick: Option<sim::Tick>,
+    now: f32,
+) -> f32 {
+    let Some(tick) = tick else {
+        return 0.0;
+    };
+    let at = match *since {
+        Some((seen, at)) if seen == tick => at,
+        _ => {
+            *since = Some((tick, now));
+            now
+        }
+    };
+    (now - at).clamp(0.0, sim::MATCH_TICK_MS as f32 / 1000.0)
 }
 
 #[derive(SystemParam)]
@@ -622,7 +647,10 @@ fn pose_script_models(
         mut remap,
         lod_skinned,
         gfx_scene,
+        time,
+        mut anim_since,
     } = locals;
+    let anim_dt = anim_time_since_snapshot(&mut anim_since, presented.tick(), time.elapsed_secs());
     live_assets.clear();
     live_ids.clear();
     let producer_ready = assets.is_some() && atlas.is_some() && facts.spawned;
@@ -708,12 +736,22 @@ fn pose_script_models(
                 continue;
             }
             live_ids.insert(id);
-            let request = owner.dobj_state.resolve_request(|name| {
+            let mut request = owner.dobj_state.resolve_request(|name| {
                 let xanims = xanims.as_ref()?;
                 xanims.0.clip(xanims.1, name)
             });
-            let index = if let Some(index) =
-                product.asset_index(&owner.current_model, &owner.dobj_state, &camera_lods)
+            // An animated tree plays on between snapshots, so its pose is
+            // posed afresh each frame rather than reused from the snapshot's.
+            let played_on = anim_dt > 0.0
+                && request.as_mut().is_ok_and(|request| {
+                    request
+                        .tree
+                        .as_mut()
+                        .is_some_and(|tree| tree.update(anim_dt).is_ok())
+                });
+            let index = if let Some(index) = (!played_on)
+                .then(|| product.asset_index(&owner.current_model, &owner.dobj_state, &camera_lods))
+                .flatten()
             {
                 index
             } else {
@@ -1384,5 +1422,26 @@ fn publish_script_model_dobjs(
         {
             frame.publish(id, entity, persist.by_id[&id.to_wire()].dobj.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anim_time_since_snapshot;
+
+    #[test]
+    fn script_anim_plays_on_between_snapshots() {
+        let mut since = None;
+        let tick = Some(sim::Tick(10));
+        assert_eq!(anim_time_since_snapshot(&mut since, tick, 1.0), 0.0);
+        assert!((anim_time_since_snapshot(&mut since, tick, 1.02) - 0.02).abs() < 1e-5);
+        // Never past one authority tick, however late the next snapshot is.
+        assert_eq!(anim_time_since_snapshot(&mut since, tick, 2.0), 0.05);
+        // A new snapshot starts again from its own state.
+        assert_eq!(
+            anim_time_since_snapshot(&mut since, Some(sim::Tick(11)), 2.01),
+            0.0
+        );
+        assert_eq!(anim_time_since_snapshot(&mut since, None, 3.0), 0.0);
     }
 }

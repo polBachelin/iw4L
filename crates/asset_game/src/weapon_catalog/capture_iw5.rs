@@ -196,10 +196,12 @@ impl WeaponCatalog {
                 .weap_def
                 .map_or(0, |body| i32_at_iw5(stream, body, 504, 800)),
             hud_icon_image: None,
-            dpad_icon: None,
+            dpad_icon: geometry
+                .dpad_icon_name
+                .and_then(|ptr| leftover_cstr_iw5(stream, ptr)),
             dpad_icon_image: None,
             dpad_icon_atlas: None,
-            dpad_icon_ratio: 0,
+            dpad_icon_ratio: geometry.dpad_icon_ratio,
             kill_icon: geometry
                 .kill_icon
                 .and_then(|mat| leftover_xstring_at_iw5(stream, mat, 0, 0)),

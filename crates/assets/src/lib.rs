@@ -51,9 +51,11 @@ pub use session_load::{
     load_prepared_match, load_shell_common, load_workers, publish_process_cpus,
 };
 pub use survival::{
-    SURVIVAL_MENU_HUD_DVAR, survival_base_zones, survival_data_check, survival_eog_strings,
-    survival_hud_menus, survival_menu_hud, survival_mode_zones, survival_pick_anims,
-    survival_pick_weapons, survival_player_anims, survival_setting, survival_team_rules,
+    SURVIVAL_MENU_HUD_DVAR, SurvivalCompassActors, survival_base_zones, survival_compass_actors,
+    survival_data_check, survival_eog_strings, survival_hud_menus, survival_icons_check,
+    survival_locomotion_anims, survival_menu_hud, survival_mode_zones, survival_pick_anims,
+    survival_pick_weapons, survival_player_anims, survival_setting, survival_strings_check,
+    survival_team_rules,
 };
 
 pub mod image_handles;

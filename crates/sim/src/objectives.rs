@@ -5,6 +5,7 @@ pub struct ObjectiveMatch {
     pub scores: [i32; 3],
     pub compass: Vec<CompassObjective>,
     pub vehicles: Vec<CompassVehicle>,
+    pub actors: Vec<CompassActor>,
     pub vehicle_targets: Vec<VehicleHudTarget>,
     pub server_info: Vec<(String, String)>,
     pub game_end_time: i32,
@@ -125,6 +126,17 @@ pub struct CompassVehicle {
     pub team: i32,
     pub icons: [String; 2],
     pub size: [i32; 2],
+}
+
+/// A live actor for the compass: a character the server simulates without a
+/// client slot. `number` is its entity number, the one its weapon-fire
+/// events carry.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CompassActor {
+    pub origin: [f32; 3],
+    pub yaw: f32,
+    pub team: i32,
+    pub number: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,3 +1,4 @@
-wave,Wave &&1,hudsmall,140,right,top,right,top,-12,12,surHUD_wave
-enemies,Enemies &&1,hudsmall,140,right,top,right,top,-12,34,surHUD_enemy
-credits,$&&1,hudsmall,140,right,top,right,top,-12,56,surHUD_credits
+wave,Wave &&1,hudsmall,140,right,top,right,top,-12,12,surHUD_wave,,,,,
+enemies,Enemies &&1,hudsmall,140,right,top,right,top,-12,34,surHUD_enemy,,,,,
+credits,$&&1,hudsmall,140,right,top,right,top,-12,56,surHUD_credits,,,,,
+armor,@SO_SURVIVAL_ARMOR_POINTS,hudbig,50,left,bottom,left,middle,70,-112,surHUD_armor,teamperk_blast_shield,28,28,-58,-2

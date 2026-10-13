@@ -158,7 +158,9 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
             Some(None) => (None, s.latest_material().and_then(|m| m.header)),
             None => (referenced, None),
         };
-    asset_ptr_at(s, links, AssetType::Material, p.at(s.layout(136, 224)))?;
+    let dpad_icon_cell = p.at(s.layout(sz::WEAPON_COMPLETE_DPAD_ICON_OFF, 224));
+    asset_ptr_at(s, links, AssetType::Material, dpad_icon_cell)?;
+    let dpad_icon_name = super::material_name_at(s, links, dpad_icon_cell);
     s.plain_array(p, s.layout(172, 264), 4, 8, ai_knots)?;
     s.plain_array(p, s.layout(176, 272), 4, 8, player_knots)?;
 
@@ -241,6 +243,8 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         name,
         kill_icon_slot,
         kill_icon,
+        dpad_icon_name,
+        dpad_icon_ratio: s.i32_at(p, s.layout(sz::WEAPON_COMPLETE_DPAD_ICON_RATIO_OFF, 172))?,
         display_name,
         weap_def,
         gun_xmodel_name,
@@ -423,7 +427,8 @@ fn load_weapon_def(
         s.layout(sz::WEAPON_DEF_PERPENDICULAR_BOUNCE_OFF, 1752),
     ] {
         if s.begin_body(p.at(off))? {
-            s.alloc_load(4, 4 * sz::SURF_TYPE_COUNT)?;
+            let arr = s.alloc_load(4, 4 * sz::SURF_TYPE_COUNT)?;
+            s.fixup_slot(p.at(off), arr)?;
         }
     }
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1360, 1760)))?;

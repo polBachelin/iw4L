@@ -66,16 +66,41 @@ pickanim( state, direction )
 	return picked.anims[ randomint( picked.anims.size ) ];
 }
 
-// Loops an anim of `state`, unless one of it already plays.
-playloop( state )
+// Loops an anim of `state` at `rate` (1 when undefined), unless one of it
+// already plays at that rate.
+playloop( state, rate )
 {
-	if ( isdefined( self.loopstate ) && self.loopstate == state && self.loopstance == self.pose )
+	if ( !isdefined( rate ) )
+		rate = 1;
+	if ( isdefined( self.loopstate ) && self.loopstate == state && self.loopstance == self.pose && self.looprate == rate )
 		return;
 	name = self pickanim( state, "" );
 	self.loopstate = state;
 	self.loopstance = self.pose;
+	self.looprate = rate;
 	if ( name != "" )
-		self setanimknob( name, 1, settingseconds( "actor_blend_ms" ) );
+		self setanimknob( name, 1, settingseconds( "actor_blend_ms" ), rate );
+}
+
+// Layers an anim of `state` over the anim that poses the body. MW3's fire
+// anims are additive (recoil only): the aim loop stays the pose underneath.
+playlayer( state )
+{
+	self clearlayer();
+	name = self pickanim( state, "" );
+	if ( name == "" )
+		return;
+	self.layeranim = name;
+	self setanim( name, 1, settingseconds( "actor_blend_ms" ) );
+}
+
+// Blends out the layer playlayer put on; the pose underneath stays.
+clearlayer()
+{
+	if ( !isdefined( self.layeranim ) )
+		return;
+	self clearanim( self.layeranim, settingseconds( "actor_blend_ms" ) );
+	self.layeranim = undefined;
 }
 
 // Plays an anim of `state` once and returns when it ends.
@@ -116,6 +141,11 @@ actor_think( archetype )
 	if ( self.gun != "" )
 		self setweapon( self.gun );
 	self setgoalradius( int( setting( "actor_goal_radius" ) ) );
+	// The engine turns the body toward its walk or `goalyaw` at `turnrate`
+	// degrees a second and holds a shot until it faces it within
+	// `aimtolerance` degrees.
+	self.turnrate = int( setting( "actor_turn_rate" ) );
+	self.aimtolerance = int( setting( "actor_aim_tolerance" ) );
 	self.hitdirection = "b";
 	self.inpain = false;
 	self thread actorpain();
@@ -170,10 +200,13 @@ stopmoving()
 	self.moving = undefined;
 }
 
-// Runs toward `target`, walking once within actor_walk_range.
+// Runs toward `target`, walking once within actor_walk_range. The engine
+// moves the body as far as the playing anim carries it, both at
+// moveplaybackrate, so the feet keep to the ground.
 movetoward( target )
 {
 	self.pose = "stand";
+	self.engaged = undefined;
 	state = "run";
 	rate = self.runrate;
 	if ( distance( self.origin, target.origin ) <= int( setting( "actor_walk_range" ) ) )
@@ -184,16 +217,21 @@ movetoward( target )
 	self.moveplaybackrate = rate;
 	self setgoalpos( target.origin );
 	self.moving = true;
-	self playloop( state );
+	self playloop( state, rate );
 }
 
-// Stops, picks a stance, aims and fires one burst at `target`, then rests.
+// Stops, aims and fires one burst at `target`, then rests. The stance is
+// picked once per engagement: on a new target or after moving.
 engage( target )
 {
 	self stopmoving();
-	self.pose = "stand";
-	if ( randomint( 100 ) < int( setting( "actor_crouch_percent" ) ) )
-		self.pose = "crouch";
+	if ( !isdefined( self.engaged ) || self.engaged != target )
+	{
+		self.engaged = target;
+		self.pose = "stand";
+		if ( randomint( 100 ) < int( setting( "actor_crouch_percent" ) ) )
+			self.pose = "crouch";
+	}
 	self faceat( target );
 	self playloop( "aim" );
 	wait settingseconds( "actor_blend_ms" );
@@ -207,7 +245,7 @@ engage( target )
 	interval = weaponfiretime( self.gun );
 	if ( interval <= 0 )
 		interval = 0.05;
-	self playloop( "fire" );
+	self playlayer( "fire" );
 	for ( shot = 0; shot < self.burstshots && !self.inpain; shot++ )
 	{
 		if ( !isalive( target ) || !self cansee( target ) )
@@ -216,15 +254,15 @@ engage( target )
 		self shoot( self aimpoint( target ) );
 		wait interval;
 	}
-	if ( !self.inpain )
-		self playloop( "aim" );
+	self clearlayer();
 	wait settingseconds( "actor_burst_rest_ms" );
 }
 
+// The engine turns the body toward `target` at actor_turn_rate.
 faceat( target )
 {
 	angles = vectortoangles( target.origin - self.origin );
-	self.angles = ( 0, angles[ 1 ], 0 );
+	self.goalyaw = angles[ 1 ];
 }
 
 // Where a shot goes: the target's eye at the archetype's accuracy, else a
@@ -332,6 +370,23 @@ isexplosive( means )
 	return false;
 }
 
+// An enemy drops its weapon as it dies, for a player to pick up or take
+// ammo from, unless its archetype is one of nodrop_archetypes.
+dropgun()
+{
+	if ( self.team != setting( "enemy_team" ) )
+		return;
+	nodrop = strtok( setting( "nodrop_archetypes" ), " " );
+	for ( i = 0; i < nodrop.size; i++ )
+	{
+		if ( nodrop[ i ] == self.archetype )
+			return;
+	}
+	item = self dropweapon();
+	if ( isdefined( item ) )
+		logprint( "survival: dropped " + self.gun + " actor=" + self getentitynumber() + " archetype=" + self.archetype + " at " + item.origin + "\n" );
+}
+
 // Plays a death of the actor's stance away from the killing hit, an
 // explosive one for explosive means, and leaves the body for
 // actor_corpse_ms.
@@ -339,6 +394,7 @@ actordeath()
 {
 	self waittill( "death", attacker, means );
 	self.moving = undefined;
+	self dropgun();
 	state = "death";
 	if ( isdefined( means ) && isexplosive( means ) )
 		state = "explode";

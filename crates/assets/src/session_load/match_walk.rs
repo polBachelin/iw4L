@@ -413,6 +413,21 @@ pub(super) async fn walk_prepared_match(
     common_scene_models.retain_names(&scene_names);
     t5_scene_models.retain_names(&scene_names);
     iw5_scene_models.retain_names(&scene_names);
+    // The absorb below drops a model whose skeleton did not capture without
+    // a word; the scripts or entities name these, so a spawn of one is not
+    // drawn ("not in the scene catalog").
+    for (key, asset) in common_scene_models
+        .iter()
+        .chain(t5_scene_models.iter())
+        .chain(iw5_scene_models.iter())
+    {
+        if let asset_world::MapXModelSceneAsset::Unavailable { reason } = asset {
+            report.push(format!(
+                "scene model gap: `{}` is named but not drawable: {reason}",
+                key.0
+            ));
+        }
+    }
     match map_namespace {
         Some(asset_core::AssetNamespace::T5) => world
             .map_xmodel_scene_assets
@@ -701,7 +716,7 @@ pub(super) async fn walk_prepared_match(
         };
     } else if let Some(common_table) = common_impact {
         report.push(format!(
-            "impactfx: map table kept; common_mp table `{}` discarded",
+            "impactfx: map table kept; common set table `{}` discarded",
             common_table.name
         ));
     }

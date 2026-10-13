@@ -3102,6 +3102,16 @@ fn encode_objectives(out: &mut WireWriter, state: &sim::ObjectiveMatch) {
         out.put_u32(target.model.to_wire());
         out.put_u32(target.owner.0);
     }
+    debug_assert!(state.actors.len() <= u16::MAX as usize);
+    out.put_u16(state.actors.len() as u16);
+    for actor in &state.actors {
+        for v in actor.origin {
+            out.put_f32(v);
+        }
+        out.put_f32(actor.yaw);
+        out.put_i32(actor.team);
+        out.put_i32(actor.number);
+    }
 }
 
 fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, WireError> {
@@ -3246,6 +3256,14 @@ fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, 
             return Err(WireError::Malformed("invalid vehicle target"));
         }
         state.vehicle_targets.push(target);
+    }
+    for _ in 0..input.get_u16()? {
+        state.actors.push(sim::CompassActor {
+            origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
+            yaw: input.get_f32()?,
+            team: input.get_i32()?,
+            number: input.get_i32()?,
+        });
     }
     Ok(state)
 }

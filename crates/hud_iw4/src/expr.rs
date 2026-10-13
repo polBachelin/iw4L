@@ -180,6 +180,19 @@ pub const OP_SELECT: i32 = 0x203;
 
 pub const OP_ISDEMOPLAYING: i32 = 0x204;
 
+pub const OP_ISDEMOFOLLOWCAMERA: i32 = 0x205;
+
+pub const OP_ISDEMOFREECAMERA: i32 = 0x206;
+
+pub const OP_ISDEMOCAPTURINGSCREENSHOT: i32 = 0x207;
+
+/// MW3 SP: the local player rides a vehicle (weaponinfo, dpad, compassv2).
+pub const OP_USINGVEHICLE: i32 = 0x208;
+
+/// MW3 SP: game message window `n` shows a line (weaponinfo, dpad,
+/// mantlehint, minimap; window 2 is the subtitles window).
+pub const OP_GAMEMSGWNDACTIVE: i32 = 0x209;
+
 /// The evaluator's operator number for an operator a game's expression parser
 /// names `name`, or `None` when the evaluator implements no operator by that
 /// name. Dumps carry these numbers whatever game a menu came from: a reader
@@ -290,6 +303,11 @@ pub fn op_by_name(name: &str) -> Option<i32> {
         "menuistopmost" => OP_MENUISTOPMOST,
         "select" => OP_SELECT,
         "isdemoplaying" => OP_ISDEMOPLAYING,
+        "isdemofollowcamera" => OP_ISDEMOFOLLOWCAMERA,
+        "isdemofreecamera" => OP_ISDEMOFREECAMERA,
+        "isdemocapturingscreenshot" => OP_ISDEMOCAPTURINGSCREENSHOT,
+        "usingvehicle" => OP_USINGVEHICLE,
+        "gamemsgwndactive" => OP_GAMEMSGWNDACTIVE,
         _ => return None,
     })
 }
@@ -490,8 +508,36 @@ pub trait ExprHost {
         Err(ExprError::UnsupportedOp(OP_MENUISTOPMOST))
     }
 
+    /// iw4l plays no demos.
     fn is_demo_playing(&self) -> Result<i32, ExprError> {
-        Err(ExprError::UnsupportedOp(OP_ISDEMOPLAYING))
+        Ok(0)
+    }
+
+    /// The demo camera follows a player: only while a demo plays.
+    fn is_demo_follow_camera(&self) -> Result<i32, ExprError> {
+        self.is_demo_playing()
+    }
+
+    /// The demo camera flies free: only while a demo plays.
+    fn is_demo_free_camera(&self) -> Result<i32, ExprError> {
+        self.is_demo_playing()
+    }
+
+    /// A demo screenshot is being taken: only while a demo plays.
+    fn is_demo_capturing_screenshot(&self) -> Result<i32, ExprError> {
+        self.is_demo_playing()
+    }
+
+    /// No IW4/IW5 player rides a vehicle in iw4l: the player state carries
+    /// no vehicle (turrets are not vehicles).
+    fn using_vehicle(&self) -> Result<i32, ExprError> {
+        Ok(0)
+    }
+
+    /// Whether game message window `window` shows a line now.
+    fn game_msg_window_active(&self, window: i32) -> Result<i32, ExprError> {
+        let _ = window;
+        Err(ExprError::UnsupportedOp(OP_GAMEMSGWNDACTIVE))
     }
 
     fn menu_is_open(&self, name: &str) -> Result<i32, ExprError> {
@@ -885,6 +931,27 @@ fn run_op(
         }
         OP_ISDEMOPLAYING => {
             data.push(Operand::Int(host.is_demo_playing()?));
+            Ok(())
+        }
+        OP_ISDEMOFOLLOWCAMERA => {
+            data.push(Operand::Int(host.is_demo_follow_camera()?));
+            Ok(())
+        }
+        OP_ISDEMOFREECAMERA => {
+            data.push(Operand::Int(host.is_demo_free_camera()?));
+            Ok(())
+        }
+        OP_ISDEMOCAPTURINGSCREENSHOT => {
+            data.push(Operand::Int(host.is_demo_capturing_screenshot()?));
+            Ok(())
+        }
+        OP_USINGVEHICLE => {
+            data.push(Operand::Int(host.using_vehicle()?));
+            Ok(())
+        }
+        OP_GAMEMSGWNDACTIVE => {
+            let window = source_int(&data.pop().ok_or(ExprError::StackUnderflow)?);
+            data.push(Operand::Int(host.game_msg_window_active(window)?));
             Ok(())
         }
         OP_SELECT => {

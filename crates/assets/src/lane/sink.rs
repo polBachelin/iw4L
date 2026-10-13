@@ -8,6 +8,50 @@ use fastfile_iw4::{
 use super::helpers::MapXModelCatalog;
 use super::zone_refs::{RefKind, ZoneRefs};
 
+/// The survival actor's fire and aim clips, measured once (playtest plan
+/// 6.7): if MW3 plays them additively over the aim pose, our flat tree plays
+/// them wrong.
+const MEASURED_ACTOR_CLIPS: [&str; 3] = [
+    "exposed_shoot_auto_v2",
+    "exposed_shoot_auto_v3",
+    "exposed_aim_5",
+];
+
+fn measured_actor_clip(
+    s: &fastfile_iw5::ZoneStream<'_>,
+    geometry: &fastfile_iw5::XAnimPartsGeometry,
+) -> Option<(&'static str, u8)> {
+    let name = s.cstr(geometry.name?).ok()?;
+    let name = MEASURED_ACTOR_CLIPS
+        .into_iter()
+        .find(|measured| name.eq_ignore_ascii_case(measured))?;
+    Some((name, geometry.asset_type))
+}
+
+/// Logs a measured clip's assetType byte and its first track's rotation and
+/// translation at frame 0, once per clip and process.
+fn note_actor_clip(xanims: &asset_anim::XAnimBuild, name: &'static str, asset_type: u8) {
+    static LOGGED: std::sync::Mutex<Vec<&str>> = std::sync::Mutex::new(Vec::new());
+    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    if logged.contains(&name) {
+        return;
+    }
+    logged.push(name);
+    let captured = xanims.get(asset_core::AssetNamespace::Iw5, name);
+    let root = captured.and_then(|captured| captured.parts.names.first().cloned());
+    let sample = xanims
+        .clip(asset_core::AssetNamespace::Iw5, name)
+        .and_then(|clip| clip.sample_track(0, 0.0));
+    diag::info!(
+        Zone,
+        "actor anim measure: {name} asset_type={asset_type} flags={} root={} rotation={:?} translation={:?}",
+        captured.map_or(0, |captured| captured.parts.flags),
+        root.as_deref().unwrap_or("none"),
+        sample.as_ref().and_then(|sample| sample.rotation),
+        sample.as_ref().and_then(|sample| sample.translation),
+    );
+}
+
 fn is_cac_table(name: &str) -> bool {
     asset_game::is_stats_table_name(name)
         || asset_game::is_class_table_name(name)
@@ -470,8 +514,12 @@ impl fastfile_iw5::AssetLinkSink for ZoneWalkSink {
         s: &fastfile_iw5::ZoneStream<'_>,
         geometry: fastfile_iw5::XAnimPartsGeometry,
     ) -> fastfile_iw5::Result<()> {
+        let measured = measured_actor_clip(s, &geometry);
         self.xanims
             .capture_xanim_iw5(s, &self.strings_iw5, geometry);
+        if let Some((name, asset_type)) = measured {
+            note_actor_clip(&self.xanims, name, asset_type);
+        }
         Ok(())
     }
 
@@ -804,8 +852,12 @@ impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
         s: &fastfile_iw5::ZoneStream<'_>,
         geometry: fastfile_iw5::XAnimPartsGeometry,
     ) -> fastfile_iw5::Result<()> {
+        let measured = measured_actor_clip(s, &geometry);
         self.xanims
             .capture_xanim_iw5(s, &self.strings_iw5, geometry);
+        if let Some((name, asset_type)) = measured {
+            note_actor_clip(&self.xanims, name, asset_type);
+        }
         Ok(())
     }
 

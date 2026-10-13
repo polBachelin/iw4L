@@ -338,6 +338,11 @@ pub struct WeaponGeometry {
 
     pub kill_icon: Option<Ptr>,
 
+    /// The dpad icon material's name, as the action slot draws it.
+    pub dpad_icon_name: Option<Ptr>,
+
+    pub dpad_icon_ratio: i32,
+
     pub display_name: Option<Ptr>,
 
     pub weap_def: Option<Ptr>,
@@ -502,6 +507,26 @@ pub struct XAnimPartsGeometry {
     pub random_data_int_count: usize,
     pub indices: Option<Ptr>,
     pub index_count: usize,
+    pub indices_are_bytes: bool,
+    /// The byte after the notify count (+28 on the 32-bit layout), MW3's
+    /// assetType: 6 marks an additive clip (see `asset_anim`'s
+    /// `IW5_XANIM_ASSET_TYPE_ADDITIVE`).
+    pub asset_type: u8,
+    /// The delta part's translation track: the root motion a locomotion
+    /// anim carries.
+    pub delta_trans: XAnimDeltaTransGeometry,
+}
+
+/// Where a delta part's translation track lies in the zone: a constant
+/// (`size` 0) or `size + 1` keys with their mins and step.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct XAnimDeltaTransGeometry {
+    pub size: u16,
+    pub small: u8,
+    pub constant: Option<Ptr>,
+    pub mins_step: Option<Ptr>,
+    pub frames: Option<Ptr>,
+    pub indices: Option<Ptr>,
     pub indices_are_bytes: bool,
 }
 

@@ -461,10 +461,6 @@ impl ExprHost for MenuHost<'_> {
                 .is_some_and(|top| top.eq_ignore_ascii_case(name)),
         ))
     }
-    /// iw4l plays no demos.
-    fn is_demo_playing(&self) -> Result<i32, ExprError> {
-        Ok(0)
-    }
     fn menu_is_open(&self, name: &str) -> Result<i32, ExprError> {
         Ok(i32::from(
             self.open.iter().any(|open| open.eq_ignore_ascii_case(name)),

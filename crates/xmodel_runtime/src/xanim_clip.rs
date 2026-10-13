@@ -25,6 +25,9 @@ pub struct RawXAnimParts {
     pub indices: Vec<u16>,
 
     pub delta_trans: Option<RawDeltaTrans>,
+    /// An additive clip: its tracks are offsets layered on the pose
+    /// underneath, not a pose of their own.
+    pub additive: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -123,6 +126,8 @@ pub struct AnimClip {
     pub notifies: Vec<ClipNotify>,
 
     pub delta_translation: Translation,
+    /// Layered on the pose underneath instead of posing the body.
+    pub additive: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +291,7 @@ impl AnimClip {
             tracks,
             notifies: parts.notifies.clone(),
             delta_translation,
+            additive: parts.additive,
         })
     }
 

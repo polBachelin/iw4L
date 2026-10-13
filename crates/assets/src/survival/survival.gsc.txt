@@ -86,6 +86,7 @@ onstartgametype()
 {
 	precacheshellshock( setting( "getup_shock" ) );
 	precacheshader( support( "airstrike_selector" ) );
+	precachehudicons();
 	level.airstrikefx = loadfx( support( "airstrike_fx" ) );
 	precachemodel( support( "airstrike_plane" ) );
 	readgrants();
@@ -444,15 +445,19 @@ placearmory( kind, origin, angles, model, source )
 	armory setmodel( model );
 	armory.kind = kind;
 	armory.menu = setting( "armory_menu_prefix" ) + kind;
+	armory.icon = setting( "armory_icon_" + kind );
+	precacheshader( armory.icon );
+	// Its compass objective's slot: its place among the armories.
+	armory.index = level.armories.size;
 	level.armories[ level.armories.size ] = armory;
 	logprint( "survival: armory " + kind + " spawned at " + armory.origin + " yaw " + armory.angles[ 1 ] + " model " + model + " menu " + armory.menu + " from " + source + "\n" );
 	armory thread armoryuse();
 	return armory;
 }
 
-// The model the layer's armory targets stands on it as placed; the model
-// that one targets in turn is the look it takes once the armory is usable
-// (MW3's closed and open laptops: that it opens then is our reading).
+// The model the layer's armory targets stands on it as placed, and stays:
+// MW3's armory script names no laptop, so the open laptop that one targets
+// in turn is not swapped in (it is only logged).
 placeprop( placed )
 {
 	if ( !isdefined( placed.target ) )
@@ -464,36 +469,54 @@ placeprop( placed )
 	self.prop = spawn( "script_model", props[ 0 ].origin );
 	self.prop.angles = props[ 0 ].angles;
 	self.prop setmodel( props[ 0 ].model );
-	opened = "";
+	targeted = "";
 	if ( isdefined( props[ 0 ].target ) )
 	{
 		next = getentarray( props[ 0 ].target, "targetname" );
 		if ( next.size && isdefined( next[ 0 ].model ) )
-		{
-			self.propusable = next[ 0 ].model;
-			precachemodel( self.propusable );
-			opened = " usable " + self.propusable;
-		}
+			targeted = " (targets " + next[ 0 ].model + ", not swapped)";
 	}
-	logprint( "survival: armory " + self.kind + " prop " + props[ 0 ].model + " at " + self.prop.origin + opened + "\n" );
+	logprint( "survival: armory " + self.kind + " prop " + props[ 0 ].model + " at " + self.prop.origin + targeted + "\n" );
 }
 
-// An armory can be used once the wave that unlocks its kind is over.
+// An armory can be used once the wave that unlocks its kind is over. The
+// player near it is told so by MW3's prompt for its kind
+// (`armory_hint_<kind>`).
 armoryuse()
 {
 	level endon( "game_over" );
 	while ( !isdefined( level.armoryunlocked[ self.kind ] ) )
 		level waittill( "armory_unlocked" );
 	self makeusable();
-	if ( isdefined( self.propusable ) )
-		self.prop setmodel( self.propusable );
-	logprint( "survival: armory " + self.kind + " usable at " + self.origin + "\n" );
+	self setcursorhint( "HINT_ACTIVATE" );
+	self sethintstring( tablelookupistring( "survival/settings.csv", 0, "armory_hint_" + self.kind, 1 ) );
+	logprint( "survival: armory " + self.kind + " usable at " + self.origin + " hint " + setting( "armory_hint_" + self.kind ) + "\n" );
+	self markarmory();
 	for ( ;; )
 	{
 		self waittill( "trigger", player );
 		if ( ishuman( player ) )
 			player openarmory( self );
 	}
+}
+
+// A usable armory is marked with MW3's icon for its kind (`armory_icon_<kind>`,
+// the material MW3's armory script pairs with the kind's prompt): on the
+// compass, as an objective in its slot, and in the world, as a waypoint
+// `armory_icon_height` above it that every player sees, kept at the screen
+// edge while the armory is off screen. A locked armory is not marked; that
+// and the compass objective are our reading (MW3's script sets no objective).
+markarmory()
+{
+	objective_add( self.index, "active", self.origin, self.icon );
+	self.waypoint = newhudelem();
+	self.waypoint.x = self.origin[ 0 ];
+	self.waypoint.y = self.origin[ 1 ];
+	self.waypoint.z = self.origin[ 2 ] + int( setting( "armory_icon_height" ) );
+	self.waypoint.hidewheninmenu = true;
+	self.waypoint setshader( self.icon );
+	self.waypoint setwaypoint( true, false );
+	logprint( "survival: armory " + self.kind + " marked icon=" + self.icon + " objective=" + self.index + " waypoint_z=" + self.waypoint.z + "\n" );
 }
 
 // The player stands at the armory, held in place, until its menu closes or
@@ -672,10 +695,23 @@ runwave( wave, row )
 		refill();
 	}
 	logprint( "survival: wave=" + wave + " complete killed=" + level.wavekilled + "\n" );
+	for ( i = 0; i < level.humans.size; i++ )
+		level.humans[ i ] logammo();
 	wavegetup( wave );
 	bonus = int( setting( "wave_bonus" ) );
 	for ( i = 0; i < level.humans.size; i++ )
 		level.humans[ i ] addcredits( bonus, "wave_bonus:" + wave );
+}
+
+// What each primary of the player holds, clip+stock, once a wave: the
+// counter the HUD shows, in the log.
+logammo()
+{
+	detail = "";
+	weapons = self getweaponslistprimaries();
+	for ( i = 0; i < weapons.size; i++ )
+		detail = detail + " " + weapons[ i ] + "=" + self getweaponammoclip( weapons[ i ] ) + "+" + self getweaponammostock( weapons[ i ] );
+	logprint( "survival: ammo client=" + self getentitynumber() + detail + "\n" );
 }
 
 // Queues the table wave's enemies: its squad (c3 x c4), its specials (each
@@ -827,20 +863,26 @@ archetypeweapon( archetype )
 }
 
 // Client hudelems laid out by survival/hud.csv draw the wave, the enemies
-// left and the credits, but for the rows survival_menu_hud lists: a HUD menu
-// item of the loaded zones draws those.
+// left, the credits and the armor, but for the rows survival_menu_hud lists:
+// a HUD menu item of the loaded zones draws those. A label is plain text, or
+// a localize reference (`@KEY`) the match strings hold.
 createhud()
 {
 	table = "survival/hud.csv";
 	drawn = strtok( getdvar( "survival_menu_hud" ), " " );
 	self.hud = [];
+	self.hudicon = [];
 	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
 	{
 		ref = tablelookupbyrow( table, row, 0 );
 		if ( islisted( drawn, ref ) )
 			continue;
 		elem = newclienthudelem( self );
-		elem.label = tablelookupbyrow( table, row, 1 );
+		label = tablelookupbyrow( table, row, 1 );
+		if ( getsubstr( label, 0, 1 ) == "@" )
+			elem.label = tablelookupistringbyrow( table, row, 1 );
+		else
+			elem.label = label;
 		elem.font = tablelookupbyrow( table, row, 2 );
 		elem.fontscale = int( tablelookupbyrow( table, row, 3 ) ) / 100;
 		elem.horzalign = tablelookupbyrow( table, row, 4 );
@@ -852,7 +894,49 @@ createhud()
 		elem.hidewheninmenu = true;
 		elem setvalue( 0 );
 		self.hud[ ref ] = elem;
+		material = tablelookupbyrow( table, row, 11 );
+		if ( material == "" )
+			continue;
+		// The icon drawn with the number (MW3's armor shield), laid out as
+		// the number is, at the row's offset from it; it shows and hides
+		// with the number (sethudshown).
+		icon = newclienthudelem( self );
+		width = int( tablelookupbyrow( table, row, 12 ) );
+		height = int( tablelookupbyrow( table, row, 13 ) );
+		icon setshader( material, width, height );
+		icon.horzalign = elem.horzalign;
+		icon.vertalign = elem.vertalign;
+		icon.alignx = elem.alignx;
+		icon.aligny = elem.aligny;
+		icon.x = elem.x + int( tablelookupbyrow( table, row, 14 ) );
+		icon.y = elem.y + int( tablelookupbyrow( table, row, 15 ) );
+		icon.hidewheninmenu = true;
+		icon.alpha = 0;
+		self.hudicon[ ref ] = icon;
+		logprint( "survival: hud icon " + ref + " material=" + material + " size=" + width + "x" + height + " at " + icon.x + "," + icon.y + " client=" + self getentitynumber() + "\n" );
 	}
+}
+
+// MW3 precaches the shaders its survival HUD draws; these are the icons of
+// survival/hud.csv (c11).
+precachehudicons()
+{
+	table = "survival/hud.csv";
+	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
+	{
+		material = tablelookupbyrow( table, row, 11 );
+		if ( material != "" )
+			precacheshader( material );
+	}
+}
+
+// Shows or hides a hudelem of survival/hud.csv and its icon together.
+sethudshown( ref, shown )
+{
+	if ( isdefined( self.hud[ ref ] ) )
+		self.hud[ ref ].alpha = shown;
+	if ( isdefined( self.hudicon[ ref ] ) )
+		self.hudicon[ ref ].alpha = shown;
 }
 
 islisted( list, value )
@@ -877,6 +961,16 @@ sethud( ref, value )
 {
 	if ( isdefined( self.hud[ ref ] ) )
 		self.hud[ ref ] setvalue( value );
+}
+
+// Every change to a player's armor goes through here: the HUD shows the
+// points left, and nothing once they are spent (our reading).
+setarmor( points )
+{
+	self.armor = points;
+	self setclientdvar( "surHUD_armor", points );
+	self sethud( "armor", points );
+	self sethudshown( "armor", points > 0 );
 }
 
 showwave()
@@ -1205,7 +1299,7 @@ giveloadout()
 {
 	self takeallweapons();
 	self.selfrevives = 0;
-	self.armor = 0;
+	self setarmor( 0 );
 	summary = "";
 	spawnweapon = undefined;
 	for ( i = 1; i <= 3; i++ )
@@ -1222,7 +1316,7 @@ giveloadout()
 			self setweaponammostock( weapon, int( ammo ) );
 		if ( !isdefined( spawnweapon ) )
 			spawnweapon = weapon;
-		summary = summary + " " + weapon;
+		summary = summary + " " + weapon + " clip=" + self getweaponammoclip( weapon ) + "/" + weaponclipsize( weapon ) + " stock=" + self getweaponammostock( weapon ) + "/" + weaponmaxammo( weapon );
 	}
 	for ( i = 1; i <= 2; i++ )
 	{
@@ -1250,7 +1344,7 @@ giveloadout()
 			self.selfrevives = self.selfrevives + int( loadoutslot( "equipment_" + i, 3 ) );
 	}
 	if ( loadoutslot( "armor_1", 2 ) == "armor" )
-		self.armor = int( loadoutslot( "armor_1", 3 ) );
+		self setarmor( int( loadoutslot( "armor_1", 3 ) ) );
 	self updatelaststand();
 	self setspawnweapon( spawnweapon );
 	self switchtoweapon( spawnweapon );
@@ -1282,7 +1376,7 @@ absorbarmor( damage, means )
 	absorbed = int( damage * int( setting( "armor_absorb_percent" ) ) / 100 );
 	if ( absorbed > self.armor )
 		absorbed = self.armor;
-	self.armor = self.armor - absorbed;
+	self setarmor( self.armor - absorbed );
 	logprint( "survival: armor absorbed client=" + self getentitynumber() + " damage=" + damage + " absorbed=" + absorbed + " armor=" + self.armor + " health_damage=" + ( damage - absorbed ) + " means=" + means + "\n" );
 	return damage - absorbed;
 }
@@ -1854,7 +1948,7 @@ grantitem( ref, grant )
 		return;
 	}
 	else if ( grant == "armor" )
-		self.armor = self grantedcount( ref, grant );
+		self setarmor( self grantedcount( ref, grant ) );
 	else if ( grant == "laststand" )
 	{
 		self.selfrevives = self grantedcount( ref, grant );

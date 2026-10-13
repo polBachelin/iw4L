@@ -295,14 +295,23 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
     registry.register(Function, "tablelookup", |world, _, args| {
         Ok(Value::String(table_lookup(world, args)?.into()))
     });
+    // A cell may spell its localize reference the menus' way, `@KEY`; the
+    // localized string is the key alone, as `&"KEY"` compiles.
     registry.register(Function, "tablelookupistring", |world, _, args| {
-        Ok(Value::LocalizedString(table_lookup(world, args)?.into()))
+        let cell = table_lookup(world, args)?;
+        Ok(Value::LocalizedString(
+            cell.strip_prefix('@').unwrap_or(&cell).into(),
+        ))
     });
     registry.register(Function, "tablelookupbyrow", |world, _, args| {
         Ok(Value::String(table_lookup_by_row(world, args)?.into()))
     });
     registry.register(Function, "tablelookupistringbyrow", |world, _, args| {
-        Ok(Value::LocalizedString(table_lookup_by_row(world, args)?))
+        let cell = table_lookup_by_row(world, args)?;
+        Ok(Value::LocalizedString(match cell.strip_prefix('@') {
+            Some(key) => key.into(),
+            None => cell,
+        }))
     });
     registry.register(Function, "tablelookuprownum", |world, _, args| {
         let tables = world.resource::<Runtime>().tables.clone();

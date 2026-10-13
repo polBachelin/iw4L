@@ -36,6 +36,11 @@ struct Clip {
     looping: bool,
     frequency: f32,
     notetracks: Arc<[(Arc<str>, f32)]>,
+    /// Units a second the clip's root delta travels at rate 1.
+    move_speed: f32,
+    /// An additive clip (MW3's fire anims): a layer over the leaves that
+    /// pose the body, never a pose of its own.
+    additive: bool,
 }
 
 struct Goal {
@@ -68,6 +73,8 @@ impl AnimBlend {
             looping,
             frequency,
             notetracks: Arc::from([]),
+            move_speed: 0.0,
+            additive: false,
         };
         let goal = Goal {
             weight: 1.0,
@@ -83,9 +90,18 @@ impl AnimBlend {
         self.leaves.iter_mut().find(|leaf| &*leaf.anim == anim)
     }
 
+    /// A knob ramps out the anim's siblings. The tree is flat, so an
+    /// additive knob's siblings are the other additive layers only: the pose
+    /// underneath stays. A knob that poses the body ramps out every other
+    /// leaf, layers included, so a pain or death drops a fire layer.
     fn set(&mut self, anim: Arc<str>, clip: Clip, goal: Goal) {
         if goal.knob {
-            for leaf in self.leaves.iter_mut().filter(|leaf| leaf.anim != anim) {
+            let additive = clip.additive;
+            for leaf in self
+                .leaves
+                .iter_mut()
+                .filter(|leaf| leaf.anim != anim && (!additive || leaf.clip.additive))
+            {
                 leaf.ramp(0.0, goal.blend_time);
             }
         }
@@ -133,6 +149,18 @@ impl AnimBlend {
         }
     }
 
+    /// How fast the playing anims carry the body, units a second at rate 1:
+    /// each leaf's root-delta speed by its weight. Anims that stand still
+    /// add nothing, so a blend into a run speeds up as the run weighs in;
+    /// additive layers carry nothing.
+    pub(crate) fn move_speed(&self) -> f32 {
+        self.leaves
+            .iter()
+            .filter(|leaf| !leaf.clip.additive)
+            .map(|leaf| leaf.weight * leaf.clip.move_speed)
+            .sum()
+    }
+
     fn time(&self, anim: &str) -> f32 {
         self.leaves
             .iter()
@@ -176,29 +204,58 @@ impl AnimBlend {
                 ..xmodel_runtime::XAnimNodeState::default()
             },
         };
-        let leaves = self
-            .leaves
-            .iter()
-            .map(|leaf| xmodel_runtime::XAnimSemanticNode {
-                parent: Some(xmodel_runtime::XAnimNodeId(0)),
+        // An additive leaf hangs under an Additive node of its own that
+        // carries its blend weight, so the client layers it over the pose
+        // of the plain leaves (`apply_additive_layers`).
+        let mut nodes = vec![root];
+        for leaf in &self.leaves {
+            let state = xmodel_runtime::XAnimNodeState {
+                time: leaf.time,
+                old_time: leaf.old_time,
+                cycle_count: leaf.cycle,
+                old_cycle_count: leaf.old_cycle,
+                goal_time: leaf.goal_time,
+                goal_weight: leaf.goal_weight,
+                weight: leaf.weight,
+                rate: leaf.rate,
+            };
+            let (parent, state) = if leaf.clip.additive {
+                nodes.push(xmodel_runtime::XAnimSemanticNode {
+                    parent: Some(xmodel_runtime::XAnimNodeId(0)),
+                    kind: xmodel_runtime::XAnimSemanticNodeKind::Additive,
+                    clip: None,
+                    parts: None,
+                    state: xmodel_runtime::XAnimNodeState {
+                        goal_time: leaf.goal_time,
+                        goal_weight: leaf.goal_weight,
+                        weight: leaf.weight,
+                        rate: 1.0,
+                        ..xmodel_runtime::XAnimNodeState::default()
+                    },
+                });
+                let layer = xmodel_runtime::XAnimNodeId((nodes.len() - 1) as u16);
+                let state = xmodel_runtime::XAnimNodeState {
+                    goal_time: 0.0,
+                    goal_weight: 1.0,
+                    weight: 1.0,
+                    ..state
+                };
+                (layer, state)
+            } else {
+                (xmodel_runtime::XAnimNodeId(0), state)
+            };
+            nodes.push(xmodel_runtime::XAnimSemanticNode {
+                parent: Some(parent),
                 kind: xmodel_runtime::XAnimSemanticNodeKind::Leaf,
                 clip: Some(leaf.anim.to_string()),
                 parts: None,
-                state: xmodel_runtime::XAnimNodeState {
-                    time: leaf.time,
-                    old_time: leaf.old_time,
-                    cycle_count: leaf.cycle,
-                    old_cycle_count: leaf.old_cycle,
-                    goal_time: leaf.goal_time,
-                    goal_weight: leaf.goal_weight,
-                    weight: leaf.weight,
-                    rate: leaf.rate,
-                },
+                state,
             });
+        }
         Some(xmodel_runtime::XAnimTreeSnapshot {
             definition_revision: self.revision,
             state_revision: 0,
-            nodes: std::iter::once(root).chain(leaves).collect(),
+            nodes,
         })
     }
 }
@@ -292,10 +349,13 @@ pub(crate) fn advance(world: &mut World, dt: f32) {
 fn clip(world: &mut World, name: &str) -> Option<Clip> {
     let frame = FrameWorld::from_world(world);
     let facts = frame.script_model_anim(name)?;
+    let anim = frame.script_anim_clips().clip(name);
     Some(Clip {
         looping: facts.looping,
         frequency: facts.frequency,
         notetracks: frame.script_anim_notetracks(name),
+        move_speed: anim.as_ref().map_or(0.0, |clip| clip.move_speed()),
+        additive: anim.is_some_and(|clip| clip.additive),
     })
 }
 
@@ -433,4 +493,74 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             Value::Float(blend.time(&name))
         })
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(additive: bool) -> Clip {
+        Clip {
+            looping: true,
+            frequency: 1.0,
+            notetracks: Arc::from([]),
+            move_speed: 0.0,
+            additive,
+        }
+    }
+
+    fn knob() -> Goal {
+        Goal {
+            weight: 1.0,
+            blend_time: 0.0,
+            rate: 1.0,
+            flag: None,
+            knob: true,
+        }
+    }
+
+    fn weight(blend: &AnimBlend, anim: &str) -> Option<f32> {
+        blend
+            .leaves
+            .iter()
+            .find(|leaf| &*leaf.anim == anim)
+            .map(|leaf| leaf.goal_weight)
+    }
+
+    #[test]
+    fn additive_knob_layers_over_the_base() {
+        let mut blend = AnimBlend::new(Arc::from("generic_human"));
+        blend.set("aim".into(), clip(false), knob());
+        blend.set("fire".into(), clip(true), knob());
+        assert_eq!(weight(&blend, "aim"), Some(1.0));
+        assert_eq!(weight(&blend, "fire"), Some(1.0));
+
+        let tree = blend.snapshot().expect("a blend with leaves");
+        let kinds = tree
+            .nodes
+            .iter()
+            .map(|node| (node.kind, node.parent, node.clip.as_deref()))
+            .collect::<Vec<_>>();
+        use xmodel_runtime::{XAnimNodeId as Id, XAnimSemanticNodeKind as Kind};
+        assert_eq!(
+            kinds,
+            vec![
+                (Kind::Blend, None, None),
+                (Kind::Leaf, Some(Id(0)), Some("aim")),
+                (Kind::Additive, Some(Id(0)), None),
+                (Kind::Leaf, Some(Id(2)), Some("fire")),
+            ]
+        );
+        assert_eq!(tree.nodes[2].state.weight, 1.0);
+
+        blend.clear(Some("fire"), 0.0);
+        assert_eq!(weight(&blend, "aim"), Some(1.0));
+        assert_eq!(weight(&blend, "fire"), None);
+
+        blend.set("fire".into(), clip(true), knob());
+        blend.set("pain".into(), clip(false), knob());
+        assert_eq!(weight(&blend, "pain"), Some(1.0));
+        assert_eq!(weight(&blend, "aim"), None);
+        assert_eq!(weight(&blend, "fire"), None);
+    }
 }

@@ -928,10 +928,21 @@ pub(crate) fn dispatch_triggers(world: &mut World) {
             .map(|(client, _, _)| *client)
             .collect();
         for (client, player) in &pressed {
-            if let Some(usable) = runtime.use_selected.get(client)
-                && eligible(&runtime, &frame, *usable, *client, true)
+            let selected = runtime.use_selected.get(client).copied();
+            let raises =
+                selected.is_some_and(|usable| eligible(&runtime, &frame, usable, *client, true));
+            // A press with nothing selected or nothing raised is otherwise silent.
+            diag::info!(
+                Sim,
+                "use press client={client} selected={} raised={raises}",
+                selected
+                    .and_then(|usable| runtime.entities.get(&usable))
+                    .map_or_else(|| "none".to_owned(), |e| e.number.to_string())
+            );
+            if let Some(usable) = selected
+                && raises
             {
-                raised.push((*usable, *player));
+                raised.push((usable, *player));
             }
         }
         let triggers: Vec<(u64, Fires)> = runtime

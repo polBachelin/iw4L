@@ -287,11 +287,52 @@ fn launch_dropped_from_ps(
     stock: i32,
     scavenger: bool,
 ) -> i32 {
+    let origin = [ps.origin[0], ps.origin[1], ps.origin[2] + PLAYER_DROP_Z];
+    launch_dropped(
+        world,
+        tick,
+        (origin, ps.viewangles[1]),
+        owner,
+        weapon,
+        (clip_r, clip_l, stock),
+        scavenger,
+    )
+}
+
+/// Drops `weapon` as an item from `origin`, tossed along `yaw` the way a
+/// player's drop is, holding `ammo` as `(clip_r, clip_l, stock)`. `owner` is
+/// the dropping client, `ENTITYNUM_NONE` for a dropper that is none (an
+/// actor): nothing reads an item's owner. Returns the item's entity number,
+/// `ENTITYNUM_NONE` when no entity was free.
+pub(crate) fn drop_weapon_at(
+    world: &mut FrameWorld,
+    tick: Tick,
+    origin: [f32; 3],
+    yaw: f32,
+    owner: i32,
+    weapon: u32,
+    ammo: (i32, i32, i32),
+) -> i32 {
+    launch_dropped(world, tick, (origin, yaw), owner, weapon, ammo, false)
+}
+
+/// `from` is the drop's origin and the yaw it is tossed along; `ammo` is
+/// `(clip_r, clip_l, stock)`.
+fn launch_dropped(
+    world: &mut FrameWorld,
+    tick: Tick,
+    from: ([f32; 3], f32),
+    owner: i32,
+    weapon: u32,
+    ammo: (i32, i32, i32),
+    scavenger: bool,
+) -> i32 {
+    let (origin, yaw) = from;
+    let (clip_r, clip_l, stock) = ammo;
     let mut seed = world.anim_event_seed();
-    let velocity = drop_item_velocity(ps.viewangles[1], &mut seed);
+    let velocity = drop_item_velocity(yaw, &mut seed);
     world.set_anim_event_seed(seed);
 
-    let origin = [ps.origin[0], ps.origin[1], ps.origin[2] + PLAYER_DROP_Z];
     let time_ms = crate::corpse::level_time_ms(tick);
     let pos = Trajectory {
         tr_type: TR_GRAVITY,
@@ -305,7 +346,7 @@ fn launch_dropped_from_ps(
         tr_time: 0,
         tr_duration: 0,
         tr_delta: [0.0; 3],
-        tr_base: [0.0, ps.viewangles[1], 0.0],
+        tr_base: [0.0, yaw, 0.0],
     };
     push_dropped_item(
         world, weapon, origin, pos, apos, owner, clip_r, clip_l, stock, true, scavenger,
@@ -951,5 +992,32 @@ pub(crate) fn phase_use_items(
             ps.cursor_hint_string = -1;
             ps.cursor_hint_dual_wield = i32::from(dual);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_weapon_at_makes_one_unowned_item() {
+        let mut sim = crate::SimWorld::default();
+        let mut world = sim.frame();
+        let number = drop_weapon_at(
+            &mut world,
+            Tick(1),
+            [10.0, 20.0, 30.0],
+            90.0,
+            ENTITYNUM_NONE,
+            7,
+            (12, 0, 40),
+        );
+        assert_ne!(number, ENTITYNUM_NONE);
+        assert_eq!(world.dropped_item_count(), 1);
+        let item = world.dropped_item_by_number(number).unwrap();
+        assert_eq!(item.state.e_type, entity_iw4::ET_ITEM);
+        assert_eq!(item.state.index, 7);
+        assert_eq!(item.state.client_num, ENTITYNUM_NONE);
+        assert_eq!((item.clip_r, item.clip_l, item.stock), (12, 0, 40));
     }
 }

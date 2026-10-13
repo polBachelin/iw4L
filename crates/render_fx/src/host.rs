@@ -141,6 +141,8 @@ pub struct FxJournalCursor {
     pub impact_miss_table: u32,
     pub impact_miss_def: u32,
     pub impact_miss_def_warned: bool,
+    /// Flesh impact slots (body, body fatal, head, head fatal) logged once.
+    pub impact_flesh_logged: u8,
     pub boom_played: u32,
     pub muzzle_gap: u32,
     pub tracer_gap: u32,

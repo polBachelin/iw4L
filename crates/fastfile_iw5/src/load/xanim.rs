@@ -1,6 +1,9 @@
 use super::{AssetLinkSink, always_array, follow_name};
 use crate::size as sz;
-use crate::zone::{Ptr, Result, XAnimPartsGeometry, XFILE_BLOCK_VIRTUAL, ZonePtr, ZoneStream};
+use crate::zone::{
+    Ptr, Result, XAnimDeltaTransGeometry, XAnimPartsGeometry, XFILE_BLOCK_VIRTUAL, ZonePtr,
+    ZoneStream,
+};
 
 pub(super) fn load_xanim_parts(
     s: &mut ZoneStream<'_>,
@@ -20,6 +23,7 @@ pub(super) fn load_xanim_parts(
         *b = s.u8_at(p, counts + 13 + i)?;
     }
     let notify_count = s.u8_at(p, s.layout(sz::XANIM_NOTIFY_COUNT_OFF, 31))? as usize;
+    let asset_type = s.u8_at(p, s.layout(sz::XANIM_NOTIFY_COUNT_OFF + 1, 32))?;
     let random_data_short = s.u32_at(p, s.layout(0x20, 36))? as usize;
     let index_count = s.u32_at(p, s.layout(0x24, 40))? as usize;
     let framerate = s.f32_at(p, s.layout(0x28, 44))?;
@@ -43,9 +47,10 @@ pub(super) fn load_xanim_parts(
         4,
         s.layout(sz::XANIM_DELTA_PART, 24),
     )?;
-    if let Some(delta) = delta_part {
-        load_delta_part(s, delta, numframes as usize)?;
-    }
+    let delta_trans = match delta_part {
+        Some(delta) => load_delta_part(s, delta, numframes as usize)?,
+        None => XAnimDeltaTransGeometry::default(),
+    };
 
     let data_byte_ptr = always_array(s, p.at(s.layout(sz::XANIM_DATA_BYTE_OFF, 64)), 1, data_byte)?;
     let data_short_ptr = always_array(
@@ -120,6 +125,8 @@ pub(super) fn load_xanim_parts(
             indices,
             index_count,
             indices_are_bytes: numframes < 0x100,
+            asset_type,
+            delta_trans,
         },
     )?;
     s.pop()
@@ -139,29 +146,52 @@ fn load_indices(
     Ok(())
 }
 
-fn load_delta_part(s: &mut ZoneStream<'_>, p: Ptr, numframes: usize) -> Result<()> {
-    load_part_trans(s, p.at(0), numframes)?;
+fn load_delta_part(
+    s: &mut ZoneStream<'_>,
+    p: Ptr,
+    numframes: usize,
+) -> Result<XAnimDeltaTransGeometry> {
+    let trans = load_part_trans(s, p.at(0), numframes)?;
     load_delta_quat2(s, p.at(s.layout(4, 8)), numframes)?;
     load_delta_quat(s, p.at(s.layout(8, 16)), numframes)?;
-    Ok(())
+    Ok(trans)
 }
 
-fn load_part_trans(s: &mut ZoneStream<'_>, slot: Ptr, numframes: usize) -> Result<()> {
+fn load_part_trans(
+    s: &mut ZoneStream<'_>,
+    slot: Ptr,
+    numframes: usize,
+) -> Result<XAnimDeltaTransGeometry> {
     if !super::always_alloc(s, slot)? {
-        return Ok(());
+        return Ok(XAnimDeltaTransGeometry::default());
     }
     let head = s.alloc_load(4, s.layout(4, 8))?;
     s.fixup_slot(slot, head)?;
-    let size = s.u16_at(head, 0)? as usize;
+    let size = s.u16_at(head, 0)?;
     let small_trans = s.u8_at(head, 2)?;
-    if size != 0 {
-        let frames = s.alloc_load(4, s.layout(28, 32))?;
-        load_dynamic_indices(s, size, numframes)?;
-        load_dynamic_frames(s, frames.at(24), size, small_trans)?;
-    } else {
-        s.alloc_load(4, 12)?;
+    let indices_are_bytes = numframes < 0x100;
+    if size == 0 {
+        let constant = s.alloc_load(4, 12)?;
+        return Ok(XAnimDeltaTransGeometry {
+            size,
+            small: small_trans,
+            constant: Some(constant),
+            indices_are_bytes,
+            ..XAnimDeltaTransGeometry::default()
+        });
     }
-    Ok(())
+    let mins_step = s.alloc_load(4, s.layout(28, 32))?;
+    let indices = load_dynamic_indices(s, size as usize, numframes)?;
+    let frames = load_dynamic_frames(s, mins_step.at(24), size as usize, small_trans)?;
+    Ok(XAnimDeltaTransGeometry {
+        size,
+        small: small_trans,
+        constant: None,
+        mins_step: Some(mins_step),
+        frames,
+        indices: Some(indices),
+        indices_are_bytes,
+    })
 }
 
 fn load_delta_quat2(s: &mut ZoneStream<'_>, slot: Ptr, numframes: usize) -> Result<()> {
@@ -198,14 +228,13 @@ fn load_delta_quat(s: &mut ZoneStream<'_>, slot: Ptr, numframes: usize) -> Resul
     Ok(())
 }
 
-fn load_dynamic_indices(s: &mut ZoneStream<'_>, size: usize, numframes: usize) -> Result<()> {
+fn load_dynamic_indices(s: &mut ZoneStream<'_>, size: usize, numframes: usize) -> Result<Ptr> {
     let count = size + 1;
     if numframes >= 0x100 {
-        s.alloc_load(2, 2 * count)?;
+        s.alloc_load(2, 2 * count)
     } else {
-        s.alloc_load(1, count)?;
+        s.alloc_load(1, count)
     }
-    Ok(())
 }
 
 fn load_dynamic_frames(
@@ -213,23 +242,22 @@ fn load_dynamic_frames(
     slot: Ptr,
     size: usize,
     small_trans: u8,
-) -> Result<()> {
+) -> Result<Option<Ptr>> {
     let count = if size != 0 { size + 1 } else { 0 };
     match s.ptr_at(slot, 0)? {
-        ZonePtr::Null => Ok(()),
+        ZonePtr::Null => Ok(None),
         ZonePtr::Offset(p) => {
             s.note_offset(p);
-            Ok(())
+            Ok(Some(s.resolve_alias(p)))
         }
         ZonePtr::Following | ZonePtr::Insert => {
-            if small_trans != 0 {
-                let body = s.alloc_load(1, 3 * count)?;
-                s.fixup_slot(slot, body)?;
+            let body = if small_trans != 0 {
+                s.alloc_load(1, 3 * count)?
             } else {
-                let body = s.alloc_load(4, 6 * count)?;
-                s.fixup_slot(slot, body)?;
-            }
-            Ok(())
+                s.alloc_load(4, 6 * count)?
+            };
+            s.fixup_slot(slot, body)?;
+            Ok(Some(body))
         }
     }
 }

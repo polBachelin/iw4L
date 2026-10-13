@@ -111,6 +111,25 @@ pub(crate) struct ChromeFrame {
 
 pub(crate) type ChromeMenuAnim = hud_iw4::MenuAnim;
 
+/// The first item drawing `owner_draw` in the first of `menus` the catalog
+/// carries that has one. A code-drawn element sits in a different menu per
+/// game: MP puts every code hint in `hud_fullscreen`, MW3 SP gives each hint
+/// its own HUD menu (`cursorhints`, `mantlehint`).
+pub(crate) fn owner_draw_item<'a>(
+    catalog: &'a MenuCatalog,
+    menus: &[&str],
+    owner_draw: i32,
+) -> Option<(&'a MenuDef, &'a MenuItem)> {
+    menus.iter().find_map(|name| {
+        let menu = catalog.get(name)?;
+        let item = menu
+            .items
+            .iter()
+            .find(|item| item.owner_draw == owner_draw)?;
+        Some((menu, item))
+    })
+}
+
 pub(crate) fn execute_chrome_menu(
     menu: &MenuDef,
     host: &impl ExprHost,

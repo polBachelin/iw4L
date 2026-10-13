@@ -182,6 +182,16 @@ impl MenuItem {
             .filter_map(|token| token.strip_prefix("s:").and_then(decode_hex_str))
             .any(|operand| operand.eq_ignore_ascii_case(name))
     }
+
+    /// The string operands of the item's visibility and text expressions:
+    /// the dvars, player data paths and references it reads by name.
+    pub fn read_names(&self) -> Vec<String> {
+        [&self.vis_exp, &self.text_exp]
+            .into_iter()
+            .flat_map(|exp| exp.split_whitespace())
+            .filter_map(|token| token.strip_prefix("s:").and_then(decode_hex_str))
+            .collect()
+    }
 }
 
 /// The `@KEY` references of a menu expression: its string operands.
@@ -652,6 +662,12 @@ pub const HUD_CHROME_MENUS: &[&str] = &[
     "playercard_youkilled_hd",
     "playercard_killedby_hd",
     "perks_info_hd",
+    // MW3 SP / Special Ops HUD menus (common.ff, patch_specialops.ff).
+    "weaponinfo",
+    "dpad",
+    "reload",
+    "cursorhints",
+    "mantlehint",
 ];
 
 fn ui_zone_key(profile: RuntimeProfile, zone: &str) -> String {

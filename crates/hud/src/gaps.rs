@@ -639,7 +639,11 @@ impl fmt::Display for GapCause {
                 "fxDecayDuration {fx_decay_duration} ms is under one 30 Hz decay tick"
             ),
             GapCause::CursorHintMissing { reason } => write!(f, "cursor hint: {reason}"),
-            GapCause::MantleHintNoItem => f.write_str("hud_fullscreen has no ownerDraw 80 item"),
+            GapCause::MantleHintNoItem => write!(
+                f,
+                "no ownerDraw 80 item in {}",
+                crate::mantle_hint::MANTLE_HINT_MENUS.join(" or ")
+            ),
             GapCause::MantleHintImageMissing { name, miss } => {
                 write!(f, "mantle hint image `{name}` is {miss}")
             }
@@ -688,7 +692,7 @@ impl fmt::Display for GapCause {
             GapCause::PlayerCardEmptyPaint { name } => {
                 write!(f, "`{name}` paint emitted no tess quads")
             }
-            GapCause::WeaponbarPaint { error } => write!(f, "weaponbar_hd: {error}"),
+            GapCause::WeaponbarPaint { error } => f.write_str(error),
             GapCause::PerkPaint { error } => write!(f, "perks_info_hd: {error}"),
             GapCause::PerkNoCatalog => {
                 f.write_str("MenuCatalog is not loaded; perks_info_hd cannot run")

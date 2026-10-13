@@ -379,6 +379,15 @@ pub fn play_impact_table_cell(
     ) {
         cursor.impact_played = cursor.impact_played.saturating_add(1);
         combat.impact_msec = Some(host.0.msec_now);
+        if let Some(slot) = flesh_slot
+            && cursor.impact_flesh_logged & (1 << slot) == 0
+        {
+            cursor.impact_flesh_logged |= 1 << slot;
+            diag::info!(
+                World,
+                "fx: BulletImpact row={row} surf={surf} flesh_flags={flesh_flags} played `{def_name}` (first of this flesh slot)"
+            );
+        }
     } else if let PlayResult::Failed(e) = result {
         cursor.impact_miss_def = cursor.impact_miss_def.saturating_add(1);
         combat.last_impact_miss_why = Some(

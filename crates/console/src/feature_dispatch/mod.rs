@@ -47,10 +47,10 @@ pub(crate) fn route_debug_feature_commands(
         ResMut<net::ActionRequestIds>,
         Option<Res<BotRoster>>,
     ),
-    (mut hurt, mut pending_splash, authority): (
+    (mut hurt, mut pending_splash, mut authority): (
         ResMut<PendingViewHurt>,
         ResMut<PendingSplash>,
-        Option<Res<net::AuthorityWorld>>,
+        Option<ResMut<net::AuthorityWorld>>,
     ),
 ) {
     let (console, settings, line) = &mut output;
@@ -63,6 +63,69 @@ pub(crate) fn route_debug_feature_commands(
 
     for cmd in events.read() {
         match cmd.name.as_str() {
+            "actor" => match parse_actor_args(&cmd.args) {
+                Err(msg) => echo(msg, console, line),
+                Ok(verb) => {
+                    let Some(world) = authority.as_mut() else {
+                        echo(
+                            "actor: no authority world (not a listen host)".into(),
+                            console,
+                            line,
+                        );
+                        continue;
+                    };
+                    let world = &mut world.0;
+                    if verb != ActorVerb::List && !world.cheats_enabled() {
+                        echo("actor: cheats are off".into(), console, line);
+                        continue;
+                    }
+                    match verb {
+                        ActorVerb::List => {
+                            let rows = world.actor_rows();
+                            echo(format!("actor: {} live", rows.len()), console, line);
+                            for row in rows {
+                                echo(
+                                    format!(
+                                        "actor: {} archetype={} team={} at ({:.0} {:.0} {:.0}) health={}",
+                                        row.number,
+                                        row.archetype,
+                                        row.team,
+                                        row.origin[0],
+                                        row.origin[1],
+                                        row.origin[2],
+                                        row.health
+                                    ),
+                                    console,
+                                    line,
+                                );
+                            }
+                        }
+                        ActorVerb::Tp {
+                            target,
+                            origin,
+                            yaw,
+                        } => {
+                            let moved = world.actor_tp(target, origin, yaw);
+                            echo(
+                                format!(
+                                    "actor: tp {moved:?} to ({:.0} {:.0} {:.0})",
+                                    origin[0], origin[1], origin[2]
+                                ),
+                                console,
+                                line,
+                            );
+                        }
+                        ActorVerb::Hold(on) => {
+                            world.set_actor_hold(on);
+                            echo(
+                                format!("actor: hold {}", if on { "on" } else { "off" }),
+                                console,
+                                line,
+                            );
+                        }
+                    }
+                }
+            },
             "bot" => match parse_bot_args(&cmd.args) {
                 Err(msg) => echo(msg, console, line),
                 Ok(BotVerb::Hold(_) | BotVerb::Tp(_) | BotVerb::Fire(_) | BotVerb::Give { .. })
@@ -299,6 +362,7 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
             "hitvol",
             "hitvol — what the authority holds for a bullet to clip against: world tables, live player volumes, script-model clips, kit models",
         ),
+        ("actor", ACTOR_USAGE),
         (
             "bot",
             "bot add [N] | dummy [N] | hold [on|off] | give <id> <weapon> [att...] [camo=<name>] | fire [all|<id>] | tp all|<id> above <h> | tp all|<id> <x> <y> <z>",
@@ -320,6 +384,54 @@ pub fn register_feature_commands(registry: &mut crate::ConsoleRegistry, maps: &[
         if registry.resolve(name).is_none() {
             registry.register(crate::CommandSpec::new(name).usage(usage));
         }
+    }
+}
+
+pub(crate) const ACTOR_USAGE: &str =
+    "usage: actor list | tp all|first|<entnum> <x> <y> <z> [yaw] | hold [on|off]";
+
+/// Script actors (survival's enemies and squads) are no clients, so the
+/// `bot` verbs miss them; these reach them by entity number.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ActorVerb {
+    List,
+    Tp {
+        target: sim::script::ActorTarget,
+        origin: [f32; 3],
+        yaw: Option<f32>,
+    },
+    Hold(bool),
+}
+
+pub(crate) fn parse_actor_args(args: &[String]) -> Result<ActorVerb, String> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => Ok(ActorVerb::List),
+        Some("hold") => match args.get(1).map(String::as_str) {
+            None | Some("on") | Some("1") => Ok(ActorVerb::Hold(true)),
+            Some("off") | Some("0") => Ok(ActorVerb::Hold(false)),
+            Some(other) => Err(format!("usage: actor hold [on|off] (got `{other}`)")),
+        },
+        Some("tp") if (5..=6).contains(&args.len()) => {
+            let target = match args[1].as_str() {
+                "all" => sim::script::ActorTarget::All,
+                "first" => sim::script::ActorTarget::First,
+                s => sim::script::ActorTarget::Number(
+                    s.parse::<i32>().map_err(|_| ACTOR_USAGE.to_owned())?,
+                ),
+            };
+            let origin = [
+                parse_finite(&args[2])?,
+                parse_finite(&args[3])?,
+                parse_finite(&args[4])?,
+            ];
+            let yaw = args.get(5).map(parse_finite).transpose()?;
+            Ok(ActorVerb::Tp {
+                target,
+                origin,
+                yaw,
+            })
+        }
+        _ => Err(ACTOR_USAGE.into()),
     }
 }
 

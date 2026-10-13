@@ -180,7 +180,22 @@ impl CommonCensus {
         } = later;
         let tables = scripts.tables().len();
         self.scripts.overlay(scripts);
-        let xmodels = scene_models.len();
+        // A zone with few models (a layer) names them, with those whose
+        // skeleton did not capture marked: a later absorb drops those.
+        let xmodels = if scene_models.len() <= 16 {
+            let names: Vec<String> = scene_models
+                .iter()
+                .map(|(key, asset)| match asset {
+                    asset_world::MapXModelSceneAsset::Unavailable { .. } => {
+                        format!("{} (unavailable)", key.0)
+                    }
+                    _ => key.0.clone(),
+                })
+                .collect();
+            format!("{} [{}]", scene_models.len(), names.join(" "))
+        } else {
+            scene_models.len().to_string()
+        };
         // Both catalogs keep the first copy of a key, so the later zone's
         // catalog absorbs this one's rather than the other way round.
         let mut models = scene_models;

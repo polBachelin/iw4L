@@ -13,9 +13,7 @@ use bevy_ecs::prelude::World;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-const TICK_S: f32 = crate::MATCH_TICK_MS as f32 / 1000.0;
-/// A standing player's run speed; `moveplaybackrate` scales it.
-const RUN_SPEED: f32 = 190.0;
+pub(super) const TICK_S: f32 = crate::MATCH_TICK_MS as f32 / 1000.0;
 /// Node expansions shared by every actor's search in one frame.
 const ROUTE_BUDGET: u32 = 512;
 const ENDPOINT_CANDIDATES: usize = 8;
@@ -65,6 +63,8 @@ impl NodeObjects {
 pub(crate) struct Nav {
     goal: [f32; 3],
     plan: Plan,
+    /// The yaw the actor walked this frame along, for it to turn toward.
+    pub(super) heading: Option<f32>,
 }
 
 #[derive(Clone, Debug)]
@@ -328,7 +328,11 @@ pub(crate) fn set_goal(world: &mut World, id: u64, goal: [f32; 3], goal_node: Op
         (Some(start), Some(end)) => Plan::Search(Search::begin(&graph, start, end)),
         _ => Plan::NoRoute,
     };
-    Nav { goal, plan }
+    Nav {
+        goal,
+        plan,
+        heading: None,
+    }
 }
 
 fn arrived(runtime: &mut Runtime, id: u64, at: [f32; 3], goal: [f32; 3]) -> bool {
@@ -382,16 +386,25 @@ pub(crate) fn advance(
             }
         }
     }
+    nav.heading = None;
     let Plan::Walk { points, next } = &mut nav.plan else {
         return Some("bad_path");
     };
     if !alive {
         return None;
     }
-    let rate = number_field(&mut world.resource_mut::<Runtime>(), id, "moveplaybackrate")
+    // The body moves as far as its playing anims carry it, the way an AI
+    // moves by its anim's delta; `moveplaybackrate` scales both.
+    let mut runtime = world.resource_mut::<Runtime>();
+    let rate = number_field(&mut runtime, id, "moveplaybackrate")
         .unwrap_or(1.0)
         .max(0.0);
-    let mut left = RUN_SPEED * rate * TICK_S;
+    let anim_speed = runtime
+        .entities
+        .get(&id)
+        .and_then(|entity| entity.anim_blend.as_deref())
+        .map_or(0.0, |blend| blend.move_speed());
+    let mut left = step_length(anim_speed, rate);
     let mut at = origin;
     while left > 0.0 && *next < points.len() {
         let to = points[*next];
@@ -410,12 +423,27 @@ pub(crate) fn advance(
     let done = *next >= points.len();
     let mut runtime = world.resource_mut::<Runtime>();
     if distance_xy(origin, at) > f32::EPSILON {
-        let mut angles = vector_field(&mut runtime, id, "angles");
-        angles[1] = math_iw4::vect_to_angles([at[0] - origin[0], at[1] - origin[1], 0.0])[1];
-        runtime.set_object_field(id, "angles", Value::Vector(angles));
+        nav.heading =
+            Some(math_iw4::vect_to_angles([at[0] - origin[0], at[1] - origin[1], 0.0])[1]);
     }
     runtime.set_object_field(id, "origin", Value::Vector(at));
     (done || arrived(&mut runtime, id, at, nav.goal)).then_some("goal")
+}
+
+/// How far a body moving at `anim_speed` units a second, played at `rate`,
+/// goes in one frame.
+fn step_length(anim_speed: f32, rate: f32) -> f32 {
+    anim_speed * rate * TICK_S
+}
+
+/// `yaw` turned toward `goal` by at most `most` degrees, the short way.
+pub(super) fn turn_toward(yaw: f32, goal: f32, most: f32) -> f32 {
+    let delta = math_iw4::angle_subtract(goal, yaw);
+    if delta.abs() <= most {
+        goal
+    } else {
+        yaw + most.copysign(delta)
+    }
 }
 
 /// Runs every actor's route for one frame under one shared search budget.
@@ -447,5 +475,26 @@ pub(crate) fn advance_all(world: &mut World, alive: impl Fn(&mut World, u64) -> 
         if let Some(notify) = notify {
             raise(world, Value::Object(id), notify, Vec::new());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actor_path_step_follows_anim_speed() {
+        assert_eq!(step_length(0.0, 1.0), 0.0);
+        let run = step_length(200.0, 1.0);
+        assert!((run - 200.0 * TICK_S).abs() < 1e-4);
+        assert!((step_length(200.0, 0.5) - run / 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn actor_turn_rate_clamps_the_short_way() {
+        assert_eq!(turn_toward(0.0, 30.0, 10.0), 10.0);
+        assert_eq!(turn_toward(0.0, 5.0, 10.0), 5.0);
+        assert_eq!(turn_toward(170.0, -170.0, 10.0), 180.0);
+        assert_eq!(turn_toward(-170.0, 170.0, 10.0), -180.0);
     }
 }

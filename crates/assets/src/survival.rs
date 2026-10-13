@@ -104,13 +104,15 @@ mod challenge_column {
 }
 
 /// The hudelems the gametype script looks up by ref in `HUD_TABLE`.
-const HUD_REFS: [&str; 3] = ["wave", "enemies", "credits"];
+const HUD_REFS: [&str; 4] = ["wave", "enemies", "credits", "armor"];
 
 /// `HUD_TABLE`: ref, label, font, font scale in percent, horzalign,
-/// vertalign, alignx, aligny, x, y, and the name holding its number (a client
-/// dvar and a player data field).
-const HUD_COLUMNS: usize = 11;
+/// vertalign, alignx, aligny, x, y, the name holding its number (a client
+/// dvar and a player data field), and an optional icon drawn with the number:
+/// its material, width, height and x and y offset from the number.
+const HUD_COLUMNS: usize = 16;
 const HUD_DVAR_COLUMN: usize = 10;
+const HUD_ICON_COLUMN: usize = 11;
 
 /// The script dvar listing the refs of `HUD_TABLE` a HUD menu item draws,
 /// whose hudelems the gametype script leaves out.
@@ -313,7 +315,7 @@ const PLAYER_STANCES: [&str; 3] = ["stand", "crouch", "prone"];
 
 /// Settings rows the actor script reads as whole numbers, and those of them
 /// that are percents.
-const ACTOR_NUMBERS: [&str; 15] = [
+const ACTOR_NUMBERS: [&str; 17] = [
     "actor_budget",
     "actor_spawn_clearance",
     "actor_think_ms",
@@ -329,6 +331,8 @@ const ACTOR_NUMBERS: [&str; 15] = [
     "actor_eye_height",
     "actor_crouch_eye_height",
     "actor_corpse_ms",
+    "actor_turn_rate",
+    "actor_aim_tolerance",
 ];
 const ACTOR_PERCENTS: [&str; 3] = [
     "actor_walk_rate_percent",
@@ -487,6 +491,25 @@ pub fn survival_hud_menus() -> impl Iterator<Item = &'static str> {
         .split_whitespace()
 }
 
+/// Which actors the compass shows (`compass_actors`): hostiles always, or
+/// only for a while after they fire, as a multiplayer enemy shows. Friendly
+/// actors show either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurvivalCompassActors {
+    Always,
+    Firing,
+}
+
+pub fn survival_compass_actors() -> Result<SurvivalCompassActors, String> {
+    match required_setting("compass_actors")? {
+        "always" => Ok(SurvivalCompassActors::Always),
+        "firing" => Ok(SurvivalCompassActors::Firing),
+        other => Err(format!(
+            "{SETTINGS_TABLE}: `compass_actors` is neither always nor firing: `{other}`"
+        )),
+    }
+}
+
 /// Resolves MW3's Survival menus in `catalog`: the HUD menus, the summary
 /// (`eog_menu`) and the armory menus (`armory_menu_prefix`). Returns a line
 /// per menu and per row of `HUD_TABLE`, and the refs of the rows whose dvar
@@ -529,6 +552,36 @@ pub fn survival_menu_hud(
     if armories.is_empty() {
         lines.push(format!("survival menus: no armory menu `{prefix}*`"));
     }
+    // MW3's challenge bars: the menu items that read a challenge or
+    // performance surHUD key, whichever menu holds them. None found means
+    // no zone menu draws the bars.
+    let mut bars = 0;
+    for (name, menu) in &catalog.menus {
+        for (index, item) in menu.items.iter().enumerate() {
+            let reads = item.read_names();
+            let keyed = |key: &str| {
+                reads.iter().any(|read| {
+                    read.get(..6 + key.len())
+                        .is_some_and(|head| head.eq_ignore_ascii_case(&format!("surHUD{key}")))
+                })
+            };
+            let surhud = reads.iter().any(|read| read.eq_ignore_ascii_case("surHUD"));
+            let named = |key: &str| reads.iter().any(|read| read.eq_ignore_ascii_case(key));
+            if keyed("_challenge")
+                || keyed("_performance")
+                || (surhud && (named("challenge") || named("performance")))
+            {
+                bars += 1;
+                lines.push(format!(
+                    "survival menus: challenge `{name}` item {index} owner draw {} reads {reads:?}",
+                    item.owner_draw
+                ));
+            }
+        }
+    }
+    if bars == 0 {
+        lines.push("survival menus: no menu item reads a challenge surHUD key".into());
+    }
     let mut drawn = Vec::new();
     for row in HUD.lines().filter(|line| !line.trim().is_empty()) {
         let cells: Vec<&str> = row.split(',').map(str::trim).collect();
@@ -555,8 +608,123 @@ pub fn survival_menu_hud(
                 "survival hud: `{reference}` ({dvar}) drawn by no HUD menu item; hudelem kept"
             ),
         });
+        // The icon's material, as the loaded zones bind it to an image. The
+        // HUD decodes that image from the zone or the game's IWDs.
+        let icon = cells.get(HUD_ICON_COLUMN).copied().unwrap_or("");
+        if !icon.is_empty() {
+            let key = icon.to_ascii_lowercase();
+            lines.push(match catalog.material_images.get(&key) {
+                Some(image) => format!("survival hud: `{reference}` icon `{icon}` image `{image}`"),
+                None => format!(
+                    "survival hud: `{reference}` icon `{icon}` names no material image in the loaded zones"
+                ),
+            });
+        }
     }
     (lines, drawn)
+}
+
+/// The localize references the gametype script shows from its own tables:
+/// the `@KEY` labels of `HUD_TABLE` and the use hint of every armory kind
+/// (`armory_hint_<kind>`, each kind the waves table unlocks). The script trusts
+/// them, so a missing hint or a reference `strings` lacks refuses the match.
+pub fn survival_strings_check(
+    scripts: &crate::ScriptSources,
+    strings: &asset_game::LocalizeCatalog,
+) -> Result<(), String> {
+    let mut gaps = Vec::new();
+    let mut check = |reference: &str, source: String| {
+        if strings.text(reference.trim_start_matches('@')).is_none() {
+            gaps.push(format!(
+                "{source}: `{reference}` is in none of the match strings"
+            ));
+        }
+    };
+    for row in HUD.lines().filter(|line| !line.trim().is_empty()) {
+        let cells: Vec<&str> = row.split(',').map(str::trim).collect();
+        if let Some(label) = cells.get(1).filter(|label| label.starts_with('@')) {
+            check(
+                label,
+                format!("{HUD_TABLE} `{}`", cells.first().copied().unwrap_or("")),
+            );
+        }
+    }
+    let kinds = armory_kinds(scripts)?;
+    let mut missing = Vec::new();
+    for kind in kinds {
+        let key = format!("armory_hint_{kind}");
+        match survival_setting(&key) {
+            Some(hint) if !hint.is_empty() => check(hint, format!("{SETTINGS_TABLE} `{key}`")),
+            _ => missing.push(key),
+        }
+    }
+    gaps.extend(
+        missing
+            .into_iter()
+            .map(|key| format!("{SETTINGS_TABLE}: `{key}` names no hint")),
+    );
+    if gaps.is_empty() {
+        Ok(())
+    } else {
+        Err(gaps.join("; "))
+    }
+}
+
+/// The kinds the script places armories of: the c10 of the waves table's
+/// wave rows (c1 is 1), the wave that unlocks each.
+fn armory_kinds(scripts: &crate::ScriptSources) -> Result<Vec<&str>, String> {
+    let waves_name = required_setting("waves_table")?;
+    let waves = scripts
+        .tables()
+        .get(&waves_name.to_ascii_lowercase())
+        .ok_or_else(|| format!("no loaded zone holds `{waves_name}`"))?;
+    let mut kinds: Vec<&str> = Vec::new();
+    for row in waves.rows().filter(|row| cell(row, 1) == "1") {
+        let kind = cell(row, 10);
+        if !kind.is_empty() && !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    Ok(kinds)
+}
+
+/// The icon that marks each armory kind once it is usable
+/// (`armory_icon_<kind>`, on the compass and as a world waypoint) must be a
+/// material the HUD's catalog maps to an image, and `armory_icon_height` a
+/// whole number. Returns a line per kind naming the material and its image.
+pub fn survival_icons_check(
+    scripts: &crate::ScriptSources,
+    catalog: Option<&asset_game::MenuCatalog>,
+) -> Result<Vec<String>, String> {
+    let mut gaps = Vec::new();
+    let height = required_setting("armory_icon_height")?;
+    if height.parse::<i32>().is_err() {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `armory_icon_height` is not a whole number: `{height}`"
+        ));
+    }
+    let mut lines = Vec::new();
+    for kind in armory_kinds(scripts)? {
+        let key = format!("armory_icon_{kind}");
+        let icon = survival_setting(&key).unwrap_or("");
+        if icon.is_empty() {
+            gaps.push(format!("{SETTINGS_TABLE}: `{key}` names no material"));
+            continue;
+        }
+        match catalog.and_then(|catalog| catalog.material_image(icon)) {
+            Some(image) => lines.push(format!(
+                "survival icons: armory {kind} `{icon}` -> image `{image}`"
+            )),
+            None => gaps.push(format!(
+                "{SETTINGS_TABLE} `{key}`: `{icon}` is a material of no loaded zone the HUD draws from"
+            )),
+        }
+    }
+    if gaps.is_empty() {
+        Ok(lines)
+    } else {
+        Err(gaps.join("; "))
+    }
 }
 
 /// The localize references the end-of-run summary shows: what the summary
@@ -711,6 +879,34 @@ pub fn survival_pick_anims(
         }
     }
     missing.into_iter().collect()
+}
+
+/// The anims of the narrowed `ACTOR_ANIMS_TABLE` an actor moves by: each
+/// `run` and `walk` row's, as `(set, state, anim)`, with an empty anim for a
+/// row left with none. The engine moves an actor as far as these carry it,
+/// so one that does not move holds the actor in place.
+pub fn survival_locomotion_anims(scripts: &crate::ScriptSources) -> Vec<(String, String, String)> {
+    use actor_anim_column as c;
+    let Some(anims) = scripts.table(ACTOR_ANIMS_TABLE) else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for row in anims
+        .rows()
+        .filter(|row| matches!(cell(row, c::STATE), "run" | "walk"))
+    {
+        let (set, state) = (cell(row, c::SET).to_owned(), cell(row, c::STATE).to_owned());
+        let names: Vec<&str> = cell(row, c::ANIMS).split_whitespace().collect();
+        if names.is_empty() {
+            rows.push((set.clone(), state.clone(), String::new()));
+        }
+        rows.extend(
+            names
+                .into_iter()
+                .map(|name| (set.clone(), state.clone(), name.to_owned())),
+        );
+    }
+    rows
 }
 
 fn pick_table_anims(
@@ -918,6 +1114,9 @@ pub fn survival_data_check(
         gaps.push(format!(
             "{SETTINGS_TABLE}: `friendly_fire` is neither 0 nor 1: `{friendly_fire}`"
         ));
+    }
+    if let Err(gap) = survival_compass_actors() {
+        gaps.push(gap);
     }
     let waves_name = required_setting("waves_table")?;
     let waves = table(waves_name)?;
@@ -1155,6 +1354,13 @@ fn check_waves(
             ));
         }
     }
+    for reference in required_setting("nodrop_archetypes")?.split_whitespace() {
+        if archetype_row(reference).is_none() {
+            gaps.push(format!(
+                "{SETTINGS_TABLE}: nodrop `{reference}` is no archetype of {waves_name}"
+            ));
+        }
+    }
     let mut played = Vec::new();
     for reference in required_setting("test_wave")?.split_whitespace() {
         if archetype_row(reference).is_none() {
@@ -1364,6 +1570,24 @@ fn check_economy(
                 {
                     gaps.push(format!(
                         "{HUD_TABLE}: `{reference}` needs a label, a font, a positive font scale in percent, four alignments, whole x and y and a dvar: {row:?}"
+                    ));
+                }
+                let icon = HUD_ICON_COLUMN..HUD_COLUMNS;
+                let icon_drawn = !cell(row, HUD_ICON_COLUMN).is_empty();
+                let icon_read = (HUD_ICON_COLUMN + 1..HUD_ICON_COLUMN + 3)
+                    .all(|column| cell(row, column).parse::<u32>().is_ok_and(|size| size > 0))
+                    && (HUD_ICON_COLUMN + 3..HUD_COLUMNS)
+                        .all(|column| cell(row, column).parse::<i32>().is_ok());
+                if row.len() == HUD_COLUMNS
+                    && if icon_drawn {
+                        !icon_read
+                    } else {
+                        icon.clone().any(|column| !cell(row, column).is_empty())
+                    }
+                {
+                    gaps.push(format!(
+                        "{HUD_TABLE}: `{reference}` icon needs a material, a positive width and height and whole x and y offsets, or no icon cell at all: {:?}",
+                        &row[icon]
                     ));
                 }
             }

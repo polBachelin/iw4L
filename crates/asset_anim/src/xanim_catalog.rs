@@ -11,6 +11,13 @@ use crate::asset_graph::ZoneOwner;
 use crate::asset_key::AssetNamespace;
 use crate::xanim_clip::{AnimClip, ClipNotify, RawDeltaTrans, RawXAnimParts};
 
+/// MW3's XAnimParts assetType (the byte after the notify count) for an
+/// additive clip. Measured on mp_paris's SP `common`: the fire anims
+/// `exposed_shoot_auto_v2`/`_v3` carry 6, no root motion and loop (recoil
+/// only); the full-body `exposed_aim_5` carries 2. No source in this repo
+/// names the other values, so only 6 is read.
+pub const IW5_XANIM_ASSET_TYPE_ADDITIVE: u8 = 6;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct XAnimKey {
     pub namespace: AssetNamespace,
@@ -376,7 +383,8 @@ impl XAnimBuild {
                     names,
                     notifies,
                     indices,
-                    delta_trans: None,
+                    delta_trans: copy_delta_trans_iw5(s, geometry.delta_trans),
+                    additive: geometry.asset_type == IW5_XANIM_ASSET_TYPE_ADDITIVE,
                 }),
             },
         );
@@ -470,6 +478,7 @@ impl XAnimBuild {
                     notifies,
                     indices,
                     delta_trans: None,
+                    additive: false,
                 }),
             },
         );
@@ -568,6 +577,7 @@ impl XAnimBuild {
             notifies,
             indices,
             delta_trans: None,
+            additive: false,
         };
         self.insert_in(
             ns,
@@ -691,6 +701,7 @@ impl AssetLinkSink for XAnimBuild {
                 notifies,
                 indices,
                 delta_trans,
+                additive: false,
             }),
         });
         let _ = geometry.frequency;
@@ -782,6 +793,50 @@ fn copy_delta_trans(
         step,
         indices,
         packed,
+    })
+}
+
+fn copy_delta_trans_iw5(
+    s: &fastfile_iw5::ZoneStream<'_>,
+    geo: fastfile_iw5::XAnimDeltaTransGeometry,
+) -> Option<RawDeltaTrans> {
+    let f32_3 = |ptr: fastfile_iw5::Ptr, off: usize| -> Option<[f32; 3]> {
+        let b = s.slice_at(ptr, off, 12).ok()?;
+        Some(std::array::from_fn(|i| {
+            f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap())
+        }))
+    };
+    if let Some(constant) = geo.constant {
+        return Some(RawDeltaTrans {
+            size: 0,
+            small: geo.small != 0,
+            mins: f32_3(constant, 0)?,
+            step: [0.0; 3],
+            indices: Vec::new(),
+            packed: Vec::new(),
+        });
+    }
+    let mins_step = geo.mins_step?;
+    let n = geo.size as usize + 1;
+    let indices = if geo.indices_are_bytes {
+        copy_u8_iw5(s, geo.indices, n)
+            .into_iter()
+            .map(u16::from)
+            .collect()
+    } else {
+        copy_u8_iw5(s, geo.indices, 2 * n)
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect()
+    };
+    let packed_n = if geo.small != 0 { 3 * n } else { 6 * n };
+    Some(RawDeltaTrans {
+        size: geo.size,
+        small: geo.small != 0,
+        mins: f32_3(mins_step, 0)?,
+        step: f32_3(mins_step, 12)?,
+        indices,
+        packed: copy_u8_iw5(s, geo.frames, packed_n),
     })
 }
 

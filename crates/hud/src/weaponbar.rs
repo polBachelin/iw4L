@@ -39,6 +39,69 @@ const WEAPFLAGS_HIDE_AMMO_HUD: u32 = 0x80;
 
 const WEAPON_NAME_RIGHT_INSET: f32 = 28.0;
 
+/// The menus a game's zones draw the weapon HUD with. MP carries
+/// `weaponbar_hd` (ui_mp); MW3 SP and Special Ops carry `weaponinfo`
+/// (common.ff, replaced by patch_specialops.ff) for the ammo counter, weapon
+/// name and grenades, `reload` for the low-ammo warning and `dpad` for the
+/// action slots. The same owner draws (117/119/121 clip and stock, 81 name,
+/// 103/104 grenades, 120 low ammo, 171-174 slots) paint in both.
+struct WeaponHudMenus {
+    game: &'static str,
+    ammo: &'static str,
+    others: &'static [&'static str],
+    compass_ring: bool,
+}
+
+const MP_WEAPON_HUD: WeaponHudMenus = WeaponHudMenus {
+    game: "MP",
+    ammo: WEAPONBAR_HD_MENU,
+    others: &[
+        "dpad_hd",
+        "javelin_overlay_hd",
+        "missilecam_hud_hd",
+        "remote_chopper_overlay_hd",
+        "ac130_hud_hd",
+    ],
+    compass_ring: true,
+};
+
+const SP_WEAPON_HUD: WeaponHudMenus = WeaponHudMenus {
+    game: "SP",
+    ammo: "weaponinfo",
+    others: &["reload", "dpad"],
+    compass_ring: false,
+};
+
+impl WeaponHudMenus {
+    /// The set whose ammo menu the catalog carries, MP first.
+    fn for_catalog(catalog: &MenuCatalog) -> Option<&'static Self> {
+        [&MP_WEAPON_HUD, &SP_WEAPON_HUD]
+            .into_iter()
+            .find(|set| catalog.get(set.ammo).is_some())
+    }
+}
+
+/// Engine dvars the SP HUD menus test, at the values the engine registers
+/// them with; a dvar script sets (`so_survival`, `ammoCounterHide`, ...)
+/// reads the script's value first. An unregistered dvar reads as empty.
+const SP_HUD_DVAR_DEFAULTS: &[(&str, &str)] = &[
+    ("compass", "1"),
+    ("actionSlotsHide", "0"),
+    ("ammoCounterHide", "0"),
+    ("hud_missionFailed", "0"),
+    ("hud_gasMaskOverlay", "0"),
+    ("ui_remotemissile_playernum", "0"),
+    ("createfx", ""),
+    ("so_survival", "0"),
+    // Regular, the skill the engine registers; `reload` shows its low-ammo
+    // warning on skill 0 and 1 only. The survival script sets no skill.
+    ("g_gameskill", "1"),
+];
+
+/// The game message window MW3 SP prints subtitles to. iw4l presents no
+/// subtitles, so nothing is ever shown in it.
+const GAME_MSG_WINDOW_SUBTITLES: i32 = 2;
+
 #[derive(Component)]
 pub(crate) struct WeaponbarRaster;
 
@@ -90,6 +153,7 @@ struct WeaponbarExprHost<'a> {
     menu: Option<&'a asset_game::MenuDef>,
     perk_slots: [u32; 8],
     weapon_script: String,
+    client_number: i32,
 
     lock: Option<hud_iw4::WeaponLockView>,
     frag_ammo: i32,
@@ -102,6 +166,19 @@ impl WeaponbarExprHost<'_> {
     fn table(&self, name: &str) -> Option<&CapturedStringTable> {
         self.catalog.and_then(|c| c.string_table(name))
     }
+
+    fn static_dvar_name(&self, index: i32) -> Result<&str, ExprError> {
+        self.menu
+            .and_then(|menu| menu.static_dvar_name(index))
+            .ok_or(ExprError::Host("static dvar name"))
+    }
+}
+
+fn sp_hud_dvar_default(name: &str) -> Option<&'static str> {
+    SP_HUD_DVAR_DEFAULTS
+        .iter()
+        .find(|(dvar, _)| dvar.eq_ignore_ascii_case(name))
+        .map(|(_, value)| *value)
 }
 
 impl ExprHost for WeaponbarExprHost<'_> {
@@ -145,17 +222,32 @@ impl ExprHost for WeaponbarExprHost<'_> {
         self.ms
     }
     fn static_dvar_int(&self, index: i32) -> Result<i32, ExprError> {
-        let name = self
-            .menu
-            .and_then(|menu| menu.static_dvar_name(index))
-            .ok_or(ExprError::Host("static dvar name"))?;
-        self.dvar_int(name)
+        self.dvar_int(self.static_dvar_name(index)?)
+    }
+    fn static_dvar_string(&self, index: i32) -> Result<String, ExprError> {
+        self.dvar_string(self.static_dvar_name(index)?)
+    }
+    fn dvar_string(&self, name: &str) -> Result<String, ExprError> {
+        self.dvars
+            .string(name)
+            .or_else(|| sp_hud_dvar_default(name))
+            .map(str::to_owned)
+            .ok_or(ExprError::Host("dvarstring"))
+    }
+    fn game_msg_window_active(&self, window: i32) -> Result<i32, ExprError> {
+        if window == GAME_MSG_WINDOW_SUBTITLES {
+            Ok(0)
+        } else {
+            Err(ExprError::Host("game message window"))
+        }
     }
     fn team_field(&self, _field: &str) -> Result<Operand, ExprError> {
         Err(ExprError::Host("team field"))
     }
     fn player_field(&self, field: &str) -> Result<Operand, ExprError> {
-        if field.eq_ignore_ascii_case("fragAmmo") {
+        if field.eq_ignore_ascii_case("number") {
+            Ok(Operand::Int(self.client_number))
+        } else if field.eq_ignore_ascii_case("fragAmmo") {
             Ok(Operand::Int(self.frag_ammo))
         } else if field.eq_ignore_ascii_case("smokeAmmo") {
             Ok(Operand::Int(self.smoke_ammo))
@@ -208,6 +300,8 @@ impl ExprHost for WeaponbarExprHost<'_> {
             Ok(0)
         } else if name.eq_ignore_ascii_case("scr_showperksonspawn") {
             Ok(1)
+        } else if let Some(value) = sp_hud_dvar_default(name) {
+            Ok(value.trim().parse().unwrap_or(0))
         } else {
             Err(ExprError::Host("dvarint"))
         }
@@ -673,12 +767,20 @@ fn ammo_hud_hidden(ps: &PlayerState) -> bool {
     (ps.e_flags & EFLAGS_HIDE_AMMO_HUD) != 0 || (ps.weap_flags & WEAPFLAGS_HIDE_AMMO_HUD) != 0
 }
 
+/// What the once-per-match weapon HUD evidence lines already said.
+#[derive(Default)]
+pub(crate) struct WeaponHudEvidence {
+    menus: Option<&'static str>,
+    painted: bool,
+}
+
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct WeaponbarInput<'w, 's> {
     settings: Res<'w, frame::GameSettings>,
     select: Res<'w, WeaponSelect>,
     input: Option<Res<'w, frame::HudInputView>>,
     cameras: Query<'w, 's, &'static Projection, With<Camera3d>>,
+    evidence: Local<'s, WeaponHudEvidence>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -698,7 +800,7 @@ pub(crate) fn update_weaponbar(
     local: Res<LocalPresentClient>,
     view: Option<Res<frame::ViewSubject>>,
     cg_clock: Res<FrameClock>,
-    client_input: WeaponbarInput,
+    mut client_input: WeaponbarInput,
 ) {
     let chrome = host_namespace.get();
     let weapons = weapons
@@ -779,6 +881,7 @@ pub(crate) fn update_weaponbar(
         menu: None,
         perk_slots: ps.perk_slots,
         weapon_script,
+        client_number: i32::try_from(local.0.0).unwrap_or(-1),
         lock: Some(
             weapons
                 .as_ref()
@@ -822,14 +925,48 @@ pub(crate) fn update_weaponbar(
     let mut weaponbar_vis = false;
     let mut weaponbar_failed = false;
     let mut ring_cmds = 0usize;
-    if let Some(menu) = catalog.get(WEAPONBAR_HD_MENU) {
+    let mut ammo_cmds = 0usize;
+    let hud_menus = WeaponHudMenus::for_catalog(catalog);
+    let evidence = &mut *client_input.evidence;
+    if let Some(set) = hud_menus
+        && evidence.menus != Some(set.ammo)
+    {
+        diag::info!(
+            Ui,
+            "weapon hud: {} `{}` draws the ammo counter (clip {OWNERDRAW_CLIP}/{OWNERDRAW_CLIP_LEFT}, stock {OWNERDRAW_STOCK}, weapon name {OWNERDRAW_WEAPON_NAME}, grenades {OWNERDRAW_OFFHAND_FRAG}/{OWNERDRAW_OFFHAND_SMOKE}); also {}",
+            set.game,
+            set.ammo,
+            set.others
+                .iter()
+                .map(|name| if catalog.get(name).is_some() {
+                    format!("`{name}`")
+                } else {
+                    format!("`{name}` (absent)")
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        *evidence = WeaponHudEvidence {
+            menus: Some(set.ammo),
+            painted: false,
+        };
+    }
+    if let Some(menu) = hud_menus.and_then(|set| catalog.get(set.ammo)) {
         host.menu = Some(menu);
         let mut hook = |args: OwnerDrawArgs<'_>, frame: &mut ChromeFrame| {
             let ring = args.item.owner_draw == OWNERDRAW_COMPASS_RING;
+            let ammo_item = matches!(
+                args.item.owner_draw,
+                OWNERDRAW_CLIP | OWNERDRAW_CLIP_LEFT | OWNERDRAW_STOCK
+            );
             let before = frame.list.cmds.len();
             let out = paint_owner(&owner_state, args, frame);
+            let added = frame.list.cmds.len().saturating_sub(before);
             if ring {
-                ring_cmds += frame.list.cmds.len().saturating_sub(before);
+                ring_cmds += added;
+            }
+            if ammo_item {
+                ammo_cmds += added;
             }
             out
         };
@@ -849,24 +986,45 @@ pub(crate) fn update_weaponbar(
         );
         if let Some(error) = chrome_error(&frame) {
             weaponbar_failed = true;
-            gaps.raise(GapCause::WeaponbarPaint { error });
+            gaps.raise(GapCause::WeaponbarPaint {
+                error: format!("{}: {error}", menu.name),
+            });
         }
         weaponbar_vis =
             frame.coverage.vis_false < frame.coverage.items_total || !frame.list.cmds.is_empty();
         list.cmds.extend(frame.list.cmds);
     } else {
-        gaps.raise(GapCause::CompassRingNoMenu {
-            name: WEAPONBAR_HD_MENU.to_owned(),
+        weaponbar_failed = true;
+        gaps.raise(GapCause::WeaponbarPaint {
+            error: format!(
+                "MenuCatalog has no `{}` or `{}`",
+                MP_WEAPON_HUD.ammo, SP_WEAPON_HUD.ammo
+            ),
         });
     }
+    if ammo_cmds > 0
+        && !evidence.painted
+        && let Some(set) = hud_menus
+    {
+        diag::info!(
+            Ui,
+            "weapon hud: ammo counter painted by `{}` clip={} stock={}",
+            set.ammo,
+            owner_state
+                .ammo
+                .as_ref()
+                .and_then(|a| a.clip)
+                .map_or_else(|| "-".to_owned(), |v| v.to_string()),
+            owner_state
+                .ammo
+                .as_ref()
+                .and_then(|a| a.stock)
+                .map_or_else(|| "-".to_owned(), |v| v.to_string()),
+        );
+        evidence.painted = true;
+    }
 
-    for name in [
-        "dpad_hd",
-        "javelin_overlay_hd",
-        "missilecam_hud_hd",
-        "remote_chopper_overlay_hd",
-        "ac130_hud_hd",
-    ] {
+    for name in hud_menus.map_or(&[][..], |set| set.others) {
         let Some(menu) = catalog.get(name) else {
             continue;
         };
@@ -889,7 +1047,9 @@ pub(crate) fn update_weaponbar(
             Some(&mut hook),
         );
         if let Some(error) = chrome_error(&frame) {
-            gaps.raise(GapCause::WeaponbarPaint { error });
+            gaps.raise(GapCause::WeaponbarPaint {
+                error: format!("{}: {error}", menu.name),
+            });
             weaponbar_failed = true;
         }
         list.cmds.extend(frame.list.cmds);
@@ -992,7 +1152,10 @@ pub(crate) fn update_weaponbar(
         }
     }
 
-    if (!ring_miss && ring_cmds > 0) || !weaponbar_vis {
+    if (!ring_miss && ring_cmds > 0)
+        || !weaponbar_vis
+        || hud_menus.is_some_and(|set| !set.compass_ring)
+    {
         gaps.clear(HudGap::CompassRing);
     }
     if !weaponbar_failed {
@@ -1099,4 +1262,90 @@ fn paint_action_slot(
         }
     }
     OwnerDrawPaint::Painted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// patch_specialops.ff's `weaponinfo` and `dpad` menu vis, as the IW5
+    /// reader writes them now that `usingvehicle` (0x208) and
+    /// `gamemsgwndactive` (0x209) resolve. Static dvar 5 is `so_survival`,
+    /// 6 `ui_remotemissile_playernum`, 7 `hud_missionFailed`, 8 `createfx`,
+    /// 9 `ammoCounterHide`, 11 `actionSlotsHide`, 12 `compass`.
+    const SP_DVARS: &str = "d 0 ui_multiplayer d 1 cl_ingame d 2 sv_running d 3 gameMode d 4 hud_gasMaskOverlay d 5 so_survival d 6 ui_remotemissile_playernum d 7 hud_missionFailed d 8 createfx d 9 ammoCounterHide d 10 g_gameskill d 11 actionSlotsHide d 12 compass";
+    const WEAPONINFO_VIS: &str = "op 16 op 7 op 16 op 49 s:6e756d626572 op 1 op 5 1 op 12 op 23 6 op 1 op 1 op 14 op 16 op 24 7 op 1 op 12 0 op 1 op 14 op 16 op 26 8 op 1 op 13 s:6f6e op 1 op 14 op 7 op 41 op 1 op 14 op 7 op 520 op 1 op 14 op 7 op 40 op 1 op 14 op 7 op 16 op 521 2 op 1 op 14 op 7 op 24 5 op 1 op 1 op 14 op 16 op 23 9 op 1 op 12 0 op 1";
+    const DPAD_VIS: &str = "op 16 op 7 op 16 op 49 s:6e756d626572 op 1 op 5 1 op 12 op 23 6 op 1 op 1 op 14 op 16 op 24 7 op 1 op 12 0 op 1 op 14 op 16 op 26 8 op 1 op 13 s:6f6e op 1 op 14 op 7 op 41 op 1 op 14 op 7 op 520 op 1 op 14 op 7 op 40 op 1 op 14 op 7 op 16 op 521 2 op 1 op 14 op 7 op 24 5 op 1 op 1 op 14 op 24 12 op 1 op 14 op 16 op 24 11 op 1 op 12 0 op 1";
+
+    fn host<'a>(menu: &'a asset_game::MenuDef, vars: &'a UiLocalVars) -> WeaponbarExprHost<'a> {
+        WeaponbarExprHost {
+            weapons: None,
+            ps: None,
+            input: None,
+            ms: 0,
+            cg_time: 0,
+            fov: 65.0,
+            shock_screen_type: SCREEN_BLEND_BLURRED,
+            in_killcam: false,
+            missilecam: false,
+            game_ended: false,
+            spectating_client: false,
+            dvars: sim::ScriptDvars::default(),
+            local_vars: vars,
+            catalog: None,
+            menu: Some(menu),
+            perk_slots: [0; 8],
+            weapon_script: String::new(),
+            client_number: 0,
+            lock: None,
+            frag_ammo: 2,
+            smoke_ammo: 2,
+            stock_ammo: 48,
+            clip_ammo: 12,
+        }
+    }
+
+    #[test]
+    fn sp_weapon_hud_menus_show_in_a_live_match() {
+        let mut menu = asset_game::MenuDef::default();
+        menu.set_expr_dvars(SP_DVARS.to_owned());
+        let vars = UiLocalVars::default();
+        let host = host(&menu, &vars);
+        let mut exprs = crate::expr_cache::MenuExprCache::default();
+        assert_eq!(exprs.is_true(WEAPONINFO_VIS, &host), Ok(true));
+        assert_eq!(exprs.is_true(DPAD_VIS, &host), Ok(true));
+    }
+
+    /// common.ff's `reload`: its own dvar order (5 remote missile player,
+    /// 6 `hud_missionFailed`, 7 `createfx`, 8 `ammoCounterHide`,
+    /// 9 `g_gameskill`), the menu vis and the low-ammo item's (120).
+    const RELOAD_DVARS: &str = "d 0 ui_multiplayer d 1 cl_ingame d 2 sv_running d 3 gameMode d 4 hud_gasMaskOverlay d 5 ui_remotemissile_playernum d 6 hud_missionFailed d 7 createfx d 8 ammoCounterHide d 9 g_gameskill";
+    const RELOAD_VIS: &str = "op 16 op 7 op 16 op 49 s:6e756d626572 op 1 op 5 1 op 12 op 23 5 op 1 op 1 op 14 op 16 op 24 6 op 1 op 12 0 op 1 op 14 op 16 op 26 7 op 1 op 13 s:6f6e op 1 op 14 op 7 op 41 op 1 op 14 op 7 op 520 op 1 op 14 op 7 op 40 op 1 op 14 op 16 op 23 8 op 1 op 12 0 op 1";
+    const LOW_AMMO_VIS: &str =
+        "op 16 op 16 op 23 9 op 1 op 12 0 op 1 op 15 op 16 op 23 9 op 1 op 12 1 op 1";
+
+    #[test]
+    fn sp_low_ammo_warning_shows_in_a_live_match() {
+        let mut menu = asset_game::MenuDef::default();
+        menu.set_expr_dvars(RELOAD_DVARS.to_owned());
+        let vars = UiLocalVars::default();
+        let host = host(&menu, &vars);
+        let mut exprs = crate::expr_cache::MenuExprCache::default();
+        assert_eq!(exprs.is_true(RELOAD_VIS, &host), Ok(true));
+        assert_eq!(exprs.is_true(LOW_AMMO_VIS, &host), Ok(true));
+    }
+
+    #[test]
+    fn sp_weapon_hud_hides_for_the_remote_missile_player() {
+        let mut menu = asset_game::MenuDef::default();
+        menu.set_expr_dvars(SP_DVARS.to_owned());
+        let vars = UiLocalVars::default();
+        let mut host = host(&menu, &vars);
+        // Client 0 reads as `ui_remotemissile_playernum` 1 when it flies
+        // the missile; with the dvar at 0 nobody does, so client -1 is the
+        // only number that matches.
+        host.client_number = -1;
+        let mut exprs = crate::expr_cache::MenuExprCache::default();
+        assert_eq!(exprs.is_true(WEAPONINFO_VIS, &host), Ok(false));
+    }
 }

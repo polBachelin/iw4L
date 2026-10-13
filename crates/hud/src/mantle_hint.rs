@@ -17,7 +17,9 @@ use crate::gaps::{GapCause, HudPresentationGaps};
 use crate::gpu_list::{HudTessPass, TessJob};
 use crate::images::HudImages;
 
-const HUD_FULLSCREEN: &str = "hud_fullscreen";
+/// The menus that lay the mantle hint out: MP's `hud_fullscreen`, MW3 SP's
+/// `mantlehint` (common.ff, replaced by patch_specialops.ff).
+pub(crate) const MANTLE_HINT_MENUS: &[&str] = &["hud_fullscreen", "mantlehint"];
 
 #[derive(Component)]
 pub(crate) struct MantleHintRaster;
@@ -71,15 +73,8 @@ pub(crate) fn update_mantle_hint(
         hide(&mut pass);
         return;
     };
-    let Some(menu) = catalog.get(HUD_FULLSCREEN) else {
-        gaps.raise(GapCause::MantleHintNoItem);
-        hide(&mut pass);
-        return;
-    };
-    let Some(item) = menu
-        .items
-        .iter()
-        .find(|it| it.owner_draw == CG_OWNERDRAW_MANTLE)
+    let Some((_, item)) =
+        crate::chrome::owner_draw_item(catalog, MANTLE_HINT_MENUS, CG_OWNERDRAW_MANTLE)
     else {
         gaps.raise(GapCause::MantleHintNoItem);
         hide(&mut pass);

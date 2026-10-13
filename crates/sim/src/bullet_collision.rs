@@ -198,7 +198,8 @@ pub struct AuthorityDObjState {
         Option<std::sync::Arc<xmodel_runtime::RetainedModelCapability>>,
     )>,
     /// Collide by the model's per-bone hit volumes, posed, whatever its
-    /// contents say: character models carry no collision surfaces.
+    /// contents say: character models carry no collision surfaces. Only an
+    /// actor's body does, so its volumes are flesh.
     pub hit_volumes: bool,
 }
 
@@ -814,6 +815,8 @@ pub struct EntityCollisionTraceGeom {
 
     pub model_key: Option<String>,
     pub linked_brushes: Vec<LinkedBrushCollisionBrush>,
+    /// An actor's body: its hit volumes are flesh, as a player's are.
+    pub flesh: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -884,6 +887,7 @@ impl EntityCollisionCapabilities {
                 dobj_contents: None,
                 model_key: None,
                 linked_brushes: Vec::new(),
+                flesh: false,
             };
         }
         EntityCollisionTraceGeom {
@@ -905,6 +909,7 @@ impl EntityCollisionCapabilities {
                 }),
             model_key: self.dobj.as_ref().map(|state| state.current_model.clone()),
             linked_brushes: self.linked_brushes.clone(),
+            flesh: self.dobj.as_ref().is_some_and(|state| state.hit_volumes),
         }
     }
 }
@@ -1504,12 +1509,13 @@ fn bullet_trace_filtered(
             DObjGeometryVerdict::Missed => continue,
             DObjGeometryVerdict::Unavailable => {}
         }
+        let surface_flags = if geom.flesh { SURF_TYPE_FLESH << 20 } else { 0 };
         for bone in &dobj_geom.bones {
             let collider = ColliderId::EntityDObjBone {
                 owner: geom.owner,
                 bone: bone.bone,
                 part_classification: bone.part_classification,
-                surface_flags: 0,
+                surface_flags,
             };
             match ray_obb(query.start, query.end, bone, collider) {
                 RayAabb::StartSolid => {
@@ -2771,3 +2777,60 @@ pub const COLLISION_COVERAGE: &[CollisionCoverageRow] = &[
         note: "the missile world trace is the same zero-extent brush∪mesh ray as hitscan; plantable capsule hull and TR_STATIONARY rest stay open",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(flesh: bool, dobj_contents: Option<u32>) -> EntityCollisionTraceGeom {
+        EntityCollisionTraceGeom {
+            owner: AuthorityModelOwner::ScriptModel(ScriptModelId(1)),
+            epoch: EntityCollisionEpoch::CurrentTick,
+            collision: Some(AuthorityDObjCollision {
+                bones: vec![AuthorityDObjCollisionBone {
+                    bone: 0,
+                    part_classification: 0,
+                    center: [100.0, 0.0, 0.0],
+                    axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    half_size: [8.0, 8.0, 8.0],
+                }],
+                coll: None,
+            }),
+            dobj_contents,
+            model_key: None,
+            linked_brushes: Vec::new(),
+            flesh,
+        }
+    }
+
+    fn surf_of(geom: EntityCollisionTraceGeom) -> Option<u8> {
+        let query = BulletTraceQuery {
+            start: [0.0; 3],
+            end: [200.0, 0.0, 0.0],
+            mask: MASK_BULLET_WORLD,
+            ignore: None,
+            ignore_hit: None,
+            ignore_model: None,
+        };
+        match bullet_trace_filtered(
+            &[],
+            &SimClipBsp::default(),
+            &SimClipCmodels::default(),
+            &SimClipMesh::default(),
+            &[],
+            &[geom],
+            &query,
+            &|_| false,
+        ) {
+            TraceOutcome::Hit { collider, .. } => Some(surf_type_for(collider)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn actor_bone_volume_is_flesh_script_model_is_not() {
+        assert_eq!(surf_of(body(true, None)), Some(SURF_TYPE_FLESH as u8));
+        let model = surf_of(body(false, Some(MASK_BULLET_WORLD)));
+        assert!(model.is_some_and(|surf| surf != SURF_TYPE_FLESH as u8));
+    }
+}

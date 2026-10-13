@@ -34,7 +34,8 @@ pub(crate) fn compile(
         let execution = weapons
             .configuration_admission(id)
             .map_err(|reason| format!("{reason:?}"))
-            .and_then(|()| compile_combat(weapons, weapon, rules, global_location, &mut refused));
+            .and_then(|()| compile_combat(weapons, weapon, rules, global_location, &mut refused))
+            .and_then(|facts| require_bounce_tables(weapons, id, facts, &mut refused));
         let setup = weapons.describe_configuration(id).and_then(|selection| {
             let family = selection.family.as_ref()?;
             Some(sim::WeaponSetup {
@@ -96,6 +97,26 @@ pub(crate) fn compile(
         revision: weapons.revision(),
         content,
     })
+}
+
+/// The projectile runner refuses to bounce without per-surface coefficients
+/// (zero would be a silent behavior change), so a bouncing projectile row
+/// missing them is refused here instead of panicking on its first bounce.
+fn require_bounce_tables(
+    weapons: &WeaponRegistry,
+    id: u32,
+    facts: WeaponCombatFacts,
+    refused: &mut Vec<String>,
+) -> Result<WeaponCombatFacts, String> {
+    let Some(equipment) = weapons.equipment_facts_of(id) else {
+        return Ok(facts);
+    };
+    if equipment.needs_bounce_coefficients() && !equipment.has_bounce_coefficients() {
+        let reason = "missing projectile surface bounce coefficients";
+        refused.push(format!("{}({reason})", weapons.name_of(id)));
+        return Err(reason.to_owned());
+    }
+    Ok(facts)
 }
 
 fn compile_combat(

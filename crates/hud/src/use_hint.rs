@@ -11,6 +11,13 @@ use std::collections::HashMap;
 #[derive(Component)]
 pub(crate) struct UseHintRaster;
 
+/// The cursor hint's owner draw (`CG_CURSORHINT`).
+const CG_OWNERDRAW_CURSORHINT: i32 = 72;
+
+/// The menus that lay the cursor hint out: MP's `hud_fullscreen`, MW3 SP's
+/// `cursorhints` (common.ff).
+const CURSOR_HINT_MENUS: &[&str] = &["hud_fullscreen", "cursorhints"];
+
 #[derive(Default)]
 pub(crate) struct HintMemory {
     caption: Option<(
@@ -19,6 +26,7 @@ pub(crate) struct HintMemory {
         Option<(asset_core::AssetNamespace, String, i32, bool)>,
     )>,
     last_seen: f64,
+    logged_menu: Option<String>,
 }
 
 pub(crate) fn update(
@@ -39,6 +47,7 @@ pub(crate) fn update(
     host_namespace: assets::HostNamespace,
 ) {
     let chrome = host_namespace.get();
+    let memory = &mut *memory;
     pass.use_hint = TessJob::Hide;
     if !surface.is_ready()
         || input.script_menu_open
@@ -181,15 +190,28 @@ pub(crate) fn update(
         gaps.raise(GapCause::NoFontCatalog);
         return;
     };
-    let Some(item) = catalog
-        .get("hud_fullscreen")
-        .and_then(|m| m.items.iter().find(|i| i.owner_draw == 72))
+    let Some((menu, item)) =
+        crate::chrome::owner_draw_item(&catalog, CURSOR_HINT_MENUS, CG_OWNERDRAW_CURSORHINT)
     else {
         gaps.raise(GapCause::CursorHintMissing {
-            reason: "hud_fullscreen ownerDraw 72 missing".into(),
+            reason: format!(
+                "no ownerDraw {CG_OWNERDRAW_CURSORHINT} item in {}",
+                CURSOR_HINT_MENUS.join(" or ")
+            ),
         });
         return;
     };
+    if memory.logged_menu.as_deref() != Some(menu.name.as_str()) {
+        diag::info!(
+            Ui,
+            "use hint: drawn from `{}` ownerDraw {CG_OWNERDRAW_CURSORHINT} (font {} scale {} y {})",
+            menu.name,
+            item.font_enum,
+            item.text_scale,
+            item.rect.y
+        );
+        memory.logged_menu = Some(menu.name.clone());
+    }
     let font_name = hud_iw4::ui_get_font_handle(
         item.font_enum,
         surface.scale_virtual_to_real()[1],

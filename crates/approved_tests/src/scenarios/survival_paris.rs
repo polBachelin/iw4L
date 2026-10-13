@@ -296,22 +296,21 @@ impl Game {
         })
     }
 
-    /// Enemies of the window `from..` that spawned and were not killed.
-    fn live_enemies(&self, from: usize) -> Vec<u32> {
+    /// The entity numbers of `team`'s actors of the window `from..` that
+    /// spawned and were not killed.
+    fn live_enemies(&self, from: usize, team: &str) -> Vec<u32> {
         let mut live = Vec::new();
         for line in &self.lines[from.min(self.lines.len())..] {
             if line.starts_with("enemy killed ") {
-                if let Some(client) = number(line, "client") {
-                    live.retain(|c| *c != client as u32);
+                if let Some(actor) = number(line, "actor") {
+                    live.retain(|a| *a != actor as u32);
                 }
-            } else if line.contains(" spawned client=")
-                && let Some(client) = number(line, "client")
-                && self.lines[from..].iter().any(|l| {
-                    l.starts_with("enemy connected ") && number(l, "client") == Some(client)
-                })
-                && !live.contains(&(client as u32))
+            } else if line.contains(" spawned actor=")
+                && field(line, "team") == Some(team)
+                && let Some(actor) = number(line, "actor")
+                && !live.contains(&(actor as u32))
             {
-                live.push(client as u32);
+                live.push(actor as u32);
             }
         }
         live
@@ -410,7 +409,7 @@ fn expected_enemies(game: &Game, start: usize, wave: u32) -> Result<BTreeMap<Str
         format!("wave {wave} is `test_wave`, not the waves table: `{line}`")
     })?;
     ensure(!contents.contains("vehicles="), || {
-        format!("wave {wave} has vehicles; this scenario clears bot waves: `{line}`")
+        format!("wave {wave} has vehicles; this scenario clears actor waves: `{line}`")
     })?;
     let mut expected: BTreeMap<String, i64> = BTreeMap::new();
     let words = contents
@@ -477,7 +476,7 @@ fn load(game: &mut Game, settings: &Settings, manifest: &mut Value) -> Result<Va
         format!("installed map is not {}: {installed}", settings.map)
     })?;
     game.play(&format!(
-        "wait world; wait spawn; god; bot hold on; give {WEAPON}; tp {PLAYER}"
+        "wait world; wait spawn; god; actor hold on; give {WEAPON}; tp {PLAYER}"
     ))?;
     game.engine_line(0, "god: client=0 on")?;
     let ready = game.wait_line(0, "ready ", STEP_TIMEOUT)?;
@@ -529,24 +528,28 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
     game.play(&format!("tp {PLAYER}"))?;
     let complete = format!("wave={wave} complete");
     let mut bursts = 0;
+    let team = settings.enemy_team.as_str();
     while game.find(start, &complete).is_none() {
-        if game.live_enemies(start).is_empty() {
+        // One enemy at a time: a body stays on the spot for actor_corpse_ms
+        // and would shield the next one brought there.
+        let Some(enemy) = game.live_enemies(start, team).first().copied() else {
             game.wait(
                 &format!("an enemy of wave {wave} or `{complete}`"),
                 STEP_TIMEOUT,
                 |game| {
-                    (!game.live_enemies(start).is_empty() || game.find(start, &complete).is_some())
-                        .then_some(())
+                    (!game.live_enemies(start, team).is_empty()
+                        || game.find(start, &complete).is_some())
+                    .then_some(())
                 },
             )?;
             continue;
-        }
+        };
         bursts += 1;
         ensure(bursts <= MAX_BURSTS, || {
             format!("wave {wave} not cleared after {MAX_BURSTS} bursts")
         })?;
         game.play(&format!(
-            "bot tp all {TARGET}; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s; press +reload; wait 3s; give ammo"
+            "actor tp {enemy} {TARGET}; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s; press +reload; wait 3s; give ammo"
         ))?;
     }
     let end = game.find(start, &complete).expect("found above");
@@ -554,31 +557,24 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
     facts["bursts"] = bursts.into();
     facts["complete"] = game.lines[end].clone().into();
 
-    // Who came, spawned and died between the start and the end.
+    // Who spawned and died between the start and the end. An actor's
+    // entity number is free again once its body is deleted, so a later
+    // enemy may reuse it: a number lives spawn, kill (s k), any times.
     let window = &game.lines[start..=end];
     let mut lives: BTreeMap<i64, String> = BTreeMap::new();
     let mut arrived: BTreeMap<String, i64> = BTreeMap::new();
     let mut kills = Vec::new();
     for line in window {
-        let client = number(line, "client");
-        if line.starts_with("enemy connected ") {
-            let client = client.ok_or_else(|| format!("unreadable `{line}`"))?;
-            ensure(
-                field(line, "team") == Some(settings.enemy_team.as_str()),
-                || format!("`{line}` is not on enemy_team {}", settings.enemy_team),
-            )?;
-            *arrived
-                .entry(field(line, "archetype").unwrap_or("").to_owned())
-                .or_default() += 1;
-            lives.entry(client).or_default().push('c');
-        } else if line.contains(" spawned client=")
-            && let Some(client) = client
-            && let Some(life) = lives.get_mut(&client)
+        let actor = number(line, "actor");
+        if let Some((archetype, _)) = line.split_once(" spawned actor=")
+            && field(line, "team") == Some(team)
         {
-            life.push('s');
+            let actor = actor.ok_or_else(|| format!("unreadable `{line}`"))?;
+            *arrived.entry(archetype.to_owned()).or_default() += 1;
+            lives.entry(actor).or_default().push('s');
         } else if line.starts_with("enemy killed ") {
-            let client = client.ok_or_else(|| format!("unreadable `{line}`"))?;
-            lives.entry(client).or_default().push('k');
+            let actor = actor.ok_or_else(|| format!("unreadable `{line}`"))?;
+            lives.entry(actor).or_default().push('k');
             ensure(field(line, "by") == Some("client0"), || {
                 format!("`{line}`: the scenario's kills are the player's")
             })?;
@@ -586,7 +582,7 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
         }
     }
     ensure(arrived == expected, || {
-        format!("wave {wave} connected {arrived:?}, its start line asks for {expected:?}")
+        format!("wave {wave} spawned {arrived:?}, its start line asks for {expected:?}")
     })?;
     ensure(kills.len() as i64 == total, || {
         format!("wave {wave} logged {} kills for total={total}", kills.len())
@@ -594,14 +590,14 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
     ensure(number(&game.lines[end], "killed") == Some(total), || {
         format!("`{}` is not total={total}", game.lines[end])
     })?;
-    for (client, life) in &lives {
+    for (actor, life) in &lives {
         let mut rest = life.as_str();
-        while let Some(next) = rest.strip_prefix("csk") {
+        while let Some(next) = rest.strip_prefix("sk") {
             rest = next;
         }
         ensure(rest.is_empty() && !life.is_empty(), || {
             format!(
-                "client {client} lived `{life}` in wave {wave}: an enemy connects, spawns once and is killed (c s k), never more"
+                "actor {actor} lived `{life}` in wave {wave}: an enemy spawns once and is killed (s k), never more"
             )
         })?;
     }
@@ -658,7 +654,7 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
             settings.wave_bonus
         )
     })?;
-    facts["connected"] = json!(arrived);
+    facts["spawned"] = json!(arrived);
     facts["kills"] = kills.into();
     facts["kill_rewards"] = json!(rewards);
     facts["credits"] =
@@ -810,7 +806,7 @@ fn down_damage(game: &Game, settings: &Settings) -> Result<i64> {
 fn laststand(game: &mut Game, settings: &Settings, wave: u32) -> Result<(Value, usize)> {
     let start = game.wait_line(0, &format!("wave={wave} start"), STEP_TIMEOUT * 2)?;
     game.wait(&format!("an enemy of wave {wave}"), STEP_TIMEOUT, |game| {
-        (!game.live_enemies(start).is_empty()).then_some(())
+        (!game.live_enemies(start, &settings.enemy_team).is_empty()).then_some(())
     })?;
     // The waves were cleared with `WEAPON`, which took the start pistol's
     // place; last stand draws a pistol, so the start one is given back.
@@ -857,15 +853,19 @@ fn laststand(game: &mut Game, settings: &Settings, wave: u32) -> Result<(Value, 
         ensure(tries <= MAX_REVIVE_TRIES, || {
             format!("no revive after {MAX_REVIVE_TRIES} tries")
         })?;
-        let Some(enemy) = game.live_enemies(start).first().copied() else {
+        let Some(enemy) = game
+            .live_enemies(start, &settings.enemy_team)
+            .first()
+            .copied()
+        else {
             game.wait(&format!("an enemy of wave {wave}"), STEP_TIMEOUT, |game| {
-                (!game.live_enemies(start).is_empty()).then_some(())
+                (!game.live_enemies(start, &settings.enemy_team).is_empty()).then_some(())
             })?;
             continue;
         };
         let shot = "hold +attack; wait 0.3s; release +attack; wait 0.4s";
         game.play(&format!(
-            "bot tp {enemy} {TARGET}; wait 0.5s; {shot}; {shot}; {shot}; wait 0.5s"
+            "actor tp {enemy} {TARGET}; wait 0.5s; {shot}; {shot}; {shot}; wait 0.5s"
         ))?;
     };
     let revive = game.lines[revived].clone();

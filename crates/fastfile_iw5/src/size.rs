@@ -282,6 +282,10 @@ pub const WEAPON_DEF_HUD_ICON_OFF: usize = 500;
 pub const WEAPON_DEF_KILL_ICON_RATIO_OFF: usize = 1224;
 pub const WEAPON_DEF_FLIP_KILL_ICON_OFF: usize = 1923;
 pub const WEAPON_COMPLETE_KILL_ICON_OFF: usize = 132;
+/// WeaponCompleteDef dpadIcon (Material), right after killIcon.
+pub const WEAPON_COMPLETE_DPAD_ICON_OFF: usize = 136;
+/// WeaponCompleteDef dpadIconRatio, between iFireTimeAkimbo and penetrateMultiplier.
+pub const WEAPON_COMPLETE_DPAD_ICON_RATIO_OFF: usize = 0x64;
 
 pub const SND_ALIAS_CUSTOM: usize = 4;
 
