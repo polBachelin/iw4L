@@ -53,7 +53,7 @@ a weapon themselves.
   `armory_replacement_grants`: `survival_armory_replacement_warning`,
   `continue`, `launcher`), `primary_slots` (how many primaries a player
   carries, 2), pause menu, `player_viewhands` (the players' first-person
-  hands, `viewhands_player_delta` of `common_survival`: used ahead of the
+  hands, `viewhands_delta` of `common_survival`: used ahead of the
   map kit's hands while the loaded zones hold the model, the kit's otherwise),
   `actor_budget` (the most enemy and ally actors in play at once, 17: the
   enemies one player used to get from 18 client slots) and
@@ -225,17 +225,24 @@ row's heads, and returns the body, head and hat (`""` for none). The spawn
 line ends `character=<body>/<head>/<hat>`. A model the renderer cannot draw
 (not captured, or of another family than the map's) leaves the actor in its
 team's kit and is warned once (`character body=… drawn in its team kit`).
-Which archetype wears which character is ours:
+Which archetype wears which character follows the aitype and character
+scripts of MW3's Paris survival zones (`so_survival_mp_paris` swaps its own
+`easy` and `elite` aitypes in); every model below is one the loaded zones
+hold. Issue #31 replaces this table with a read of those scripts:
 
 | archetypes | characters |
 | --- | --- |
-| `easy`, `martyrdom` | militia (`body_africa_militia_smg_a/b/c`, `hat_africa_militia_*`) |
-| `regular`, `hardened`, `claymore` | Russian military (`body_russian_military_*`) |
-| `veteran`, `elite` | Russian naval (`body_russian_naval_assault_*`) |
-| `chemical` | chemical warfare, masked heads or `fullbody_chemwar_russian_assault_a/aa` |
-| `jug_regular`, `jug_explosive` | `fullbody_juggernaut_novisor_b`, `fullbody_juggernaut_explosive_so` |
-| `jug_riotshield`, `jug_minigun` | `body_so_juggernaut_blue` with its hat, `body_complete_sp_juggernaut` |
-| `friendly_support_delta` | Delta (`body_delta_elite_assault_*`, `head_delta_elite_a..d`) |
+| `easy`, `claymore` | Russian naval (`body_russian_naval_assault_c/d/f/ff`, `head_russian_naval_a..c`) |
+| `regular` | `body_russian_military_smg_a_airborne` |
+| `hardened` | `body_russian_military_assault_b_woodland` |
+| `veteran` | `body_russian_military_assault_a_black` with the black heads |
+| `elite` | `fullbody_juggernaut_c` |
+| `martyrdom` | `body_chemwar_russian_assault_c/cc`, `head_opforce_arab_c` |
+| `chemical` | `fullbody_chemwar_russian_assault_a/aa`, `body_chemwar_russian_assault_d/dd` |
+| `jug_regular`, `jug_riotshield` | `fullbody_juggernaut_novisor_b` |
+| `jug_explosive` | `fullbody_juggernaut_explosive_so` |
+| `jug_minigun` | `body_complete_sp_juggernaut` |
+| `friendly_support_delta` | Delta (`body_delta_elite_assault_aa/ab/ba/bb`, `head_delta_elite_a..d`) |
 | `friendly_support_riotshield` | GIGN (`body_gign_paris_*`, `head_gign_a..d`) |
 | `dog_reg`, `dog_splode` | `german_sheperd_dog` |
 
