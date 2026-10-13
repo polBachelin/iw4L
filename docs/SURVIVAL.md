@@ -291,7 +291,7 @@ logged once (`survival actor anims not loaded`). Anim-tree methods take the
 name as a string, resolved in the actor's tree.
 
 A human player is drawn in the `characters.csv` row `player_character`
-(`delta_a`), dressed with `setcharacter` at each spawn, and its third-person
+(`delta_aa`), dressed with `setcharacter` at each spawn, and its third-person
 body is posed by `player_anims.csv` — `state,stance,direction,anims`, the
 same shape — instead of the MP playeranim script. The simulation picks a
 row where it runs that script: the state from the anim move type (`idle`,

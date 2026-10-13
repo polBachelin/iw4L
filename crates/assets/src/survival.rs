@@ -246,15 +246,22 @@ mod fill_in_column {
     pub(super) const BURST: usize = 6;
 }
 
-/// `ACTOR_ANIMS_TABLE` and `PLAYER_ANIMS_TABLE`: state, stance (empty for
-/// any), direction (empty for any), anim names (space separated, one drawn
-/// per play).
+/// `ACTOR_ANIMS_TABLE`: anim set, state, stance (empty for any), direction
+/// (empty for any), anim names (space separated, one drawn per play).
 mod actor_anim_column {
     pub(super) const SET: usize = 0;
     pub(super) const STATE: usize = 1;
     pub(super) const STANCE: usize = 2;
     pub(super) const DIRECTION: usize = 3;
     pub(super) const ANIMS: usize = 4;
+}
+
+/// `PLAYER_ANIMS_TABLE`: `ACTOR_ANIMS_TABLE`'s columns without the set.
+mod player_anim_column {
+    pub(super) const STATE: usize = 0;
+    pub(super) const STANCE: usize = 1;
+    pub(super) const DIRECTION: usize = 2;
+    pub(super) const ANIMS: usize = 3;
 }
 
 /// The anim sets with the states their script picks anims for, and the
@@ -544,31 +551,49 @@ pub fn survival_pick_anims(
     is_loaded: impl Fn(&str) -> bool,
 ) -> Vec<String> {
     let mut missing = std::collections::BTreeSet::new();
-    for name in [ACTOR_ANIMS_TABLE, PLAYER_ANIMS_TABLE] {
+    let layouts: [(&str, &[usize], usize); 2] = [
+        (
+            ACTOR_ANIMS_TABLE,
+            &[actor_anim_column::SET, actor_anim_column::STATE],
+            actor_anim_column::ANIMS,
+        ),
+        (
+            PLAYER_ANIMS_TABLE,
+            &[player_anim_column::STATE],
+            player_anim_column::ANIMS,
+        ),
+    ];
+    for (name, state_columns, anims_column) in layouts {
         if let Some(anims) = scripts.table_mut(name) {
-            missing.extend(pick_table_anims(anims, &is_loaded));
+            missing.extend(pick_table_anims(
+                anims,
+                state_columns,
+                anims_column,
+                &is_loaded,
+            ));
         }
     }
     missing.into_iter().collect()
 }
 
+/// Narrows one anim table whose rows are keyed by `state_columns` (a state
+/// left with no anim takes its key's first row) and list anims in
+/// `anims_column`.
 fn pick_table_anims(
     anims: &mut ScriptTable,
+    state_columns: &[usize],
+    anims_column: usize,
     is_loaded: &impl Fn(&str) -> bool,
 ) -> std::collections::BTreeSet<String> {
     let columns = anims.columns.max(1);
     let mut missing = std::collections::BTreeSet::new();
-    if columns <= actor_anim_column::ANIMS {
+    if columns <= anims_column {
         return missing;
     }
-    let mut first: BTreeMap<String, String> = BTreeMap::new();
-    let mut missing = std::collections::BTreeSet::new();
+    let mut first: BTreeMap<Vec<String>, String> = BTreeMap::new();
     for row in anims.cells.chunks_exact_mut(columns).take(anims.rows) {
-        let state = (
-            row[actor_anim_column::SET].clone(),
-            row[actor_anim_column::STATE].clone(),
-        );
-        let cell = &mut row[actor_anim_column::ANIMS];
+        let state: Vec<String> = state_columns.iter().map(|&at| row[at].clone()).collect();
+        let cell = &mut row[anims_column];
         let (loaded, absent): (Vec<&str>, Vec<&str>) =
             cell.split_whitespace().partition(|name| is_loaded(name));
         missing.extend(absent.into_iter().map(str::to_owned));
@@ -591,7 +616,7 @@ fn pick_table_anims(
 pub fn survival_player_anims(
     scripts: &crate::ScriptSources,
 ) -> Vec<(String, String, String, Vec<String>)> {
-    use actor_anim_column as c;
+    use player_anim_column as c;
     let Some(anims) = scripts.table(PLAYER_ANIMS_TABLE) else {
         return Vec::new();
     };
@@ -1538,7 +1563,7 @@ fn check_player_anims(
     characters: &ScriptTable,
     gaps: &mut Vec<String>,
 ) -> Result<(), String> {
-    use actor_anim_column as c;
+    use player_anim_column as c;
     for row in anims.rows() {
         let (state, stance, direction) = (
             cell(row, c::STATE),
