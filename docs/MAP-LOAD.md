@@ -94,7 +94,8 @@ the menu probe) goes through `RuntimeProfile::find_runtime_zone`, which refuses 
 file of another game's envelope; the profile's own game is never also walked as a
 donor. A launch mode names its base zones, loaded right after the map
 (`ModeZones::base`; `survival` reads them from its `base_zones` settings row,
-every other mode keeps `common_mp`). The set also names the zones that go
+MW3's SP set `code_pre_gfx code_post_gfx common ui patch`; every other mode
+keeps `common_mp`). The set also names the zones that go
 with it: startup zones loaded ahead of the base zones (`BaseZones::startup`),
 UI zones read only through their `localized_` siblings (`BaseZones::ui_localized`)
 and patch zones loaded after them (`BaseZones::patch`); every set keeps the
@@ -119,5 +120,13 @@ tables, menus, localized strings and sound aliases. Their census claims their
 sounds (`ZoneSoundCapture::claim_source`); their images decode with the merged
 pool. A material another zone holds is captured as a reference row that links to
 the real one by name.
+An IW5 walk, of the map or of a zone of the set, notes the models, materials,
+effects and sounds the zone holds and the ones it names by reference to
+another zone. Once the map is walked the load logs one line,
+`cross-zone references unresolved: <total> (<zone> models=… materials=… fx=…
+sounds=…; …)`, counting per zone the references no walked zone holds; the
+names behind each count go to the `Zone` debug log. A survival map's own zone
+is MP (`mp_<map>`), so this line is what shows its references still resolve
+without `common_mp`.
 `IW4L_GAMES` holds the game trees; no folder name is hardcoded. Live it is `make
 map mp_boneyard` ([`RUN.md`](RUN.md)), with stages in `LoadProgress`.

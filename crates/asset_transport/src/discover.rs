@@ -662,25 +662,6 @@ impl RuntimeProfile {
             })
             .collect()
     }
-
-    /// Each animation zone of `mode`, by name, and where the runtime's tree
-    /// has it or why not.
-    pub fn find_anim_zones(
-        self,
-        root: &GamesRoot,
-        zone_ff: &Path,
-        mode: &ModeZones,
-    ) -> Vec<(String, Result<PathBuf, String>)> {
-        mode.anims()
-            .iter()
-            .map(|name| {
-                let found = self
-                    .find_runtime_zone(root, zone_ff, name)
-                    .map(|zone| zone.path);
-                (name.clone(), found)
-            })
-            .collect()
-    }
 }
 
 /// The base zone of a launch mode whose settings name no base set of its own.
@@ -808,7 +789,6 @@ pub struct ModeZones {
     base: BaseZones,
     names: Vec<String>,
     layers: Vec<String>,
-    anims: Vec<String>,
 }
 
 impl ModeZones {
@@ -821,7 +801,6 @@ impl ModeZones {
             base: BaseZones::default(),
             names: row.split_whitespace().map(str::to_owned).collect(),
             layers: Vec::new(),
-            anims: Vec::new(),
         }
     }
 
@@ -836,19 +815,8 @@ impl ModeZones {
         self
     }
 
-    /// Zones walked for their animations alone, after the mode's own, when
-    /// the user's data has them; spelled as `parse` reads them.
-    pub fn with_anims(mut self, row: &str) -> Self {
-        self.anims = row.split_whitespace().map(str::to_owned).collect();
-        self
-    }
-
     pub fn base(&self) -> &BaseZones {
         &self.base
-    }
-
-    pub fn anims(&self) -> &[String] {
-        &self.anims
     }
 
     pub fn names(&self) -> &[String] {
