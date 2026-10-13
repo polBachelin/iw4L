@@ -107,8 +107,8 @@ a weapon themselves.
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
   classnames), and what sets an archetype apart. The weapon resolves through
   `weapon_aliases.csv` like any ref; an empty one keeps the table's. The
-  characters are `characters.csv` ids, space separated; each spawn wears one
-  of them at random (see Characters). The trait is one of
+  characters column is empty here: it is written at load from MW3's aitypes
+  (see Characters). The trait is one of
   `explosive`, `martyrdom`, `claymore`, `gas`, `chopper`, `splode` or empty; the speed is an
   actor's run rate in percent, empty for 100. Accuracy (percent of shots aimed true) and burst (shots
   per burst) are an actor's (see Actors), empty on the archetypes no actor
@@ -116,10 +116,9 @@ a weapon themselves.
   follow (`Guys strapped with C4 that explode on death`, `Guys that place
   claymores`, `Chemical warfare enemies in gas masks`, `Uses and is weak to
   explosives`).
-* `characters.csv` — `id,body,heads,hat`: the SP characters an archetype
-  wears. The body, heads and hat are model names of `common_survival`; the
-  heads are space separated, one drawn per spawn, and the hat may be empty.
-  A `fullbody_*` body carries its own head, so its row has none.
+* `aitype_fill_ins.csv` — `ref,classname`: not MW3's. The aitype classname
+  of an archetype whose waves table row leaves c4 empty (the dogs and the
+  armory squads), so it is dressed like the others (see Characters).
 * `heavies.csv` — `key,value`, all ours (MW3's numbers lived in its compiled
   script): `explosive_means` (the means of death an `explosive` archetype is
   weak to) and `explosive_damage_percent`; the martyr's weapon ref, drop
@@ -218,32 +217,33 @@ effect remains until that effect finishes.
 
 ## Characters
 
-On spawn an actor is dressed (`setcharacter`) in a character of its archetype:
-`archetypecharacter` draws one of its `archetypes.csv` ids, then one of that
-row's heads, and returns the body, head and hat (`""` for none). The spawn
-line ends `character=<body>/<head>/<hat>`. A model the renderer cannot draw
-(not captured, or of another family than the map's) leaves the actor in its
-team's kit and is warned once (`character body=… drawn in its team kit`).
-Which archetype wears which character follows the aitype and character
-scripts of MW3's Paris survival zones (`so_survival_mp_paris` swaps its own
-`easy` and `elite` aitypes in); every model below is one the loaded zones
-hold. Issue #31 replaces this table with a read of those scripts:
+An archetype is dressed as MW3 dresses it, from the scripts of the loaded
+zones, when the match loads:
 
-| archetypes | characters |
-| --- | --- |
-| `easy`, `claymore` | Russian naval (`body_russian_naval_assault_c/d/f/ff`, `head_russian_naval_a..c`) |
-| `regular` | `body_russian_military_smg_a_airborne` |
-| `hardened` | `body_russian_military_assault_b_woodland` |
-| `veteran` | `body_russian_military_assault_a_black` with the black heads |
-| `elite` | `fullbody_juggernaut_c` |
-| `martyrdom` | `body_chemwar_russian_assault_c/cc`, `head_opforce_arab_c` |
-| `chemical` | `fullbody_chemwar_russian_assault_a/aa`, `body_chemwar_russian_assault_d/dd` |
-| `jug_regular`, `jug_riotshield` | `fullbody_juggernaut_novisor_b` |
-| `jug_explosive` | `fullbody_juggernaut_explosive_so` |
-| `jug_minigun` | `body_complete_sp_juggernaut` |
-| `friendly_support_delta` | Delta (`body_delta_elite_assault_aa/ab/ba/bb`, `head_delta_elite_a..d`) |
-| `friendly_support_riotshield` | GIGN (`body_gign_paris_*`, `head_gign_a..d`) |
-| `dog_reg`, `dog_splode` | `german_sheperd_dog` |
+1. its aitype classname is the one a script of the loaded zones pairs with
+   its ref (the map's override: `maps/so_survival_mp_paris` holds
+   `actor_enemy_so_easy_v2`, `easy`), else the waves table's c4, else
+   `aitype_fill_ins.csv`'s; an archetype with none (the chopper) wears
+   nothing;
+2. `actor_<name>` is the aitype script `aitype/<name>`; the character
+   scripts it draws from are those its `precache()` calls;
+3. a character script (named by number) precaches its body, then its heads,
+   then its hat, each a model named in place or the list an alias script
+   (also numbered) returns.
+
+The result is written over two tables before the models they name are kept:
+`survival/characters.csv` (`id,bodies,heads,hats`, the character script's
+number and its models, each list space separated) and each archetype's
+character ids in `archetypes.csv` c2. Load logs one line per archetype,
+`survival dress: <ref> -> aitype/<name>[ (override in <script>)]
+characters=N`, or `survival dress gap: <ref>: <why>`.
+
+On spawn an actor is dressed (`setcharacter`) in a character of its archetype:
+`archetypecharacter` draws one of its ids, then one of that row's bodies,
+heads and hats, and returns them (`""` for none). The spawn line ends
+`character=<body>/<head>/<hat>`. A model the renderer cannot draw (not
+captured, or of another family than the map's) leaves the actor in its
+team's kit and is warned once (`character body=… drawn in its team kit`).
 
 ## Actors
 
@@ -289,9 +289,9 @@ state's first row; the anims missing are
 logged once (`survival actor anims not loaded`). Anim-tree methods take the
 name as a string, resolved in the actor's tree.
 
-A human player is drawn in the `characters.csv` row `player_character`
-(`delta_aa`), dressed with `setcharacter` at each spawn, and its third-person
-body is posed by `player_anims.csv` — `state,stance,direction,anims`, the
+A human player is drawn in a character of the archetype `player_archetype`
+(`friendly_support_delta`), dressed with `setcharacter` at each spawn, and its third-person
+body is posed by `player_anims.csv` — `set,state,stance,direction,anims` (set `human`), the
 same shape — instead of the MP playeranim script. The simulation picks a
 row where it runs that script: the state from the anim move type (`idle`,
 `walk`, `run`, `sprint`), `fire` while a standing-still player holds the
@@ -608,11 +608,14 @@ positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 1, every `test_wave` ref an archetype (held to what an actor plays like any
 wave's), every `archetypes.csv` trait one of the six, speed a whole
 percent above zero, accuracy a whole percent 0–100, burst a whole count
-above zero and character an id of `characters.csv`, every
+above zero and character an id of `characters.csv`, every archetype an
+actor plays other than a vehicle dressed from an aitype and character
+scripts of the loaded zones, every `aitype_fill_ins.csv` ref an archetype
+whose c4 is empty, every
 `actor_anims.csv` row a state, stance and direction the actor script picks
 by with every state given a row, every `player_anims.csv` row a state,
 stance and direction a player's body is picked by with a standing `idle`,
-`player_character` an id of `characters.csv` and `player_blend_ms` a whole
+`player_archetype` an archetype so dressed and `player_blend_ms` a whole
 number, every `actor_*` setting a whole number
 (its percents 0–100, `actor_budget` above zero) and `actor_explosive_means` naming something, every
 `characters.csv` id named once with a body and no head on a `fullbody_*`

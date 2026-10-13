@@ -272,6 +272,7 @@ pub(super) async fn walk_prepared_match(
     match runtime_namespace {
         Some(asset_core::AssetNamespace::Iw5) => {
             crate::survival::insert_survival_scripts(&mut scripts);
+            report.extend(crate::survival::survival_dress_archetypes(&mut scripts));
         }
         _ => scripts.insert_source(
             "iw4l_t6/equipment",

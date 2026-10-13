@@ -2,12 +2,20 @@ use std::collections::BTreeMap;
 
 use crate::ScriptTable;
 
+mod aitypes;
+
+pub(crate) use aitypes::is_dress_script;
+
 const SETTINGS_TABLE: &str = "survival/settings.csv";
 const SETTINGS: &str = include_str!("survival/settings.csv");
 
 const WEAPON_ALIASES_TABLE: &str = "survival/weapon_aliases.csv";
 const ARCHETYPES_TABLE: &str = "survival/archetypes.csv";
+/// Written at load from the aitypes of the loaded zones: a character script
+/// by number, its bodies, heads and hats (each space separated, one drawn
+/// per spawn).
 const CHARACTERS_TABLE: &str = "survival/characters.csv";
+const AITYPE_FILL_INS_TABLE: &str = "survival/aitype_fill_ins.csv";
 const HUD_TABLE: &str = "survival/hud.csv";
 const CHALLENGES_TABLE: &str = "survival/challenges.csv";
 const EOG_TABLE: &str = "survival/eog.csv";
@@ -26,7 +34,10 @@ const TABLES: [(&str, &str); 12] = [
         include_str!("survival/weapon_aliases.csv"),
     ),
     (ARCHETYPES_TABLE, include_str!("survival/archetypes.csv")),
-    (CHARACTERS_TABLE, include_str!("survival/characters.csv")),
+    (
+        AITYPE_FILL_INS_TABLE,
+        include_str!("survival/aitype_fill_ins.csv"),
+    ),
     (HUD_TABLE, include_str!("survival/hud.csv")),
     (CHALLENGES_TABLE, include_str!("survival/challenges.csv")),
     (EOG_TABLE, include_str!("survival/eog.csv")),
@@ -73,6 +84,8 @@ mod wave_column {
 const ARCHETYPE_ROWS: std::ops::Range<u32> = 100..1000;
 
 mod archetype_column {
+    /// The spawner classname that names the archetype's aitype.
+    pub(super) const CLASSNAME: usize = 4;
     pub(super) const WEAPON: usize = 5;
     pub(super) const OFFHAND: usize = 6;
     pub(super) const HEALTH: usize = 7;
@@ -234,9 +247,10 @@ const AIRSUPPORT_NAMES: [&str; 4] = [
 /// `AIRSUPPORT_TABLE` rows that name a weapon of the loaded zones.
 const AIRSUPPORT_WEAPONS: [&str; 1] = ["airstrike_bomb"];
 
-/// `ARCHETYPES_TABLE`: ref, weapon, character ids (space separated, one
-/// drawn per spawn), trait, move speed in percent, and for an actor its
-/// accuracy in percent and burst length in shots.
+/// `ARCHETYPES_TABLE`: ref, weapon, character ids (rows of
+/// `CHARACTERS_TABLE`, space separated, one drawn per spawn; written at load),
+/// trait, move speed in percent, and for an actor its accuracy in percent and
+/// burst length in shots.
 mod fill_in_column {
     pub(super) const WEAPON: usize = 1;
     pub(super) const CHARACTERS: usize = 2;
@@ -246,22 +260,15 @@ mod fill_in_column {
     pub(super) const BURST: usize = 6;
 }
 
-/// `ACTOR_ANIMS_TABLE`: anim set, state, stance (empty for any), direction
-/// (empty for any), anim names (space separated, one drawn per play).
+/// `ACTOR_ANIMS_TABLE` and `PLAYER_ANIMS_TABLE`: state, stance (empty for
+/// any), direction (empty for any), anim names (space separated, one drawn
+/// per play).
 mod actor_anim_column {
     pub(super) const SET: usize = 0;
     pub(super) const STATE: usize = 1;
     pub(super) const STANCE: usize = 2;
     pub(super) const DIRECTION: usize = 3;
     pub(super) const ANIMS: usize = 4;
-}
-
-/// `PLAYER_ANIMS_TABLE`: `ACTOR_ANIMS_TABLE`'s columns without the set.
-mod player_anim_column {
-    pub(super) const STATE: usize = 0;
-    pub(super) const STANCE: usize = 1;
-    pub(super) const DIRECTION: usize = 2;
-    pub(super) const ANIMS: usize = 3;
 }
 
 /// The anim sets with the states their script picks anims for, and the
@@ -317,10 +324,8 @@ const DOG_NUMBERS: [&str; 5] = [
     "dog_attack_rest_ms",
 ];
 
-/// `CHARACTERS_TABLE`: id, body model, head models (space separated, one
-/// drawn per spawn), hat model or empty.
 mod character_column {
-    pub(super) const BODY: usize = 1;
+    pub(super) const BODIES: usize = 1;
     pub(super) const HEADS: usize = 2;
 }
 
@@ -549,49 +554,30 @@ pub fn survival_pick_anims(
     is_loaded: impl Fn(&str) -> bool,
 ) -> Vec<String> {
     let mut missing = std::collections::BTreeSet::new();
-    let layouts: [(&str, &[usize], usize); 2] = [
-        (
-            ACTOR_ANIMS_TABLE,
-            &[actor_anim_column::SET, actor_anim_column::STATE],
-            actor_anim_column::ANIMS,
-        ),
-        (
-            PLAYER_ANIMS_TABLE,
-            &[player_anim_column::STATE],
-            player_anim_column::ANIMS,
-        ),
-    ];
-    for (name, state_columns, anims_column) in layouts {
+    for name in [ACTOR_ANIMS_TABLE, PLAYER_ANIMS_TABLE] {
         if let Some(anims) = scripts.table_mut(name) {
-            missing.extend(pick_table_anims(
-                anims,
-                state_columns,
-                anims_column,
-                &is_loaded,
-            ));
+            missing.extend(pick_table_anims(anims, &is_loaded));
         }
     }
     missing.into_iter().collect()
 }
 
-/// Narrows one anim table whose rows are keyed by `state_columns` (a state
-/// left with no anim takes its key's first row) and list anims in
-/// `anims_column`.
 fn pick_table_anims(
     anims: &mut ScriptTable,
-    state_columns: &[usize],
-    anims_column: usize,
     is_loaded: &impl Fn(&str) -> bool,
 ) -> std::collections::BTreeSet<String> {
     let columns = anims.columns.max(1);
     let mut missing = std::collections::BTreeSet::new();
-    if columns <= anims_column {
+    if columns <= actor_anim_column::ANIMS {
         return missing;
     }
-    let mut first: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    let mut first: BTreeMap<(String, String), String> = BTreeMap::new();
     for row in anims.cells.chunks_exact_mut(columns).take(anims.rows) {
-        let state: Vec<String> = state_columns.iter().map(|&at| row[at].clone()).collect();
-        let cell = &mut row[anims_column];
+        let state = (
+            row[actor_anim_column::SET].clone(),
+            row[actor_anim_column::STATE].clone(),
+        );
+        let cell = &mut row[actor_anim_column::ANIMS];
         let (loaded, absent): (Vec<&str>, Vec<&str>) =
             cell.split_whitespace().partition(|name| is_loaded(name));
         missing.extend(absent.into_iter().map(str::to_owned));
@@ -608,13 +594,121 @@ fn pick_table_anims(
     missing
 }
 
+/// The archetypes of the waves table, by ref, with the characters their
+/// aitype draws or why it draws none. An archetype's classname is the one a
+/// script of the loaded zones pairs with its ref (a map's override), else the
+/// waves table's (c4), else `AITYPE_FILL_INS_TABLE`'s; one with none is
+/// dressed by nothing.
+type Dresses = Vec<(String, Result<aitypes::Dress, String>)>;
+
+fn archetype_dresses(
+    tables: &BTreeMap<String, ScriptTable>,
+    scripts: &BTreeMap<String, Vec<u8>>,
+) -> Result<Dresses, String> {
+    let table = |name: &str| {
+        tables
+            .get(&name.to_ascii_lowercase())
+            .ok_or_else(|| format!("no loaded zone holds `{name}`"))
+    };
+    let waves = table(required_setting("waves_table")?)?;
+    let fill_ins = table(AITYPE_FILL_INS_TABLE)?;
+    let archetypes: Vec<&[String]> = waves.rows().filter(|row| is_archetype_row(row)).collect();
+    let refs: Vec<&str> = archetypes.iter().map(|row| cell(row, 1)).collect();
+    let overrides = aitypes::overrides(scripts, &refs);
+    Ok(archetypes
+        .into_iter()
+        .filter_map(|row| {
+            let reference = cell(row, 1);
+            let fill_in = fill_ins
+                .rows()
+                .find(|fill| cell(fill, 0).eq_ignore_ascii_case(reference))
+                .map_or("", |fill| cell(fill, 1));
+            let (classname, overridden_by) = match overrides.get(&reference.to_ascii_lowercase()) {
+                Some((classname, script)) => (classname.as_str(), Some(script.clone())),
+                None => match cell(row, archetype_column::CLASSNAME) {
+                    "" if fill_in.is_empty() => return None,
+                    "" => (fill_in, None),
+                    classname => (classname, None),
+                },
+            };
+            Some((
+                reference.to_owned(),
+                aitypes::dress(classname, overridden_by, scripts),
+            ))
+        })
+        .collect())
+}
+
+/// Dresses the archetypes as MW3 does, from the aitypes of the loaded zones:
+/// writes `CHARACTERS_TABLE` and each archetype's characters into
+/// `ARCHETYPES_TABLE`, before the models the tables name are kept. An
+/// archetype that cannot be dressed is left without characters for
+/// `survival_data_check` to refuse. Returns a line per archetype.
+pub(crate) fn survival_dress_archetypes(scripts: &mut crate::ScriptSources) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut characters = BTreeMap::new();
+    match archetype_dresses(scripts.tables(), scripts.dress_scripts()) {
+        Err(error) => lines.push(format!("survival dress gap: {error}")),
+        Ok(dresses) => {
+            for (reference, dress) in dresses {
+                let dress = match dress {
+                    Ok(dress) => dress,
+                    Err(error) => {
+                        lines.push(format!("survival dress gap: {reference}: {error}"));
+                        continue;
+                    }
+                };
+                let ids: Vec<&str> = dress.characters.iter().map(|c| c.id.as_str()).collect();
+                let written = scripts.set_table_cells(
+                    ARCHETYPES_TABLE,
+                    &reference,
+                    &[(fill_in_column::CHARACTERS, ids.join(" "))],
+                );
+                lines.push(format!(
+                    "survival dress: {reference} -> {}{} characters={}{}",
+                    dress.aitype,
+                    dress
+                        .overridden_by
+                        .as_ref()
+                        .map_or(String::new(), |script| format!(" (override in {script})")),
+                    ids.len(),
+                    if written {
+                        String::new()
+                    } else {
+                        format!(" but no row of {ARCHETYPES_TABLE} takes them")
+                    },
+                ));
+                for character in dress.characters {
+                    let row = [
+                        character.id.clone(),
+                        character.bodies.join(" "),
+                        character.heads.join(" "),
+                        character.hats.join(" "),
+                    ]
+                    .join(",");
+                    characters.insert(character.id, row);
+                }
+            }
+        }
+    }
+    let csv: Vec<String> = characters.into_values().collect();
+    scripts.insert_table(CHARACTERS_TABLE, &csv.join("\n"));
+    lines
+}
+
+fn is_archetype_row(row: &[String]) -> bool {
+    cell(row, 0)
+        .parse::<u32>()
+        .is_ok_and(|index| ARCHETYPE_ROWS.contains(&index))
+}
+
 /// The rows of `PLAYER_ANIMS_TABLE` as the match narrowed them: state,
 /// stance (empty for any), direction (empty for any) and the anims, one
 /// drawn per play.
 pub fn survival_player_anims(
     scripts: &crate::ScriptSources,
 ) -> Vec<(String, String, String, Vec<String>)> {
-    use player_anim_column as c;
+    use actor_anim_column as c;
     let Some(anims) = scripts.table(PLAYER_ANIMS_TABLE) else {
         return Vec::new();
     };
@@ -639,11 +733,11 @@ pub fn survival_player_anims(
 /// one of the waves table's, and every armory placement on `zone` is
 /// readable. The gametype script trusts them, so a gap refuses the match.
 pub fn survival_data_check(
-    tables: &BTreeMap<String, ScriptTable>,
-    schemas: &BTreeMap<String, std::sync::Arc<structured_data_iw4::DefinitionSet>>,
+    scripts: &crate::ScriptSources,
     zone: &str,
     is_weapon: impl Fn(&str) -> bool,
 ) -> Result<(), String> {
+    let (tables, schemas) = (scripts.tables(), scripts.schemas());
     let table = |name: &str| {
         tables
             .get(&name.to_ascii_lowercase())
@@ -678,6 +772,32 @@ pub fn survival_data_check(
     let waves = table(waves_name)?;
     let characters = table(CHARACTERS_TABLE)?;
     check_characters(characters, &mut gaps);
+    let dresses = archetype_dresses(tables, scripts.dress_scripts())?;
+    for row in table(AITYPE_FILL_INS_TABLE)?.rows() {
+        let reference = cell(row, 0);
+        match waves
+            .rows()
+            .find(|wave| is_archetype_row(wave) && cell(wave, 1).eq_ignore_ascii_case(reference))
+            .map(|wave| cell(wave, archetype_column::CLASSNAME))
+        {
+            None => gaps.push(format!(
+                "{AITYPE_FILL_INS_TABLE}: `{reference}` is no archetype of {waves_name}"
+            )),
+            Some("") => {}
+            Some(classname) => gaps.push(format!(
+                "{AITYPE_FILL_INS_TABLE}: {waves_name} names `{reference}`'s classname: `{classname}`"
+            )),
+        }
+    }
+    let player = required_setting("player_archetype")?;
+    if !dresses
+        .iter()
+        .any(|(reference, dress)| reference.eq_ignore_ascii_case(player) && dress.is_ok())
+    {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `player_archetype` `{player}` is no archetype dressed from the loaded zones"
+        ));
+    }
     for row in table(ARCHETYPES_TABLE)?.rows() {
         let (archetype, weapon) = (cell(row, 0), cell(row, fill_in_column::WEAPON));
         let trait_name = cell(row, fill_in_column::TRAIT);
@@ -742,6 +862,7 @@ pub fn survival_data_check(
         table(WEAPON_ALIASES_TABLE)?,
         (waves_name, waves),
         (&list_name, list),
+        &dresses,
         &is_weapon,
         &mut gaps,
     )?;
@@ -768,7 +889,7 @@ pub fn survival_data_check(
     check_armory_settings(&mut gaps)?;
     check_weapon_slots(&mut gaps)?;
     check_actor(table(ACTOR_ANIMS_TABLE)?, &mut gaps)?;
-    check_player_anims(table(PLAYER_ANIMS_TABLE)?, characters, &mut gaps)?;
+    check_player_anims(table(PLAYER_ANIMS_TABLE)?, &mut gaps)?;
     let def_name = required_setting("player_data_def")?;
     let schema = schemas
         .get(&def_name.to_ascii_lowercase())
@@ -844,25 +965,25 @@ fn layer_waves_tables(tables: &BTreeMap<String, ScriptTable>) -> Result<Vec<Stri
 /// waves table itself) to the archetypes (of `waves`) and armories the
 /// script plays it with: waves numbered 1 to N with a repeat block, refs that
 /// name archetypes, parallel special counts, and for every archetype an actor
-/// plays a health and, unless it is one of `dog_archetypes`, a weapon of the
-/// loaded zones.
+/// plays a health, a dress of the loaded zones' aitypes unless it is a
+/// vehicle, and, unless it is one of `dog_archetypes`, a weapon of the loaded
+/// zones.
 fn check_waves(
     archetypes: &ScriptTable,
     aliases: &ScriptTable,
     (waves_name, waves): (&str, &ScriptTable),
     (list_name, list): (&str, &ScriptTable),
+    dresses: &Dresses,
     is_weapon: &impl Fn(&str) -> bool,
     gaps: &mut Vec<String>,
 ) -> Result<(), String> {
     use wave_column as w;
     let archetype_row = |reference: &str| {
-        waves.rows().find(|row| {
-            cell(row, 0)
-                .parse::<u32>()
-                .is_ok_and(|index| ARCHETYPE_ROWS.contains(&index))
-                && cell(row, 1).eq_ignore_ascii_case(reference)
-        })
+        waves
+            .rows()
+            .find(|row| is_archetype_row(row) && cell(row, 1).eq_ignore_ascii_case(reference))
     };
+    let mut vehicles = Vec::new();
     let unsimulated: Vec<&str> = required_setting("unsimulated_archetypes")?
         .split_whitespace()
         .collect();
@@ -933,6 +1054,7 @@ fn check_waves(
         refs.extend(specials);
         refs.extend(cell(row, w::BOSSES).split_whitespace());
         refs.extend(cell(row, w::VEHICLES).split_whitespace());
+        vehicles.extend(cell(row, w::VEHICLES).split_whitespace());
         for reference in refs {
             if archetype_row(reference).is_none() {
                 gaps.push(format!("{wave}: `{reference}` is no archetype"));
@@ -1009,6 +1131,21 @@ fn check_waves(
                 "{waves_name}: archetype `{reference}` pays no whole reward in c{}: `{reward}`",
                 archetype_column::REWARD
             ));
+        }
+        if !vehicles.iter().any(|r| r.eq_ignore_ascii_case(reference)) {
+            match dresses
+                .iter()
+                .find(|(dressed, _)| dressed.eq_ignore_ascii_case(reference))
+            {
+                None => gaps.push(format!(
+                    "{waves_name}: archetype `{reference}` names no aitype classname, in c{} or {AITYPE_FILL_INS_TABLE}",
+                    archetype_column::CLASSNAME
+                )),
+                Some((_, Err(error))) => gaps.push(format!(
+                    "{waves_name}: archetype `{reference}` is dressed by no aitype of the loaded zones: {error}"
+                )),
+                Some((_, Ok(_))) => {}
+            }
         }
         if dogs.iter().any(|r| r.eq_ignore_ascii_case(reference)) {
             continue;
@@ -1227,16 +1364,20 @@ fn check_airsupport(
 fn check_characters(characters: &ScriptTable, gaps: &mut Vec<String>) {
     let mut seen = std::collections::BTreeSet::new();
     for row in characters.rows() {
-        let (id, body) = (cell(row, 0), cell(row, character_column::BODY));
+        let (id, bodies) = (cell(row, 0), cell(row, character_column::BODIES));
         if id.is_empty() || !seen.insert(id) {
             gaps.push(format!(
                 "{CHARACTERS_TABLE}: `{id}` is empty or names more than one row"
             ));
         }
-        if body.is_empty() {
+        if bodies.is_empty() {
             gaps.push(format!("{CHARACTERS_TABLE}: `{id}` has no body"));
         }
-        if body.starts_with(FULLBODY_PREFIX) && !cell(row, character_column::HEADS).is_empty() {
+        if let Some(body) = bodies
+            .split_whitespace()
+            .find(|body| body.starts_with(FULLBODY_PREFIX))
+            && !cell(row, character_column::HEADS).is_empty()
+        {
             gaps.push(format!(
                 "{CHARACTERS_TABLE}: `{id}` has heads on its full body `{body}`"
             ));
@@ -1553,15 +1694,11 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
 
 /// Holds `PLAYER_ANIMS_TABLE` and the `player_*` settings to what the
 /// player's third-person body is picked and drawn by: every row a state,
-/// stance and direction it picks by, `idle` standing covered, a character of
-/// `CHARACTERS_TABLE` and a whole blend time. Anims are not checked: a missing
-/// one falls back to its state's first row.
-fn check_player_anims(
-    anims: &ScriptTable,
-    characters: &ScriptTable,
-    gaps: &mut Vec<String>,
-) -> Result<(), String> {
-    use player_anim_column as c;
+/// stance and direction it picks by, `idle` standing covered and a whole
+/// blend time. Anims are not checked: a missing one falls back to its state's
+/// first row.
+fn check_player_anims(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String> {
+    use actor_anim_column as c;
     for row in anims.rows() {
         let (state, stance, direction) = (
             cell(row, c::STATE),
@@ -1593,12 +1730,6 @@ fn check_player_anims(
     {
         gaps.push(format!(
             "{PLAYER_ANIMS_TABLE}: no `idle` row for a standing player"
-        ));
-    }
-    let character = required_setting("player_character")?;
-    if !characters.rows().any(|row| cell(row, 0) == character) {
-        gaps.push(format!(
-            "{SETTINGS_TABLE}: `player_character` `{character}` is no row of {CHARACTERS_TABLE}"
         ));
     }
     let blend = required_setting("player_blend_ms")?;
