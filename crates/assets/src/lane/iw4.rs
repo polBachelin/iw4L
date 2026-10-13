@@ -378,6 +378,7 @@ impl ZoneLane for Iw4Lane {
             return LoadedWorld {
                 scripts,
                 sound: map_sound,
+                zone_refs: Default::default(),
                 materials,
                 world: PreparedWorld {
                     fx: std::mem::take(&mut fx),
@@ -603,6 +604,7 @@ impl ZoneLane for Iw4Lane {
                 LoadedWorld {
                     scripts,
                     sound: map_sound,
+                    zone_refs: Default::default(),
                     materials: map_materials,
                     world: PreparedWorld {
                         source_namespace: Some(asset_core::AssetNamespace::Iw4),
@@ -662,6 +664,7 @@ impl ZoneLane for Iw4Lane {
                 LoadedWorld {
                     scripts,
                     sound: map_sound,
+                    zone_refs: Default::default(),
                     materials: asset_material::MaterialCatalog::default(),
                     world: PreparedWorld {
                         fx,
@@ -1064,6 +1067,7 @@ impl ZoneLane for Iw4Lane {
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
                 path_graph: sink.path_graph,
+                zone_refs: Default::default(),
                 preparation: None,
             }
         } else {
@@ -1102,6 +1106,7 @@ impl ZoneLane for Iw4Lane {
                 scripts: sink.scripts,
                 film_visions: sink.film_visions,
                 path_graph: sink.path_graph,
+                zone_refs: Default::default(),
                 preparation: None,
             }
         }

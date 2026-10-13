@@ -60,9 +60,6 @@ pub struct MatchLoadRequest {
     pub base_zones: Result<Vec<PathBuf>, String>,
     /// The mode zones found beside the base zones, in load order.
     pub mode_zones: Result<Vec<PathBuf>, String>,
-    /// The mode's animation zones the user's data has, walked for their
-    /// animations alone.
-    pub anim_zones: Vec<PathBuf>,
     pub progress: LoadProgress,
 }
 
@@ -174,7 +171,6 @@ fn start_match_load(
     };
     let zone_ff = request.zone_ff.clone();
     let base_zones = request.base_zones.clone();
-    let anim_zones = request.anim_zones.clone();
     let progress = request.progress.clone();
     let request_id = request.request_id;
     let load_key = request.load_key;
@@ -201,7 +197,6 @@ fn start_match_load(
             zone_ff,
             base_zones,
             mode_zones.clone(),
-            anim_zones,
             progress.clone(),
         )
         .await
@@ -312,14 +307,6 @@ fn approve_map_load(
             Ok(path) => profile.find_mode_zones(&games, path, &mode),
             Err(error) => Err(error.clone()),
         };
-        let anim_zones = match &zone_ff {
-            Ok(path) => profile
-                .find_anim_zones(&games, path, &mode)
-                .into_iter()
-                .filter_map(|(_, found)| found.ok())
-                .collect(),
-            Err(_) => Vec::new(),
-        };
         let error = zone_ff
             .as_ref()
             .err()
@@ -345,7 +332,6 @@ fn approve_map_load(
             zone_ff,
             base_zones,
             mode_zones,
-            anim_zones,
             progress,
         });
     }

@@ -23,8 +23,10 @@ a weapon themselves.
 ## Our files (`crates/assets/src/survival/`, no header rows)
 
 * `settings.csv` — `key,value`: zones (`base_zones`, loaded right after the
-  map, the first anchoring the census, today `common_mp` as every other mode;
-  `mode_zones`, laid over them; `actor_anim_zones`, see Actors), table names, teams, `friendly_fire`
+  map, the first anchoring the census: MW3's SP set `code_pre_gfx
+  code_post_gfx common ui patch`, no MP zone; `mode_zones`, laid over them;
+  `layer_zones`, the Special Ops layer `so_survival_<map>` where the user's
+  data has it), table names, teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
   `unsimulated_archetypes` (archetypes no actor can play: the waves skip them;
@@ -93,17 +95,14 @@ a weapon themselves.
   (slots 1 and 2), the RPG 2, a self-revive 1; grenades and armor fill up.
 * `weapon_aliases.csv` — `ref,weapon [weapon...][,missile [missile...]]`: a
   table ref mapped to the weapon it is given as, each cell a list of
-  candidates, SP weapon names first and today's MP name last. When the match
+  candidates, SP weapon names only. When the match
   is installed every cell is narrowed to its first candidate the loaded zones
   carry under that exact script name (an `_mp` spelling does not stand in
   for the SP one), and the install log says `survival weapons:` with the picks;
   a cell with none refuses the match. `remote_missile` names the detonator
-  the player holds in c1 and the missile it launches in c2. The SP names
-  (`fraggrenade`, `flash_grenade`, `rpg_survival`) are not yet confirmed
-  against the `IW5 weapons captured:` debug line of the zones `mode_zones`
-  loads; until they are, a wrong one falls back to the MP name, which the
-  `survival weapons:` line shows. The juggernaut guns (`m60jugg`,
-  `riotshieldjugg`) name the MP weapon alone.
+  the player holds in c1 and the missile it launches in c2. No Survival
+  table names an `_mp` weapon, an `mp_body_*` model or a `pb_*` anim. The
+  juggernaut archetypes have no weapon fill-in and keep the table's.
 * `archetypes.csv` — `ref,weapon,characters,trait,speed,accuracy,burst`: fill-ins for archetype
   cells MW3's table leaves empty or names in a form we cannot use (SP actor
   classnames), and what sets an archetype apart. The weapon resolves through
@@ -308,13 +307,7 @@ not bend the torso. The table is narrowed like `actor_anims.csv` and its
 missing anims share the same log line. Hit volumes still follow the MP
 playeranim script, which keeps running underneath.
 
-SP human anims live in MW3's SP `common` zone, which survival does not load
-until the zone flip. `actor_anim_zones` (`common`) names zones walked for their anims
-alone, after the mode's zones: no models, menus, sounds, weapons or tables
-are taken from them, and an anim the zones before them already hold is kept.
-A zone missing from the user's data is warned at launch (`mode anim zone
-gap`) and the actors play what the other zones hold. The row is temporary:
-the zone flip loads `common` in full and removes it.
+SP human anims live in MW3's SP `common` zone, one of survival's base zones.
 
 ## Dogs
 

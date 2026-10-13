@@ -3,10 +3,10 @@ regular,,russian_airborne,,,30,4
 hardened,,russian_woodland,,,40,5
 veteran,,russian_black,,,50,5
 elite,,jug_c,,,60,6
-jug_regular,m60jugg,jug_novisor,,75,30,10
-jug_riotshield,riotshieldjugg,jug_novisor,,75,30,4
-jug_explosive,m60jugg,jug_explosive,explosive,75,30,10
-jug_minigun,m60jugg,jug_sp,,75,20,15
+jug_regular,,jug_novisor,,75,30,10
+jug_riotshield,,jug_novisor,,75,30,4
+jug_explosive,,jug_explosive,explosive,75,30,10
+jug_minigun,,jug_sp,,75,20,15
 martyrdom,,chemwar_c chemwar_cc,martyrdom,,25,3
 claymore,,russian_naval_c russian_naval_d russian_naval_f russian_naval_ff,claymore,,30,4
 chemical,,chemwar_full_a chemwar_full_aa chemwar_d chemwar_dd,gas,,30,4

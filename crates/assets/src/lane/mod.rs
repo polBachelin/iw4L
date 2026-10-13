@@ -4,14 +4,16 @@ mod iw5;
 mod sink;
 mod t5;
 mod t6;
+mod zone_refs;
 
 use std::path::Path;
 
 pub(crate) use helpers::{
     build_iw5_static_model_draw, build_static_model_draw, build_t5_static_model_draw,
 };
-pub(crate) use iw5::{load_anim_zone, load_mode_zone};
+pub(crate) use iw5::load_mode_zone;
 pub(crate) use sink::{CommonWalkSink, MaterialPopulationSink, ZoneWalkSink};
+pub use zone_refs::ZoneRefCensus;
 
 use crate::{
     lane_capability::{LaneStatus, PreparedCapability},
@@ -53,6 +55,7 @@ pub struct LoadedWorld {
     pub sound: Option<Result<asset_audio::SoundCatalog, String>>,
     pub report: Vec<String>,
     pub gaps: Vec<LaneGap>,
+    pub zone_refs: ZoneRefCensus,
 }
 
 impl LoadedWorld {
@@ -132,6 +135,7 @@ pub struct CommonCensus {
     /// The `PathData` a zone of the set carries: a Special Ops layer ships
     /// the graph its map's own zone lacks.
     pub path_graph: asset_world::PathGraph,
+    pub zone_refs: ZoneRefCensus,
 
     pub pending_images: Option<asset_material::material_images::ImageDemandPlan>,
 
@@ -170,6 +174,7 @@ impl CommonCensus {
             teamsets,
             film_visions,
             path_graph,
+            zone_refs,
             pending_images,
             preparation,
         } = later;
@@ -234,6 +239,7 @@ impl CommonCensus {
         if !path_graph.is_empty() {
             self.path_graph = path_graph;
         }
+        self.zone_refs.extend(zone_refs);
         if pending_images.is_some() {
             gaps.push("its image plan was dropped (mode zones decode with the merged pool)");
         }
@@ -380,6 +386,7 @@ impl LoadedWorld {
             sound: Default::default(),
             report: Default::default(),
             gaps: Default::default(),
+            zone_refs: Default::default(),
         }
     }
 }

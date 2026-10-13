@@ -1,9 +1,7 @@
-fraggrenade,fraggrenade frag_grenade_mp
-flash_grenade,flash_grenade flash_grenade_mp
-rpg,rpg_survival rpg_mp
+fraggrenade,fraggrenade
+flash_grenade,flash_grenade
+rpg,rpg_survival
 sentry,sentry_minigun_so
 sentry_gl,sentry_gun_so
 remote_missile,remote_missile_detonator,remote_missile_survival
 precision_airstrike,killstreak_precision_airstrike_sp
-m60jugg,iw5_m60jugg_mp
-riotshieldjugg,iw5_riotshieldjugg_mp

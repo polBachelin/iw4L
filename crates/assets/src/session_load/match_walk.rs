@@ -7,7 +7,6 @@ pub(super) async fn walk_prepared_match(
     zone_ff: Result<PathBuf, String>,
     base_zones: Result<Vec<PathBuf>, String>,
     mode_zones: Vec<PathBuf>,
-    anim_zones: Vec<PathBuf>,
     progress: LoadProgress,
 ) -> (MatchLoadOutcome, Option<Arc<CommonSet>>) {
     let zone_name = zone_ff
@@ -45,7 +44,6 @@ pub(super) async fn walk_prepared_match(
         zone_ff.as_ref().ok().map(PathBuf::as_path),
         base_zones.as_deref().unwrap_or(&[]),
         &mode_zones,
-        &anim_zones,
         &mut donor_report,
     );
     let waiting = progress.begin_scoped(StageId::CommonAssets, "shared common", None);
@@ -77,6 +75,7 @@ pub(super) async fn walk_prepared_match(
         teamsets,
         film_visions: common_film_visions,
         path_graph: common_path_graph,
+        zone_refs: common_zone_refs,
         mut weapons,
         mut fpv_meshes,
         mut world_weapons,
@@ -184,9 +183,16 @@ pub(super) async fn walk_prepared_match(
         sound,
         mut report,
         gaps,
+        mut zone_refs,
     } = loaded;
     world.source_namespace = map_namespace;
     report.append(&mut common_report);
+    zone_refs.extend(common_zone_refs);
+    if !zone_refs.is_empty() {
+        let line = zone_refs.unresolved_line();
+        diag::info!(Zone, "{line}");
+        report.push(line);
+    }
     // A Special Ops layer carries the graph its map's own zone lacks.
     if facts.path_graph.is_empty() && !common_path_graph.is_empty() {
         report.push(format!(

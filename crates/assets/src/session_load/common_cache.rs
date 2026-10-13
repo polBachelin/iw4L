@@ -12,8 +12,6 @@ pub struct CommonKey {
     /// The launch mode's zones, walked after the base zones in this order: a
     /// set prepared for one mode is never the set of another.
     pub(super) mode: Vec<PathBuf>,
-    /// Zones walked after the mode's for their animations alone.
-    pub(super) anims: Vec<PathBuf>,
 }
 
 impl CommonKey {
@@ -22,7 +20,6 @@ impl CommonKey {
         zone_ff: Option<&Path>,
         base: &[PathBuf],
         mode: &[PathBuf],
-        anims: &[PathBuf],
         report: &mut Vec<String>,
     ) -> Self {
         Self {
@@ -34,7 +31,6 @@ impl CommonKey {
                 report,
             ),
             mode: mode.to_vec(),
-            anims: anims.to_vec(),
         }
     }
 
@@ -51,7 +47,6 @@ impl CommonKey {
             base,
             foreign: None,
             mode: Vec::new(),
-            anims: Vec::new(),
         }
     }
 }
@@ -74,10 +69,6 @@ impl std::fmt::Display for CommonKey {
         if !self.mode.is_empty() {
             let stems: Vec<_> = self.mode.iter().map(|zone| zone_stem(zone)).collect();
             write!(f, " + mode [{}]", stems.join(" "))?;
-        }
-        if !self.anims.is_empty() {
-            let stems: Vec<_> = self.anims.iter().map(|zone| zone_stem(zone)).collect();
-            write!(f, " + anims [{}]", stems.join(" "))?;
         }
         Ok(())
     }
@@ -117,6 +108,7 @@ pub(super) struct CommonProducts {
         Result<asset_world::FilmVision, asset_world::FilmVisionParseError>,
     >,
     pub(super) path_graph: asset_world::PathGraph,
+    pub(super) zone_refs: crate::lane::ZoneRefCensus,
     pub(super) weapons: WeaponBuild,
     pub(super) fpv_meshes: FpvMeshBuild,
     pub(super) world_weapons: WorldWeaponBuild,
@@ -405,21 +397,6 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             })
         })
         .collect();
-    let anim_open: Vec<_> = key
-        .anims
-        .iter()
-        .cloned()
-        .map(|path| {
-            let progress = progress.clone();
-            pool.spawn(async move {
-                let zone = zone_stem(&path);
-                let stage = progress.begin_scoped(StageId::CommonAssets, zone.clone(), None);
-                let opened = open_zone_shared(&path);
-                finish_zone_open(stage, &opened);
-                (zone, path, opened)
-            })
-        })
-        .collect();
 
     let t5_common_prep = {
         let anchor = anchor.clone();
@@ -536,6 +513,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
     let mut scripts = startup_scripts;
     let mut common_film_visions = std::collections::BTreeMap::new();
     let mut common_path_graph = asset_world::PathGraph::default();
+    let mut zone_refs = crate::lane::ZoneRefCensus::default();
     let mut fpv_plan = None;
     let mut iw4_census_stats = Vec::new();
 
@@ -587,33 +565,6 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
                 diag::warn!(World, "{gap}");
                 census.report.push(gap);
             }
-            // Anim zones only add animations the zones before them lack.
-            for task in anim_open {
-                let (zone, anim_path, opened) = task.await;
-                let gap = match opened {
-                    Ok(anim_image) if anim_image.game == asset_core::ZoneGame::Iw5 => {
-                        let (xanims, report) = crate::lane::load_anim_zone(&anim_path, &anim_image);
-                        census.report.extend(report);
-                        let (added, kept) = census.xanims.absorb_vacant(xanims);
-                        census.report.push(format!(
-                            "{zone} anims: {} added, {kept} already held",
-                            added.len()
-                        ));
-                        continue;
-                    }
-                    Ok(anim_image) => format!(
-                        "anim zone gap: {zone} at {} is {}; only IW5 anim zones are walked",
-                        anim_path.display(),
-                        anim_image.game.prefix()
-                    ),
-                    Err(error) => format!(
-                        "anim zone gap: {zone}: open {}: {error}",
-                        anim_path.display()
-                    ),
-                };
-                diag::warn!(World, "{gap}");
-                census.report.push(gap);
-            }
             fpv_plan = census.pending_images.take().filter(|plan| !plan.is_empty());
             shared_surfaces = census.shared_surfaces;
             common_scene_models = census.scene_models;
@@ -627,6 +578,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             teamsets.extend(census.teamsets);
             common_film_visions = census.film_visions;
             common_path_graph = census.path_graph;
+            zone_refs = census.zone_refs;
             scripts = census.scripts;
             iw4_census_stats = census.cac_tables;
             (
@@ -929,6 +881,7 @@ async fn prepare_common(key: CommonKey) -> Arc<CommonSet> {
             teamsets,
             film_visions: common_film_visions,
             path_graph: common_path_graph,
+            zone_refs,
             weapons,
             fpv_meshes,
             world_weapons,
