@@ -1,31 +1,31 @@
-idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
-idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
-idle,prone,,prone_aim_5 prone_aim_idle
-walk,stand,,walk_lowready_f
-walk,stand,b,walk_lowready_b walk_backward
-walk,stand,l,walk_lowready_l walk_left
-walk,stand,r,walk_lowready_r walk_right
-walk,crouch,,crouch_fastwalk_f
-walk,crouch,b,crouch_fastwalk_b
-walk,crouch,l,crouch_fastwalk_l
-walk,crouch,r,crouch_fastwalk_r
-walk,prone,,prone_crawl
-walk,prone,b,prone_crawl_back
-run,stand,,run_lowready_f
-run,stand,b,run_lowready_b run_n_gun_b
-run,stand,l,run_lowready_l run_n_gun_l
-run,stand,r,run_lowready_r run_n_gun_r
-run,crouch,,crouch_fastwalk_f
-run,crouch,b,crouch_fastwalk_b
-run,crouch,l,crouch_fastwalk_l
-run,crouch,r,crouch_fastwalk_r
-sprint,stand,,sprint_loop_distant sprint1_loop
-fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
-fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
-fire,prone,,prone_fire_1
-reload,stand,,exposed_reload
-reload,crouch,,exposed_crouch_reload
-reload,prone,,prone_reload
-death,stand,,death_stand_sniper_chest1 exposed_death_groin
-death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
-death,prone,,prone_death_quickdeath
+human,idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
+human,idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
+human,idle,prone,,prone_aim_5 prone_aim_idle
+human,walk,stand,,walk_lowready_f
+human,walk,stand,b,walk_lowready_b walk_backward
+human,walk,stand,l,walk_lowready_l walk_left
+human,walk,stand,r,walk_lowready_r walk_right
+human,walk,crouch,,crouch_fastwalk_f
+human,walk,crouch,b,crouch_fastwalk_b
+human,walk,crouch,l,crouch_fastwalk_l
+human,walk,crouch,r,crouch_fastwalk_r
+human,walk,prone,,prone_crawl
+human,walk,prone,b,prone_crawl_back
+human,run,stand,,run_lowready_f
+human,run,stand,b,run_lowready_b run_n_gun_b
+human,run,stand,l,run_lowready_l run_n_gun_l
+human,run,stand,r,run_lowready_r run_n_gun_r
+human,run,crouch,,crouch_fastwalk_f
+human,run,crouch,b,crouch_fastwalk_b
+human,run,crouch,l,crouch_fastwalk_l
+human,run,crouch,r,crouch_fastwalk_r
+human,sprint,stand,,sprint_loop_distant sprint1_loop
+human,fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
+human,fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
+human,fire,prone,,prone_fire_1
+human,reload,stand,,exposed_reload
+human,reload,crouch,,exposed_crouch_reload
+human,reload,prone,,prone_reload
+human,death,stand,,death_stand_sniper_chest1 exposed_death_groin
+human,death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
+human,death,prone,,prone_death_quickdeath

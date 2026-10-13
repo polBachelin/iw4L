@@ -8,6 +8,9 @@ pub struct ScriptSources {
     entities: Option<String>,
     addon_entities: BTreeMap<String, AddonEntities>,
     configs: BTreeMap<String, String>,
+    /// The inflated stacks of the compiled scripts survival dresses its
+    /// actors from, by script name.
+    dress_scripts: BTreeMap<String, Vec<u8>>,
 }
 
 /// Entities a zone adds to the map, by the `AddonMapEnts` name it carries
@@ -129,6 +132,20 @@ impl ScriptSources {
 
     pub(crate) fn capture_addon_entities(&mut self, name: &str, entities: AddonEntities) {
         self.addon_entities.insert(normalize(name), entities);
+    }
+
+    pub(crate) fn dress_scripts(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.dress_scripts
+    }
+
+    pub(crate) fn capture_dress_script(&mut self, name: &str, compressed_stack: &[u8]) {
+        let Ok(stack) = asset_transport::inflate_zlib(compressed_stack) else {
+            return;
+        };
+        let name = normalize(name);
+        if crate::survival::is_dress_script(&name, &stack) {
+            self.dress_scripts.insert(name, stack);
+        }
     }
 
     pub fn config(&self, name: &str) -> Option<&str> {
@@ -255,6 +272,7 @@ impl ScriptSources {
         self.schemas.extend(other.schemas);
         self.configs.extend(other.configs);
         self.addon_entities.extend(other.addon_entities);
+        self.dress_scripts.extend(other.dress_scripts);
         if other.entities.is_some() {
             self.entities = other.entities;
         }

@@ -1141,8 +1141,7 @@ fn preflight_match_install(
         .map_err(|e| script_refusal(zone, gametype, "compile", &e))?;
     if kind == gamemode_iw4::GameModeKind::Survival {
         assets::survival_data_check(
-            sources.0.tables(),
-            sources.0.schemas(),
+            &sources.0,
             zone,
             |name| matches!(weapons.registry().resolve_index(name), Ok(Some(index)) if index != 0),
         )

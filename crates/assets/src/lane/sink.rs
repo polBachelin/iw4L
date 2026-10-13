@@ -629,6 +629,16 @@ impl fastfile_iw5::AssetSink for CommonWalkSink {
 }
 
 impl fastfile_iw5::AssetLinkSink for CommonWalkSink {
+    fn capture_script_file(
+        &mut self,
+        name: &str,
+        stack: &[u8],
+        _bytecode: &[u8],
+    ) -> fastfile_iw5::Result<()> {
+        self.scripts.capture_dress_script(name, stack);
+        Ok(())
+    }
+
     fn remember_xmodel_surfaces(
         &mut self,
         slot: fastfile_iw5::Ptr,
