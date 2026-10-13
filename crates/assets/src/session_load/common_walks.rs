@@ -1138,7 +1138,18 @@ pub(super) fn load_localized_strings_beside(
                 .iter()
                 .filter_map(|name| {
                     if namespace == runtime_namespace {
-                        profile.find_runtime_zone(&root, zone_ff, name)
+                        // A base zone with no `localized_` sibling (MW3's SP
+                        // English set) holds its strings itself.
+                        profile
+                            .find_runtime_zone(&root, zone_ff, name)
+                            .or_else(|error| {
+                                match name.strip_prefix("localized_").filter(|bare| {
+                                    !bare.starts_with("localized_") && base.carries(bare)
+                                }) {
+                                    Some(bare) => profile.find_runtime_zone(&root, zone_ff, bare),
+                                    None => Err(error),
+                                }
+                            })
                     } else {
                         find_zone_file_version(&root, name, version)
                     }

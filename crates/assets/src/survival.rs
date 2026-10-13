@@ -17,8 +17,10 @@ const ARCHETYPES_TABLE: &str = "survival/archetypes.csv";
 const CHARACTERS_TABLE: &str = "survival/characters.csv";
 const AITYPE_FILL_INS_TABLE: &str = "survival/aitype_fill_ins.csv";
 const HUD_TABLE: &str = "survival/hud.csv";
+const HUD: &str = include_str!("survival/hud.csv");
 const CHALLENGES_TABLE: &str = "survival/challenges.csv";
 const EOG_TABLE: &str = "survival/eog.csv";
+const EOG: &str = include_str!("survival/eog.csv");
 const AIRSUPPORT_TABLE: &str = "survival/airsupport.csv";
 const HEAVIES_TABLE: &str = "survival/heavies.csv";
 const GRANTS_TABLE: &str = "survival/grants.csv";
@@ -38,9 +40,9 @@ const TABLES: [(&str, &str); 12] = [
         AITYPE_FILL_INS_TABLE,
         include_str!("survival/aitype_fill_ins.csv"),
     ),
-    (HUD_TABLE, include_str!("survival/hud.csv")),
+    (HUD_TABLE, HUD),
     (CHALLENGES_TABLE, include_str!("survival/challenges.csv")),
-    (EOG_TABLE, include_str!("survival/eog.csv")),
+    (EOG_TABLE, EOG),
     (AIRSUPPORT_TABLE, include_str!("survival/airsupport.csv")),
     (HEAVIES_TABLE, include_str!("survival/heavies.csv")),
     (GRANTS_TABLE, include_str!("survival/grants.csv")),
@@ -105,8 +107,14 @@ mod challenge_column {
 const HUD_REFS: [&str; 3] = ["wave", "enemies", "credits"];
 
 /// `HUD_TABLE`: ref, label, font, font scale in percent, horzalign,
-/// vertalign, alignx, aligny, x, y.
-const HUD_COLUMNS: usize = 10;
+/// vertalign, alignx, aligny, x, y, and the name holding its number (a client
+/// dvar and a player data field).
+const HUD_COLUMNS: usize = 11;
+const HUD_DVAR_COLUMN: usize = 10;
+
+/// The script dvar listing the refs of `HUD_TABLE` a HUD menu item draws,
+/// whose hudelems the gametype script leaves out.
+pub const SURVIVAL_MENU_HUD_DVAR: &str = "survival_menu_hud";
 
 /// The settings the economy adds up: whole, non-negative credits.
 const CREDIT_SETTINGS: [&str; 2] = ["start_credits", "wave_bonus"];
@@ -137,8 +145,20 @@ const ARMORY_MENU_SETTINGS: [&str; 5] = [
 ];
 
 /// The fields of `PLAYER_DATA_TABLE` the gametype script writes by name:
-/// the credits and the experience MW3's armory menus read.
-const PLAYER_DATA_SCALARS: [&str; 2] = ["surHUD_credits", "experience"];
+/// the credits and the experience MW3's armory menus read, and the wave, the
+/// enemies left and the last credit change its HUD menus read.
+const PLAYER_DATA_SCALARS: [&str; 5] = [
+    "surHUD_credits",
+    "experience",
+    "surHUD_credits_delta",
+    "surHUD_wave",
+    "surHUD_enemy",
+];
+
+/// The field of `PLAYER_DATA_TABLE` keyed by the HUD menus' elements (c2),
+/// each shown while its key is set.
+const PLAYER_DATA_HUD: &str = "surHUD";
+const PLAYER_DATA_KEYS_COLUMN: usize = 2;
 
 /// MW3's Special Ops rank table (`rank_table`), as levelForExperienceSO reads
 /// it: c0 the rank, c2 the experience it starts at, c7 the experience that
@@ -459,6 +479,137 @@ const MODULES: [(&str, &str); 7] = [
 ];
 
 const GAMETYPE: &str = include_str!("survival/survival.gsc.txt");
+
+/// The menus that draw the survival HUD (`hud_menus`).
+pub fn survival_hud_menus() -> impl Iterator<Item = &'static str> {
+    survival_setting("hud_menus")
+        .unwrap_or("")
+        .split_whitespace()
+}
+
+/// Resolves MW3's Survival menus in `catalog`: the HUD menus, the summary
+/// (`eog_menu`) and the armory menus (`armory_menu_prefix`). Returns a line
+/// per menu and per row of `HUD_TABLE`, and the refs of the rows whose dvar
+/// the text of a HUD menu item reads.
+pub fn survival_menu_hud(
+    catalog: Option<&asset_game::MenuCatalog>,
+) -> (Vec<String>, Vec<&'static str>) {
+    let Some(catalog) = catalog else {
+        return (
+            vec!["survival menus: no menu catalog; the hudelems draw the survival HUD".into()],
+            Vec::new(),
+        );
+    };
+    let mut lines = Vec::new();
+    let mut resolve = |role: &str, name: &str| {
+        lines.push(match catalog.get(name) {
+            Some(menu) => format!("survival menus: {role} `{name}` {} items", menu.items.len()),
+            None => format!("survival menus: {role} `{name}` is in no zone"),
+        });
+    };
+    for name in survival_hud_menus() {
+        resolve("hud", name);
+    }
+    resolve("eog", survival_setting("eog_menu").unwrap_or(""));
+    let prefix = survival_setting("armory_menu_prefix").unwrap_or("");
+    let armories: Vec<&str> = catalog
+        .menus
+        .keys()
+        .filter(|name| {
+            !prefix.is_empty()
+                && name
+                    .get(..prefix.len())
+                    .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
+        .map(String::as_str)
+        .collect();
+    for name in &armories {
+        resolve("armory", name);
+    }
+    if armories.is_empty() {
+        lines.push(format!("survival menus: no armory menu `{prefix}*`"));
+    }
+    let mut drawn = Vec::new();
+    for row in HUD.lines().filter(|line| !line.trim().is_empty()) {
+        let cells: Vec<&str> = row.split(',').map(str::trim).collect();
+        let (reference, dvar) = (
+            cells.first().copied().unwrap_or(""),
+            cells.get(HUD_DVAR_COLUMN).copied().unwrap_or(""),
+        );
+        let drawer = survival_hud_menus().find_map(|menu| {
+            catalog
+                .get(menu)?
+                .items
+                .iter()
+                .position(|item| !dvar.is_empty() && item.text_reads(dvar))
+                .map(|index| (menu, index))
+        });
+        lines.push(match drawer {
+            Some((menu, item)) => {
+                drawn.push(reference);
+                format!(
+                    "survival hud: `{reference}` ({dvar}) drawn by `{menu}` item {item}; no hudelem"
+                )
+            }
+            None => format!(
+                "survival hud: `{reference}` ({dvar}) drawn by no HUD menu item; hudelem kept"
+            ),
+        });
+    }
+    (lines, drawn)
+}
+
+/// The localize references the end-of-run summary shows: what the summary
+/// menu (`eog_menu`) names in its items' text and its handlers, and what the
+/// gametype script feeds its dvars, `EOG_TABLE`'s labels and
+/// `eog_deadquote`. Returns each reference
+/// with where it comes from, split into those `strings` holds and those it
+/// lacks, which the summary paints as gaps.
+pub fn survival_eog_strings(
+    catalog: Option<&asset_game::MenuCatalog>,
+    strings: &asset_game::LocalizeCatalog,
+) -> (Vec<String>, Vec<String>) {
+    let menu = survival_setting("eog_menu").unwrap_or("");
+    let mut refs: Vec<(String, String)> = Vec::new();
+    let mut add = |reference: String, source: String| {
+        if !refs
+            .iter()
+            .any(|(known, _)| known.eq_ignore_ascii_case(&reference))
+        {
+            refs.push((reference, source));
+        }
+    };
+    for (reference, source) in catalog
+        .and_then(|catalog| catalog.get(menu))
+        .into_iter()
+        .flat_map(asset_game::MenuDef::loc_refs)
+    {
+        add(reference, format!("{menu} {source}"));
+    }
+    for row in EOG.lines().filter(|line| !line.trim().is_empty()) {
+        let cells: Vec<&str> = row.split(',').map(str::trim).collect();
+        let (line, label) = (
+            cells.first().copied().unwrap_or(""),
+            cells.get(1).copied().unwrap_or(""),
+        );
+        add(label.to_owned(), format!("{EOG_TABLE} row {line}"));
+    }
+    add(
+        survival_setting("eog_deadquote").unwrap_or("").to_owned(),
+        "eog_deadquote".into(),
+    );
+    let (mut resolved, mut missing) = (Vec::new(), Vec::new());
+    for (reference, source) in refs {
+        let found = strings.text(reference.trim_start_matches('@')).is_some();
+        let entry = format!("`{reference}` ({source})");
+        if found {
+            resolved.push(entry);
+        } else {
+            missing.push(entry);
+        }
+    }
+    (resolved, missing)
+}
 
 pub fn survival_setting(key: &str) -> Option<&'static str> {
     SETTINGS
@@ -1206,15 +1357,20 @@ fn check_economy(
                     && cell(row, 8).parse::<i32>().is_ok()
                     && cell(row, 9).parse::<i32>().is_ok();
                 if row.len() != HUD_COLUMNS
-                    || (1..8).any(|column| cell(row, column).is_empty())
+                    || (1..8)
+                        .chain([HUD_DVAR_COLUMN])
+                        .any(|column| cell(row, column).is_empty())
                     || !numbers_read
                 {
                     gaps.push(format!(
-                        "{HUD_TABLE}: `{reference}` needs a label, a font, a positive font scale in percent, four alignments and whole x and y: {row:?}"
+                        "{HUD_TABLE}: `{reference}` needs a label, a font, a positive font scale in percent, four alignments, whole x and y and a dvar: {row:?}"
                     ));
                 }
             }
         }
+    }
+    if survival_hud_menus().next().is_none() {
+        gaps.push(format!("{SETTINGS_TABLE}: `hud_menus` names nothing"));
     }
     for row in challenge_kills.rows() {
         let (reference, means) = (cell(row, 0), cell(row, 1));
@@ -1742,11 +1898,12 @@ fn check_player_anims(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(),
 }
 
 /// Holds `PLAYER_DATA_TABLE` to what the script and the menus read: named
-/// fields, none twice, the plain numbers the script writes by name, and for
-/// a keyed field armory kinds of the armory table, each keying one field.
-/// With the player data schema loaded, every field is one of its numbers or
-/// numbers by key, keyed exactly where the table lists kinds, and every item
-/// of those kinds is a key of it.
+/// fields, none twice, the plain numbers the script writes by name, the HUD
+/// field keyed by the keys it lists, and for a field keyed by armory kinds
+/// kinds of the armory table, each keying one field. With the player data
+/// schema loaded, every field is one of its numbers or numbers by key, keyed
+/// exactly where the table lists kinds or keys, and every listed key and
+/// item of those kinds is a key of it.
 fn check_player_data(
     fields: &ScriptTable,
     schema: Option<(&str, &structured_data_iw4::Definition)>,
@@ -1767,15 +1924,28 @@ fn check_player_data(
         }
         names.push(name);
         let keyed: Vec<&str> = cell(row, 1).split_whitespace().collect();
+        let keys: Vec<&str> = cell(row, PLAYER_DATA_KEYS_COLUMN)
+            .split_whitespace()
+            .collect();
+        if !keyed.is_empty() && !keys.is_empty() {
+            gaps.push(format!(
+                "{PLAYER_DATA_TABLE}: `{name}` lists both armory kinds {keyed:?} and keys {keys:?}"
+            ));
+        }
         if let Some((def_name, definition)) = schema {
-            check_schema_field(def_name, definition, name, &keyed, armory, gaps);
+            check_schema_field(def_name, definition, name, (&keyed, &keys), armory, gaps);
         }
         let scalar = PLAYER_DATA_SCALARS
             .iter()
             .any(|scalar| scalar.eq_ignore_ascii_case(name));
-        if scalar && !keyed.is_empty() {
+        if scalar && (!keyed.is_empty() || !keys.is_empty()) {
             gaps.push(format!(
-                "{PLAYER_DATA_TABLE}: `{name}` is a plain number the script writes, not keyed by {keyed:?}"
+                "{PLAYER_DATA_TABLE}: `{name}` is a plain number the script writes, not keyed by {keyed:?}{keys:?}"
+            ));
+        }
+        if name.eq_ignore_ascii_case(PLAYER_DATA_HUD) && keys.is_empty() {
+            gaps.push(format!(
+                "{PLAYER_DATA_TABLE}: `{PLAYER_DATA_HUD}` lists no key (c{PLAYER_DATA_KEYS_COLUMN}), which the script sets"
             ));
         }
         for kind in keyed {
@@ -1795,7 +1965,7 @@ fn check_player_data(
             }
         }
     }
-    for scalar in PLAYER_DATA_SCALARS {
+    for scalar in PLAYER_DATA_SCALARS.into_iter().chain([PLAYER_DATA_HUD]) {
         if !names.iter().any(|name| name.eq_ignore_ascii_case(scalar)) {
             gaps.push(format!(
                 "{PLAYER_DATA_TABLE}: no `{scalar}` field, which the script writes"
@@ -1808,7 +1978,7 @@ fn check_schema_field(
     def_name: &str,
     definition: &structured_data_iw4::Definition,
     name: &str,
-    kinds: &[&str],
+    (kinds, keys): (&[&str], &[&str]),
     armory: &ScriptTable,
     gaps: &mut Vec<String>,
 ) {
@@ -1832,9 +2002,9 @@ fn check_schema_field(
             return;
         }
     };
-    if keyed == kinds.is_empty() {
+    if keyed == (kinds.is_empty() && keys.is_empty()) {
         gaps.push(format!(
-            "{PLAYER_DATA_TABLE}: `{name}` is {} in {def_name}, the table lists kinds {kinds:?}",
+            "{PLAYER_DATA_TABLE}: `{name}` is {} in {def_name}, the table lists kinds {kinds:?} and keys {keys:?}",
             if keyed { "keyed" } else { "one number" }
         ));
         return;
@@ -1843,11 +2013,12 @@ fn check_schema_field(
         .rows()
         .filter(|item| kinds.contains(&cell(item, ARMORY_KIND_COLUMN)))
         .map(|item| cell(item, 1))
+        .chain(keys.iter().copied())
         .filter(|reference| definition.lookup(&[Name(name), Name(reference)]).is_err())
         .collect();
     if !missing.is_empty() {
         gaps.push(format!(
-            "{PLAYER_DATA_TABLE}: `{name}` of {def_name} has no key for the {kinds:?} items {missing:?}"
+            "{PLAYER_DATA_TABLE}: `{name}` of {def_name} has no key {missing:?}"
         ));
     }
 }

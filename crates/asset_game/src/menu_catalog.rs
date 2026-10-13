@@ -172,6 +172,55 @@ pub struct MenuItem {
     pub on_focus: Vec<String>,
 }
 
+impl MenuItem {
+    /// Whether the item's text expression names `name` (a dvar or a player
+    /// data field) as a string operand. A static dvar it reads by index is
+    /// not matched.
+    pub fn text_reads(&self, name: &str) -> bool {
+        self.text_exp
+            .split_whitespace()
+            .filter_map(|token| token.strip_prefix("s:").and_then(decode_hex_str))
+            .any(|operand| operand.eq_ignore_ascii_case(name))
+    }
+}
+
+/// The `@KEY` references of a menu expression: its string operands.
+fn expr_loc_refs(exp: &str) -> impl Iterator<Item = String> + '_ {
+    exp.split_whitespace()
+        .filter_map(|token| token.strip_prefix("s:").and_then(decode_hex_str))
+        .filter(|operand| operand.len() > 1 && operand.starts_with('@'))
+}
+
+/// The `@KEY` references of menu events: the quoted or bare words of their
+/// scripts, and the string operands of their conditions and local vars.
+fn events_loc_refs(events: &[MenuEvent], refs: &mut Vec<String>) {
+    for event in events {
+        match event {
+            MenuEvent::Script(script) => refs.extend(
+                script
+                    .split(|c: char| c.is_whitespace() || matches!(c, '"' | ';' | ',' | '(' | ')'))
+                    .filter(|word| word.len() > 1 && word.starts_with('@'))
+                    .map(str::to_owned),
+            ),
+            MenuEvent::If { condition, then } => {
+                refs.extend(expr_loc_refs(condition));
+                events_loc_refs(then, refs);
+            }
+            MenuEvent::Else(events) => events_loc_refs(events, refs),
+            MenuEvent::SetLocalVar { expr, .. } => refs.extend(expr_loc_refs(expr)),
+        }
+    }
+}
+
+fn decode_hex_str(hex: &str) -> Option<String> {
+    let bytes = hex
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MenuDef {
@@ -215,6 +264,64 @@ impl MenuDef {
     pub fn set_expr_dvars(&mut self, expr_dvars: String) {
         self.expr_dvars = expr_dvars;
         self.expr_dvar_rows = std::sync::OnceLock::new();
+    }
+
+    /// The localize references (`@KEY`) the menu can show, each with where it
+    /// is named: an item's static text or text expression, or a script or
+    /// expression of the menu's or an item's handlers.
+    pub fn loc_refs(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let mut menu_refs = Vec::new();
+        let scripts: Vec<MenuEvent> = [
+            &self.on_open,
+            &self.on_close,
+            &self.on_close_request,
+            &self.on_esc,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|script| MenuEvent::Script(script.clone()))
+        .collect();
+        events_loc_refs(&scripts, &mut menu_refs);
+        for events in [
+            &self.handlers.open,
+            &self.handlers.close,
+            &self.handlers.close_request,
+            &self.handlers.esc,
+        ] {
+            events_loc_refs(events, &mut menu_refs);
+        }
+        for local in &self.on_open_local_vars {
+            menu_refs.extend(expr_loc_refs(&local.expr));
+        }
+        out.extend(
+            menu_refs
+                .into_iter()
+                .map(|key| (key, "handlers".to_owned())),
+        );
+        for (index, item) in self.items.iter().enumerate() {
+            let mut refs: Vec<String> = Some(&item.text_key)
+                .filter(|key| key.starts_with('@') && !item.text_literal)
+                .cloned()
+                .into_iter()
+                .chain(expr_loc_refs(&item.text_exp))
+                .collect();
+            let handlers = &item.handlers;
+            for events in [
+                &handlers.action,
+                &handlers.accept,
+                &handlers.mouse_enter,
+                &handlers.mouse_exit,
+                &handlers.focus,
+                &handlers.has_focus,
+                &handlers.leave_focus,
+            ] {
+                events_loc_refs(events, &mut refs);
+            }
+            let source = format!("item {index}");
+            out.extend(refs.into_iter().map(|key| (key, source.clone())));
+        }
+        out
     }
 }
 

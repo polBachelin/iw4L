@@ -43,8 +43,10 @@ a weapon themselves.
   `armor_absorb_percent` (the share of a hit armor takes while it lasts, 0 to
   100; 100, the whole hit, is our reading), the
   revive's shellshock and its seconds (`getup_shock`, `getup_shock_seconds`),
-  the summary menu, its value column and death hint (`eog_menu`,
-  `eog_value_column`, `eog_deadquote`), `squad_<archetype>` (an armory
+  the menus that draw the HUD (`hud_menus`: `surhud_display waves enemies
+  credit`, see Credits and HUD), the summary menu, its value column and
+  death hint (`eog_menu`, `eog_value_column`, `eog_deadquote`),
+  `squad_<archetype>` (an armory
   squad: the archetype of the waves table that is also an air support ref of
   the armory, and how many allies it brings), the armory menus' name prefix,
   purchase answer prefix and close answer (`armory_menu_prefix`,
@@ -66,12 +68,15 @@ a weapon themselves.
   no bleed-out or shock time, no squad size, no slot count. That only the
   RPG warns before it replaces a weapon, and a weapon purchase replaces one
   without a warning, is our reading of MW3.
-* `playerdata.csv` — `field,kinds`: the player data fields MW3's armory menus
-  read with `getPlayerData`, as a dump of their expressions lists them:
-  `surHUD_credits` and `experience` (plain numbers), and `armory<kind>` keyed
-  by an item's ref, c1 naming the armory table kinds (c2) whose items key it
-  (`armoryweaponupgrade` is keyed by the `scope` and `main` rows). An armory
-  item is a row whose kind one of these fields lists.
+* `playerdata.csv` — `field,kinds,keys`: the player data fields MW3's armory
+  and HUD menus read with `getPlayerData`, as a dump of their expressions
+  lists them: `surHUD_credits`, `surHUD_credits_delta`, `surHUD_wave`,
+  `surHUD_enemy` and `experience` (plain numbers), `armory<kind>` keyed by an
+  item's ref, c1 naming the armory table kinds (c2) whose items key it
+  (`armoryweaponupgrade` is keyed by the `scope` and `main` rows), and
+  `surHUD` keyed by the names c2 lists (`wave enemy credits`, the HUD
+  elements the script turns on). A field lists kinds or keys, not both. An
+  armory item is a row whose kind one of these fields lists.
 * `airsupport.csv` — `key,value`, all ours (MW3's survival script is compiled
   and the numbers lived there): `action_slot` (1–4, where air support items
   wait); the airstrike's location selector material, the weapon its kills are
@@ -138,10 +143,13 @@ a weapon themselves.
   per 1000 of range (`chopper_*`); the exploding dog's effect, means of
   death, radius and max/min damage (`splode_*`). Durations are in
   milliseconds.
-* `hud.csv` — `ref,label,font,fontscale,horzalign,vertalign,alignx,aligny,x,y`:
+* `hud.csv` — `ref,label,font,fontscale,horzalign,vertalign,alignx,aligny,x,y,dvar`:
   the hudelems of the survival HUD, refs `wave`, `enemies` and `credits`. The
   label is plain text with `&&1` where the number goes; the font scale is in
-  percent.
+  percent. The dvar (c10) names where the number is kept, a client dvar and a
+  player data field of the same name (`surHUD_wave`, `surHUD_enemy`,
+  `surHUD_credits`): a row whose number an item of a HUD menu reads gets no
+  hudelem (see Credits and HUD).
 * `challenges.csv` — `ref,means`: the challenges of `challenge_table` a kill
   advances, and the means of death that counts (`MOD_HEAD_SHOT`, `MOD_MELEE`).
   Which kill counts is our reading; the challenges with no row (streak,
@@ -381,13 +389,30 @@ reading: whether MW3 counts in a row, per wave or once is not in the data).
 When a wave is complete every player gets `wave_bonus`. A player's score is
 their credits, so the scoreboard shows them.
 
-The script sets the client dvars `surHUD_credits`, `surHUD_wave` and
-`surHUD_enemy` (the wave and the enemies it has left, its total less its
-kills), but no menu of the loaded zones reads them. MW3's survival HUD menu is
-not in the data: `surHUD_display` has no items, it only stamps the animations
-of a HUD that lived in a menu of SP's zones. So client hudelems laid out by
-`hud.csv` draw the wave, the enemies left and the credits; the launch logs the
-gap (``survival menus: `surhud_display` draws nothing``).
+The script keeps the wave, the enemies it has left (its total less its
+kills) and the credits both as client dvars and as match player data,
+`surHUD_wave`, `surHUD_enemy` and `surHUD_credits`, with the last change of
+the credits in `surHUD_credits_delta`. MW3's HUD menus of the SP zones,
+`hud_menus`, draw them: `waves` the wave, `enemies` the enemies left,
+`credit` the credits and their change. `surhud_display` has no items and is
+not drawn. Its open handlers are what start `credit`'s animation: they stamp
+the local var `surHUD_credits_animate` with the time when the player data
+`surHUD_set_animate` reads `credits`. Nothing opens it and the match player
+data holds numbers only, so the local var stays 0: `credit` shows the
+credits as they are, without the count-up and without the change
+(`SO_SURVIVAL_CREDITS_PLUS` / `_MINUS`). A menu draws an
+element only while `so_survival` is set and its key of `surHUD` is (c2 of
+`playerdata.csv`), so on connect the script sets `so_survival 1` and every
+listed key to 1. The HUD menus are drawn in a survival match only, as layers
+under no open menu (their `uiActive()` reads 0), not while a menu that takes
+input is open; a menu with no items is skipped.
+
+At install, once per match, every `hud.csv` row is matched against the HUD
+menus: when an item's text reads its dvar (c10), the row is drawn by that
+item and its ref goes in the script dvar `survival_menu_hud`, which
+`createhud` reads to leave the hudelem out. A row no item reads keeps its
+hudelem, so the HUD stays whole when the zones lack a menu or a menu has no
+items.
 
 The multiplayer scorebar (`scorebar_hd`, a match score against the score
 limit) is not drawn: survival has no such score, and MW3 runs it on SP's HUD,
@@ -433,6 +458,16 @@ buttons run MW3's engine commands `fast_restart` (play again) and
 `disconnect_noMessage` (return, and escape), aliases of `map_restart` and
 `disconnect`. `stopControllerRumble` on open is no console verb: the menu
 bridge logs it once.
+
+The summary's text is localize references: its title and heading
+(`@SO_SURVIVAL_SURVIVED_TO_WAVE`, `@SPECIAL_OPS_UI_MISSION_SUCCESS`,
+`@SPECIAL_OPS_UI_MISSION_FAILED`, set by its open handlers), its buttons,
+`eog.csv`'s labels and `eog_deadquote`. MW3's SP English zones have no
+`localized_` siblings: `code_post_gfx`, `common`, `ui` and `patch` hold
+their strings themselves, so the match's localize pass reads a base zone
+where its `localized_` sibling is absent. At install, once per match, every
+reference is looked up in the match's strings; one that is missing is
+logged as a warning, since the menu paints it as a gap.
 
 ## Pause
 
@@ -601,7 +636,8 @@ c4 and each c6 count positive and c6 parallel to c5, c10 empty or an armory
 kind, every `unsimulated_archetypes` and `dog_archetypes` ref an archetype,
 and every archetype an actor plays given a positive health, a whole reward
 and, unless it is a dog, a weapon and offhand of the loaded zones. `start_credits` and `wave_bonus` must be whole
-credits, `hud.csv` must lay out `wave`, `enemies` and `credits` in full, and
+credits, `hud.csv` must lay out `wave`, `enemies` and `credits` in full with a
+dvar each, `hud_menus` must name a menu, and
 every `challenges.csv` ref must be a challenge of `challenge_table` with a
 positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
@@ -644,15 +680,27 @@ with no `grants.csv` row must be a weapon of the loaded zones.
 must be a whole percent 0–100, and the armory menu prefix, purchase prefix,
 close answer, replacement menu and its answer to go ahead must name
 something. Every `playerdata.csv` field must be
-named once, `surHUD_credits` and `experience` among them as plain numbers,
-and every kind a field lists must be an item kind of `armory_table` keying
-no other field. `rank_table` must have a `maxrank` row with a last rank in
+named once, `surHUD_credits`, `surHUD_credits_delta`, `surHUD_wave`,
+`surHUD_enemy` and `experience` among them as plain numbers and `surHUD`
+with keys (c2), no field may list both kinds and keys, and every kind a
+field lists must be an item kind of `armory_table` keying no other field.
+With the player data schema loaded, every key c2 lists must be a key of its
+field. `rank_table` must have a `maxrank` row with a last rank in
 c1 and every rank below it an ending experience in c7, and `start_rank` must
 be `max` or a rank of it with a starting experience in c2. The fault names
 each gap. Body, armory, plane and
 sentry models are not checked.
 
 ## Evidence lines
+At install, once per match: `ui info survival menus: hud <menu> N items`
+for each `hud_menus` menu, `eog <menu> N items` for the summary and `armory
+<menu> N items` for each armory menu (`… is in no zone` for one the zones
+lack, the menu names in backquotes), `ui info survival hud: <ref> (<dvar>)
+drawn by <menu> item I; no hudelem` or `… drawn by no HUD menu item; hudelem
+kept` for each `hud.csv` row, `ui info survival eog strings: K of N
+resolve: <ref> (<where>)…` the summary's localize references, and `ui warn
+survival eog strings: M missing from the localize data, painted as gaps:
+…` any it lacks.
 `gsc log: survival: ready waves=… archetypes=… armory_items=…` counts the
 tables as read; `gsc log: survival: loadout …` lists what a spawn was given;
 `gsc log: survival: armory <kind> spawned at (…) yaw Y model <m> menu <menu>`
@@ -675,8 +723,8 @@ budget=B` an enemy sent;
 means=<MOD> weapon=<w> by=<clientM|chopper|world>` (R: the wave's total
 less its kills) its death, and `gsc log: survival: ally killed actor=N
 archetype=<a> squad=K` an ally's. `gsc log: survival: hud wave=W
-enemies=E players=P` each time the wave's dvars and hudelems change (its
-start and every kill); `gsc log: survival: credits client=N credits=C
+enemies=E players=P` each time the wave's dvars, player data and hudelems
+change (its start and every kill); `gsc log: survival: credits client=N credits=C
 delta=D reason=<start|kill:<a>|challenge:<ref>|wave_bonus:W>` each change of
 a player's credits, and `gsc log: survival: challenge client=N <ref> K/R` a
 challenge's progress. `gsc log: survival: wave=N complete

@@ -1191,6 +1191,27 @@ fn preflight_match_install(
             "survival_layer".into(),
             layers.first().copied().unwrap_or("").to_owned(),
         ));
+        let (lines, drawn) = assets::survival_menu_hud(catalog);
+        for line in lines {
+            diag::info!(Ui, "{line}");
+        }
+        script_dvars.push((assets::SURVIVAL_MENU_HUD_DVAR.into(), drawn.join(" ")));
+        let (resolved, missing) = assets::survival_eog_strings(catalog, &strings);
+        diag::info!(
+            Ui,
+            "survival eog strings: {} of {} resolve: {}",
+            resolved.len(),
+            resolved.len() + missing.len(),
+            resolved.join(" ")
+        );
+        if !missing.is_empty() {
+            diag::warn!(
+                Ui,
+                "survival eog strings: {} missing from the localize data, painted as gaps: {}",
+                missing.len(),
+                missing.join(" ")
+            );
+        }
     }
     script_dvars.push(("g_gametype".into(), gametype.to_owned()));
     script_dvars.push(("sv_maxclients".into(), "18".into()));

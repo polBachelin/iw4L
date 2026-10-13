@@ -180,9 +180,11 @@ fn player_data_fields(
                     .ok_or(format!("{def_name} has no definition"))
                     .and_then(|definition| schema_keyed(definition, name))
                     .map_err(|error| format!("{PLAYER_DATA_TABLE}: {def_name}: {error}"))?,
-                None => fields
-                    .cell(row, 1)
-                    .is_some_and(|kinds| !kinds.trim().is_empty()),
+                None => (1..=2).any(|column| {
+                    fields
+                        .cell(row, column)
+                        .is_some_and(|keys| !keys.trim().is_empty())
+                }),
             };
             Ok((name.to_owned(), keyed))
         })

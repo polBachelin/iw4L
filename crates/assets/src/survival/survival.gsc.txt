@@ -826,18 +826,19 @@ archetypeweapon( archetype )
 	return weaponfor( weapon );
 }
 
-// No menu of the loaded zones reads the surHUD_* client dvars: MW3's armory
-// menus read credits with getPlayerData( "surHUD_credits" ) (the match
-// player data addcredits writes), and the menu that drew MW3's survival HUD
-// is not in the data (surHUD_display only stamps animations). So client
-// hudelems laid out by survival/hud.csv draw the wave, the enemies left and
-// the credits.
+// Client hudelems laid out by survival/hud.csv draw the wave, the enemies
+// left and the credits, but for the rows survival_menu_hud lists: a HUD menu
+// item of the loaded zones draws those.
 createhud()
 {
 	table = "survival/hud.csv";
+	drawn = strtok( getdvar( "survival_menu_hud" ), " " );
 	self.hud = [];
 	for ( row = 0; tablelookupbyrow( table, row, 0 ) != ""; row++ )
 	{
+		ref = tablelookupbyrow( table, row, 0 );
+		if ( islisted( drawn, ref ) )
+			continue;
 		elem = newclienthudelem( self );
 		elem.label = tablelookupbyrow( table, row, 1 );
 		elem.font = tablelookupbyrow( table, row, 2 );
@@ -850,8 +851,32 @@ createhud()
 		elem.y = int( tablelookupbyrow( table, row, 9 ) );
 		elem.hidewheninmenu = true;
 		elem setvalue( 0 );
-		self.hud[ tablelookupbyrow( table, row, 0 ) ] = elem;
+		self.hud[ ref ] = elem;
 	}
+}
+
+islisted( list, value )
+{
+	for ( i = 0; i < list.size; i++ )
+		if ( list[ i ] == value )
+			return true;
+	return false;
+}
+
+// MW3's HUD menus draw an element only under so_survival and while its
+// surHUD key (survival/playerdata.csv c2) is set.
+showhudmenus()
+{
+	self setclientdvar( "so_survival", 1 );
+	keys = strtok( tablelookup( "survival/playerdata.csv", 0, "surHUD", 2 ), " " );
+	for ( i = 0; i < keys.size; i++ )
+		self survival_setplayerdata( "surHUD", keys[ i ], 1 );
+}
+
+sethud( ref, value )
+{
+	if ( isdefined( self.hud[ ref ] ) )
+		self.hud[ ref ] setvalue( value );
 }
 
 showwave()
@@ -859,8 +884,10 @@ showwave()
 	enemies = level.wavetotal - level.wavekilled;
 	self setclientdvar( "surHUD_wave", level.wave );
 	self setclientdvar( "surHUD_enemy", enemies );
-	self.hud[ "wave" ] setvalue( level.wave );
-	self.hud[ "enemies" ] setvalue( enemies );
+	self survival_setplayerdata( "surHUD_wave", level.wave );
+	self survival_setplayerdata( "surHUD_enemy", enemies );
+	self sethud( "wave", level.wave );
+	self sethud( "enemies", enemies );
 }
 
 updatewavehud()
@@ -871,8 +898,8 @@ updatewavehud()
 }
 
 // The score is the credits, so the scoreboard shows them. What a player
-// earns is every credit after the start's. The armory menus read them as
-// getPlayerData( "surHUD_credits" ).
+// earns is every credit after the start's. The armory and HUD menus read them
+// as getPlayerData( "surHUD_credits" ).
 addcredits( amount, reason )
 {
 	self.credits = self.credits + amount;
@@ -880,8 +907,9 @@ addcredits( amount, reason )
 		self.stats[ "credits_earned" ] = self.stats[ "credits_earned" ] + amount;
 	self.score = self.credits;
 	self survival_setplayerdata( "surHUD_credits", self.credits );
+	self survival_setplayerdata( "surHUD_credits_delta", amount );
 	self setclientdvar( "surHUD_credits", self.credits );
-	self.hud[ "credits" ] setvalue( self.credits );
+	self sethud( "credits", self.credits );
 	logprint( "survival: credits client=" + self getentitynumber() + " credits=" + self.credits + " delta=" + amount + " reason=" + reason + "\n" );
 }
 
@@ -932,6 +960,7 @@ onplayerconnect()
 		self.challengeprogress[ level.challenges[ i ].ref ] = 0;
 	self createhud();
 	self showwave();
+	self showhudmenus();
 	// The armory menus gate items with levelForExperienceSO( getPlayerData(
 	// "experience" ) ); the purchase rules use the same rank.
 	self.experience = startexperience();
