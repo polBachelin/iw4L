@@ -7,22 +7,20 @@ use anim_iw4::{
 };
 
 use crate::animtree::{
-    AtrCompileError, CompiledAnimNode, CompiledAnimTreeDefinition, MULTIPLAYER_ANIMTREE_PATH,
-    PLAYERANIM_SCRIPT_PATH,
+    AtrCompileError, CompiledAnimNode, CompiledAnimTreeDefinition, PlayerAnimPaths,
 };
 
 const BG_FIND_ANIM_NAMES: &[&str] = &["torso", "legs", "turning"];
 
 pub(crate) fn compile_multiplayer(
+    paths: PlayerAnimPaths,
     atr: Option<&[u8]>,
     script: Option<&[u8]>,
 ) -> Result<Arc<CompiledAnimTreeDefinition>, AtrCompileError> {
     let atr = atr.ok_or(AtrCompileError::MissingSource {
-        path: MULTIPLAYER_ANIMTREE_PATH,
+        path: paths.animtree,
     })?;
-    let script = script.ok_or(AtrCompileError::MissingSource {
-        path: PLAYERANIM_SCRIPT_PATH,
-    })?;
+    let script = script.ok_or(AtrCompileError::MissingSource { path: paths.script })?;
     let mut names = HashSet::new();
     for name in BG_FIND_ANIM_NAMES {
         names.insert((*name).to_owned());

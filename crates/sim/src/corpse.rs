@@ -180,6 +180,9 @@ pub(crate) fn occupy_player_clone(
         },
     );
     world.corpse_dobj_tree_install(entnum, ps.anim().legs_anim);
+    if let Ok(victim) = i32::try_from(victim.0) {
+        world.copy_player_body(victim, entnum);
+    }
     slot
 }
 

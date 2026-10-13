@@ -290,6 +290,24 @@ state's first row; the anims missing are
 logged once (`survival actor anims not loaded`). Anim-tree methods take the
 name as a string, resolved in the actor's tree.
 
+A human player is drawn in the `characters.csv` row `player_character`
+(`delta_a`), dressed with `setcharacter` at each spawn, and its third-person
+body is posed by `player_anims.csv` — `state,stance,direction,anims`, the
+same shape — instead of the MP playeranim script. The simulation picks a
+row where it runs that script: the state from the anim move type (`idle`,
+`walk`, `run`, `sprint`), `fire` while a standing-still player holds the
+trigger, `reload` while it reloads, `death` when it dies; the stance
+(`stand`, `crouch`, `prone`) from its stance; the direction (`f`, `b`,
+`l`, `r`) from its move and strafe. A state without a fitting row falls to
+the next (`sprint` to `run` to `walk` to `idle`), and a standing `idle` is
+the last resort. The row's anim plays on a blend over `player_blend_ms`
+(200) that travels in the snapshot by entity number and that a corpse takes
+over from its player. One leaf poses the whole body, so a moving player
+keeps its legs' anim while it fires or reloads, and the view pitch does
+not bend the torso. The table is narrowed like `actor_anims.csv` and its
+missing anims share the same log line. Hit volumes still follow the MP
+playeranim script, which keeps running underneath.
+
 SP human anims live in MW3's SP `common` zone, which survival does not load
 until the zone flip. `actor_anim_zones` (`common`) names zones walked for their anims
 alone, after the mode's zones: no models, menus, sounds, weapons or tables
@@ -598,9 +616,11 @@ positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 wave's), every `archetypes.csv` trait one of the six, speed a whole
 percent above zero, accuracy a whole percent 0–100, burst a whole count
 above zero and character an id of `characters.csv`, every
-`actor_anims.csv` row a set, state, stance and direction the actor or dog
-script picks by with every state of a set given a row, every `actor_*` and
-`dog_*` setting a whole number
+`actor_anims.csv` row a state, stance and direction the actor script picks
+by with every state given a row, every `player_anims.csv` row a state,
+stance and direction a player's body is picked by with a standing `idle`,
+`player_character` an id of `characters.csv` and `player_blend_ms` a whole
+number, every `actor_*` setting a whole number
 (its percents 0–100, `actor_budget` above zero) and `actor_explosive_means` naming something, every
 `characters.csv` id named once with a body and no head on a `fullbody_*`
 body, and for each trait in use its `heavies.csv` rows: weapon

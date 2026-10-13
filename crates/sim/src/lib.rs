@@ -123,7 +123,7 @@ pub use match_state::{
 };
 pub use player_anim_script::{
     AnimConditions, AnimScriptCommand, AnimScriptCondition, AnimScriptItem, PlayerAnimScript,
-    anim_conditions_from_pmove, pmove_anim_weapon_ids,
+    PlayerBodyAnims, anim_conditions_from_pmove, pmove_anim_weapon_ids,
 };
 pub use rules::{FFA, FreeForAllRules};
 pub use score::{MATCH_TICK_MS, bootstrap_score_defaults};

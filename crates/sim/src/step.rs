@@ -522,11 +522,19 @@ fn run_players_system(ecs: &mut World) {
                     strafing,
                     cmd.buttons,
                 );
+                let body = (ps.pm_type < playerstate_iw4::PM_TYPE_DEAD).then(|| {
+                    crate::player_anim_script::player_body_pose(ps, movetype, strafing, cmd.buttons)
+                });
                 if let Some(script) = script.as_ref()
                     && let Some(selected) =
                         script.apply(ps, movetype, id.0, &conds, force_movement_anim)
                 {
                     world.set_anim_movement(*id, selected, strafing);
+                }
+                if let Some(body) = body
+                    && let Ok(entnum) = i32::try_from(id.0)
+                {
+                    world.pose_player_body(entnum, body);
                 }
             }
             world.set_pmove_walking(*id, walking);
@@ -715,6 +723,8 @@ fn finalize_system(ecs: &mut World) {
     *world.old_cmd_angles_mut() = old_angles;
 
     harvest_predictable_events(&mut world, tick);
+    let msec = world.ecs().resource::<StepRequest>().msec;
+    world.advance_player_bodies(msec as f32 / 1000.0);
     world.script_gaps_mut().report();
 }
 

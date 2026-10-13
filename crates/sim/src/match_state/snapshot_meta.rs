@@ -143,6 +143,11 @@ pub struct SnapshotMeta {
     /// Script-chosen character models by entity number; an entity absent
     /// here is drawn in its team's kit.
     pub characters: Vec<(i32, CharacterSelection)>,
+
+    /// Third-person bodies the mode's player body table poses, by entity
+    /// number: players and their corpses. One absent is posed by its legs
+    /// and torso anims.
+    pub player_bodies: Vec<(i32, xmodel_runtime::XAnimTreeSnapshot)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -192,6 +197,13 @@ impl SnapshotMeta {
             .iter()
             .find(|(number, _)| *number == entnum)
             .map(|(_, selection)| selection)
+    }
+
+    pub fn player_body(&self, entnum: i32) -> Option<&xmodel_runtime::XAnimTreeSnapshot> {
+        self.player_bodies
+            .iter()
+            .find(|(number, _)| *number == entnum)
+            .map(|(_, tree)| tree)
     }
 
     pub fn events_for(&self, id: ClientId) -> impl Iterator<Item = &SimEvent> {

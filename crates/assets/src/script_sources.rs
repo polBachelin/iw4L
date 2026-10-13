@@ -111,6 +111,10 @@ impl ScriptSources {
         &self.tables
     }
 
+    pub(crate) fn table(&self, name: &str) -> Option<&ScriptTable> {
+        self.tables.get(&normalize(name))
+    }
+
     pub(crate) fn table_mut(&mut self, name: &str) -> Option<&mut ScriptTable> {
         self.tables.get_mut(&normalize(name))
     }

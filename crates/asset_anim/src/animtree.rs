@@ -8,13 +8,32 @@ use crate::dobj::{
     XAnimNodeDefinition, XAnimNodeId, XAnimNodeKind, XAnimTreeDefinition, XAnimTreeError,
 };
 
-pub const MULTIPLAYER_ANIMTREE_PATH: &str = "animtrees/multiplayer.atr";
-pub const PLAYERANIM_SCRIPT_PATH: &str = "mp/playeranim.script";
+/// Where a mode's player anim tree, playeranim script and anim type list
+/// are read from in its zones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerAnimPaths {
+    pub animtree: &'static str,
+    pub script: &'static str,
+    pub types: &'static str,
+}
 
-pub const PLAYERANIM_TYPES_PATH: &str = "mp/playeranimtypes.txt";
+impl PlayerAnimPaths {
+    pub const MULTIPLAYER: Self = Self {
+        animtree: "animtrees/multiplayer.atr",
+        script: "mp/playeranim.script",
+        types: "mp/playeranimtypes.txt",
+    };
+}
+
+impl Default for PlayerAnimPaths {
+    fn default() -> Self {
+        Self::MULTIPLAYER
+    }
+}
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PlayerAnimSources {
+    paths: PlayerAnimPaths,
     family: Option<asset_core::FamilyId>,
     multiplayer_atr: Option<Vec<u8>>,
     playeranim_script: Option<Vec<u8>>,
@@ -31,6 +50,17 @@ pub struct PlayerAnimSources {
 }
 
 impl PlayerAnimSources {
+    pub fn new(paths: PlayerAnimPaths) -> Self {
+        Self {
+            paths,
+            ..Self::default()
+        }
+    }
+
+    pub fn paths(&self) -> PlayerAnimPaths {
+        self.paths
+    }
+
     pub fn family(&self) -> Option<asset_core::FamilyId> {
         self.family
     }
@@ -41,13 +71,8 @@ impl PlayerAnimSources {
         data: &[u8],
         zlib_compressed: bool,
     ) {
-        if ![
-            MULTIPLAYER_ANIMTREE_PATH,
-            PLAYERANIM_SCRIPT_PATH,
-            PLAYERANIM_TYPES_PATH,
-        ]
-        .contains(&name)
-        {
+        let paths = self.paths;
+        if ![paths.animtree, paths.script, paths.types].contains(&name) {
             return;
         }
         if self.family.is_some_and(|owner| owner != family) {
@@ -56,11 +81,12 @@ impl PlayerAnimSources {
             return;
         }
         self.family = Some(family);
-        let (target, path) = match name {
-            MULTIPLAYER_ANIMTREE_PATH => (&mut self.multiplayer_atr, MULTIPLAYER_ANIMTREE_PATH),
-            PLAYERANIM_SCRIPT_PATH => (&mut self.playeranim_script, PLAYERANIM_SCRIPT_PATH),
-            PLAYERANIM_TYPES_PATH => (&mut self.playeranim_types, PLAYERANIM_TYPES_PATH),
-            _ => return,
+        let (target, path) = if name == paths.animtree {
+            (&mut self.multiplayer_atr, paths.animtree)
+        } else if name == paths.script {
+            (&mut self.playeranim_script, paths.script)
+        } else {
+            (&mut self.playeranim_types, paths.types)
         };
         let mut bytes = if zlib_compressed {
             match asset_transport::inflate_zlib(data) {
@@ -84,6 +110,11 @@ impl PlayerAnimSources {
     /// compiled yet, so the compile that follows reads the merged sources.
     /// Returns the paths the later zone replaced.
     pub fn overlay(&mut self, later: Self) -> Vec<&'static str> {
+        if later.paths != self.paths {
+            self.decode_errors
+                .push("character animation source paths mismatch");
+            return Vec::new();
+        }
         if let (Some(owner), Some(family)) = (self.family, later.family)
             && owner != family
         {
@@ -93,21 +124,22 @@ impl PlayerAnimSources {
         }
         self.family = self.family.or(later.family);
         let mut replaced = Vec::new();
+        let paths = self.paths;
         for (target, source, path) in [
             (
                 &mut self.multiplayer_atr,
                 later.multiplayer_atr,
-                MULTIPLAYER_ANIMTREE_PATH,
+                paths.animtree,
             ),
             (
                 &mut self.playeranim_script,
                 later.playeranim_script,
-                PLAYERANIM_SCRIPT_PATH,
+                paths.script,
             ),
             (
                 &mut self.playeranim_types,
                 later.playeranim_types,
-                PLAYERANIM_TYPES_PATH,
+                paths.types,
             ),
         ] {
             if source.is_some() {
@@ -146,6 +178,7 @@ impl PlayerAnimSources {
             return;
         }
         self.compiled = Some(crate::atr_compile::compile_multiplayer(
+            self.paths,
             self.multiplayer_atr.as_deref(),
             self.playeranim_script.as_deref(),
         ));
@@ -200,8 +233,9 @@ impl PlayerAnimSources {
     /// condition table, so the zone's type list must name the same types in
     /// the same order; weapons store their type as an index into it.
     pub fn types_report_line(&self) -> String {
+        let types_path = self.paths.types;
         let Some(bytes) = self.playeranim_types.as_deref() else {
-            return format!("{PLAYERANIM_TYPES_PATH} absent");
+            return format!("{types_path} absent");
         };
         let text = String::from_utf8_lossy(bytes);
         let types: Vec<&str> = text.split_whitespace().collect();
@@ -211,11 +245,11 @@ impl PlayerAnimSources {
         });
         match first_difference {
             None => format!(
-                "{PLAYERANIM_TYPES_PATH}: {} types match the condition table",
+                "{types_path}: {} types match the condition table",
                 types.len()
             ),
             Some(i) => format!(
-                "{PLAYERANIM_TYPES_PATH} gap: {} types, condition table has {}; first difference at {i} (zone `{}`, table `{}`)",
+                "{types_path} gap: {} types, condition table has {}; first difference at {i} (zone `{}`, table `{}`)",
                 types.len(),
                 table.len(),
                 types.get(i).copied().unwrap_or("<none>"),

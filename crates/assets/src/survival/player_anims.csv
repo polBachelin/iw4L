@@ -1,0 +1,31 @@
+idle,stand,,exposed_idle_alert_v1 exposed_idle_alert_v2 exposed_idle_alert_v3
+idle,crouch,,exposed_crouch_idle_alert_v1 exposed_crouch_aim
+idle,prone,,prone_aim_5 prone_aim_idle
+walk,stand,,walk_lowready_f
+walk,stand,b,walk_lowready_b walk_backward
+walk,stand,l,walk_lowready_l walk_left
+walk,stand,r,walk_lowready_r walk_right
+walk,crouch,,crouch_fastwalk_f
+walk,crouch,b,crouch_fastwalk_b
+walk,crouch,l,crouch_fastwalk_l
+walk,crouch,r,crouch_fastwalk_r
+walk,prone,,prone_crawl
+walk,prone,b,prone_crawl_back
+run,stand,,run_lowready_f
+run,stand,b,run_lowready_b run_n_gun_b
+run,stand,l,run_lowready_l run_n_gun_l
+run,stand,r,run_lowready_r run_n_gun_r
+run,crouch,,crouch_fastwalk_f
+run,crouch,b,crouch_fastwalk_b
+run,crouch,l,crouch_fastwalk_l
+run,crouch,r,crouch_fastwalk_r
+sprint,stand,,sprint_loop_distant sprint1_loop
+fire,stand,,exposed_shoot_auto_v2 exposed_shoot_auto_v3
+fire,crouch,,exposed_crouch_shoot_auto_v2 exposed_crouch_shoot_auto_v3
+fire,prone,,prone_fire_1
+reload,stand,,exposed_reload
+reload,crouch,,exposed_crouch_reload
+reload,prone,,prone_reload
+death,stand,,death_stand_sniper_chest1 exposed_death_groin
+death,crouch,,exposed_crouch_death_fetal exposed_crouch_death_twist exposed_crouch_death_flip
+death,prone,,prone_death_quickdeath
