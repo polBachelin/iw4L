@@ -30,6 +30,7 @@ bleedout_seconds,30
 armor_absorb_percent,100
 getup_shock,laststand_getup_pc
 getup_shock_seconds,2
+hud_menus,surhud_display waves enemies credit
 eog_menu,sp_eog_summary
 eog_value_column,4
 eog_deadquote,@DEADQUOTE_SO_SURVIVAL_LAST_STAND

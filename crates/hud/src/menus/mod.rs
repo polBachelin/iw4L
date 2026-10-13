@@ -167,6 +167,15 @@ pub(crate) struct MenuOutputs<'w> {
     ids: Option<ResMut<'w, ActionRequestIds>>,
 }
 
+/// A menu painted this frame: its name, its items as painted, the focused
+/// item's rect and what its `uiActive()` reads.
+type MenuLayer<'a> = (
+    String,
+    std::borrow::Cow<'a, MenuDef>,
+    Option<[f32; 4]>,
+    bool,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_script_menus(
     surface: Res<crate::surface::Hud2dSurface>,
@@ -394,18 +403,42 @@ pub(crate) fn update_script_menus(
     let scoreboard = snapshot
         .filter(|s| in_game && crate::scoreboard::displayed(world.scores_open, s, local.0))
         .and_then(|_| catalog.get(SCOREBOARD_MENU));
-    if (menus.stack.is_empty() && scoreboard.is_none()) || !surface.is_ready() {
+    let survival_hud: Vec<&MenuDef> = if in_game
+        && world.kind == Some(gamemode_iw4::GameModeKind::Survival)
+        && !menus.captures_input()
+    {
+        assets::survival_hud_menus()
+            .filter_map(|name| catalog.get(name))
+            .filter(|def| !def.items.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if (menus.stack.is_empty() && scoreboard.is_none() && survival_hud.is_empty())
+        || !surface.is_ready()
+    {
         return;
     }
     let open_names = menus.open_names();
     let mut list = Draw2dList::default();
     let mut reported = std::mem::take(&mut menus.reported);
-    let mut layers: Vec<(String, std::borrow::Cow<MenuDef>, Option<[f32; 4]>)> = Vec::new();
+    let mut layers: Vec<MenuLayer> = survival_hud
+        .into_iter()
+        .map(|def| {
+            (
+                def.name.clone(),
+                std::borrow::Cow::Borrowed(def),
+                None,
+                false,
+            )
+        })
+        .collect();
     if let Some(def) = scoreboard {
         layers.push((
             SCOREBOARD_MENU.to_owned(),
             std::borrow::Cow::Borrowed(def),
             None,
+            true,
         ));
     }
     let paint_start = menus
@@ -528,9 +561,10 @@ pub(crate) fn update_script_menus(
             open.name.clone(),
             std::borrow::Cow::Owned(painted),
             focus_rect,
+            true,
         ));
     }
-    for (name, painted, focus_rect) in &layers {
+    for (name, painted, focus_rect, ui_active) in &layers {
         let host = MenuHost {
             world: &world,
             dvars: &out.dvars,
@@ -538,6 +572,7 @@ pub(crate) fn update_script_menus(
             locals: &locals,
             open: &open_names,
             focus_rect: *focus_rect,
+            ui_active: *ui_active,
         };
         let mut owner_draw = |args: OwnerDrawArgs<'_>, frame: &mut ChromeFrame| {
             if args.item.owner_draw == 181 {
@@ -776,6 +811,7 @@ fn handle_input(
         locals: runner.locals,
         open: &names,
         focus_rect: None,
+        ui_active: true,
     };
     let rects = item_screen_rects(&painted, &host, surface, runner.exprs);
     let visible = runner.visible_items(&top);

@@ -41,6 +41,8 @@ pub(crate) struct MenuHost<'a> {
     pub locals: &'a UiLocalVars,
     pub open: &'a [String],
     pub focus_rect: Option<[f32; 4]>,
+    /// False for a layer drawn under no open menu, as the survival HUD is.
+    pub ui_active: bool,
 }
 
 impl MenuHost<'_> {
@@ -428,7 +430,7 @@ impl ExprHost for MenuHost<'_> {
         Ok(Operand::Str(t.cell(row, col).to_owned()))
     }
     fn ui_active(&self) -> Result<i32, ExprError> {
-        Ok(1)
+        Ok(i32::from(self.ui_active))
     }
     fn scoreboard_visible(&self) -> Result<i32, ExprError> {
         Ok(i32::from(self.world.scores_open))

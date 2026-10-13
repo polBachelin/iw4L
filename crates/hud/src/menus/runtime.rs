@@ -65,6 +65,7 @@ impl Runner<'_, '_> {
             locals: self.locals,
             open: &open,
             focus_rect,
+            ui_active: true,
         };
         self.exprs.evaluate(dump, &host)
     }
@@ -646,6 +647,7 @@ impl Runner<'_, '_> {
             locals: self.locals,
             open: &open,
             focus_rect: None,
+            ui_active: true,
         };
         let mut out = Vec::new();
         let mut failures = Vec::new();

@@ -1,4 +1,8 @@
 surHUD_credits,
+surHUD_credits_delta,
+surHUD_wave,
+surHUD_enemy,
+surHUD,,wave enemy credits
 experience,
 armoryweapon,weapon
 armoryequipment,equipment
