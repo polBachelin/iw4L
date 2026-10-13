@@ -177,8 +177,13 @@ impl PreparedXModelWalkCensus {
     }
 }
 
-#[derive(Clone, Debug, Default, Resource)]
-pub struct PreparedXAnims(pub std::sync::Arc<XAnimCatalog>);
+/// The match's animations, and the namespace the installed map's script
+/// entities play theirs from.
+#[derive(Clone, Debug, Resource)]
+pub struct PreparedXAnims(
+    pub std::sync::Arc<XAnimCatalog>,
+    pub asset_core::AssetNamespace,
+);
 
 #[derive(Clone, Debug, Default, Resource)]
 pub struct PreparedDestructibleDeath(pub Vec<DestructibleDeathRow>);

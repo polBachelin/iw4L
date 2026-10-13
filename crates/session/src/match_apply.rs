@@ -876,7 +876,13 @@ fn preflight_match_install(
     let world_weapons = assets::PreparedWorldWeapons(Arc::new(prepared.world_weapons));
     let projectile_meshes = assets::PreparedProjectileMeshes(prepared.projectile_meshes);
     let xmodel_walk = std::mem::take(&mut prepared.xmodel_walk);
-    let xanims = PreparedXAnims(prepared.xanims);
+    let xanims = PreparedXAnims(
+        prepared.xanims,
+        prepared
+            .prepared_map
+            .namespace
+            .expect("installed map family"),
+    );
     let death = PreparedDestructibleDeath(std::mem::take(&mut prepared.destructible_death));
     log_destructible_death_assets(&death);
     let player_anim_sources = prepared.player_anim_sources;

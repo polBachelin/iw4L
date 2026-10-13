@@ -35,6 +35,35 @@ struct PersistentScriptDobj {
 
 const SPAWNED_PRESENCE: std::ops::Range<u32> = 0x4000_0000..0x8000_0000;
 
+fn spawned_scene_note(model: &str, what: &str) {
+    static SEEN: std::sync::Mutex<std::collections::BTreeSet<(String, String)>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    if SEEN
+        .lock()
+        .is_ok_and(|mut seen| seen.insert((model.to_owned(), what.to_owned())))
+    {
+        diag::info!(World, "script model: spawned `{model}` {what}");
+    }
+}
+
+/// Reports once per model and reason that a script-spawned model is not
+/// drawn; each of these skips otherwise leaves it invisible without a word.
+fn spawned_undrawn(owner: &WorldScriptModelInstance, why: &str) {
+    static SEEN: std::sync::Mutex<std::collections::BTreeSet<(String, String)>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+    if !SPAWNED_PRESENCE.contains(&owner.id.source_ordinal()) {
+        return;
+    }
+    let key = (owner.current_model.0.clone(), why.to_owned());
+    if SEEN.lock().is_ok_and(|mut seen| seen.insert(key)) {
+        diag::warn!(
+            World,
+            "script model gap: spawned `{}` is not drawn: {why}",
+            owner.current_model.0
+        );
+    }
+}
+
 #[derive(Component)]
 struct SpawnedSceneModel {
     source: u32,
@@ -315,12 +344,19 @@ fn sync_spawned_scene_models(
         if known.contains(&source) {
             continue;
         }
-        let Some(mover) = movers.get(&source) else {
-            continue;
-        };
         let Some(base) = state.composition.models.first() else {
             continue;
         };
+        let Some(mover) = movers.get(&source) else {
+            if SPAWNED_PRESENCE.contains(&source) {
+                spawned_scene_note(
+                    &base.model,
+                    "has a DObj but no script mover in the snapshot; not drawn",
+                );
+            }
+            continue;
+        };
+        spawned_scene_note(&base.model, "joins the scene");
         let origin = mover.state.tr_base;
         let transform = Transform::from_translation(Vec3::from_array(origin));
         commands.spawn((
@@ -487,6 +523,23 @@ fn occupy_script_model_scene_ents(
             continue;
         }
         let Some(skels) = presented_skel_arcs(&assets, &owner.dobj_state) else {
+            let missing: Vec<String> = owner
+                .dobj_state
+                .composition
+                .models
+                .iter()
+                .filter_map(|model| match assets.get_name(&model.model) {
+                    None => Some(format!("{} (absent)", model.model)),
+                    Some(asset_world::MapXModelSceneAsset::Unavailable { .. }) => {
+                        Some(format!("{} (unavailable)", model.model))
+                    }
+                    Some(_) => None,
+                })
+                .collect();
+            spawned_undrawn(
+                owner,
+                &format!("not in the scene catalog: {}", missing.join(", ")),
+            );
             continue;
         };
         let skel_refs: Vec<&asset_model::ModelSkel> =
@@ -502,6 +555,7 @@ fn occupy_script_model_scene_ents(
         let origin = transform.translation.to_array();
         let quat = scene_quat_from_mover_sample(persist.mover_pose.get(&owner.id.source_ordinal()));
         let Some(entnum) = owner.gentity_number.map(u32::from) else {
+            spawned_undrawn(owner, "no gentity number");
             continue;
         };
         let lod_view = Some(DObjLodView {
@@ -621,6 +675,7 @@ fn pose_script_models(
             continue;
         }
         let Some(skels) = presented_skels(&assets, &owner.dobj_state) else {
+            spawned_undrawn(owner, "skeleton_unavailable");
             if let Some(id) = focused_owner_id {
                 focus.refuse(id, &owner.current_model.0, "skeleton_unavailable");
             }
@@ -648,15 +703,14 @@ fn pose_script_models(
             if compose_or_reuse_script_dobj(&mut persist, id, &assets, &owner.dobj_state, &prepared)
                 .is_none()
             {
+                spawned_undrawn(owner, "its DObj could not be composed");
                 persist.by_id.remove(&id);
                 continue;
             }
             live_ids.insert(id);
             let request = owner.dobj_state.resolve_request(|name| {
-                xanims
-                    .as_ref()?
-                    .0
-                    .clip(asset_core::AssetNamespace::Iw4, name)
+                let xanims = xanims.as_ref()?;
+                xanims.0.clip(xanims.1, name)
             });
             let index = if let Some(index) =
                 product.asset_index(&owner.current_model, &owner.dobj_state, &camera_lods)
@@ -666,8 +720,12 @@ fn pose_script_models(
                 let Some(slot_dobj) = persist.by_id.get(&id) else {
                     continue;
                 };
-                let Ok(request) = request else {
-                    continue;
+                let request = match request {
+                    Ok(request) => request,
+                    Err(error) => {
+                        spawned_undrawn(owner, &format!("pose request: {error:?}"));
+                        continue;
+                    }
                 };
                 let skin_entries = slot.as_ref().map(|slot| slot.skin_entries).unwrap_or(&[]);
                 let Some((surfaces, surface_materials)) = pose_script_dobj_with_materials(
@@ -678,6 +736,7 @@ fn pose_script_models(
                     lod_view,
                     skin_entries,
                 ) else {
+                    spawned_undrawn(owner, "posing gave no surfaces");
                     continue;
                 };
                 for (surface, authored) in surfaces.iter().zip(surface_materials.iter()) {

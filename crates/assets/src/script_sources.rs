@@ -78,8 +78,18 @@ impl ScriptSources {
         if let Some(entities) = &self.entities {
             quoted_names(entities.as_bytes(), &mut names);
         }
+        for addon in self.addon_entities.values() {
+            quoted_names(addon.text.as_bytes(), &mut names);
+        }
+        // A cell may list several names separated by whitespace.
         for table in self.tables.values() {
-            names.extend(table.cells.iter().cloned());
+            names.extend(
+                table
+                    .cells
+                    .iter()
+                    .flat_map(|cell| cell.split_whitespace())
+                    .map(str::to_owned),
+            );
         }
         names
     }
