@@ -284,6 +284,7 @@ pub struct MaterialFrameInputs {
 }
 
 pub(crate) fn admit_material_generation(
+    blood_material: &'static str,
     catalog: Arc<RuntimeMaterialCatalog>,
     programs: RuntimeProgramRegistry,
     exact_shaders: Vec<Handle<bevy::shader::Shader>>,
@@ -294,9 +295,26 @@ pub(crate) fn admit_material_generation(
             .map(RuntimeProgramPort::admitted_facts)
     });
     let postfx = super::build_runtime_postfx(&catalog, &prepared, &programs, &exact_shaders);
-    let blood = super::build_runtime_blood(&catalog, &prepared, &programs, &exact_shaders)
-        .inspect_err(|cause| diag::warn!(World, "blood material admission: RED cause={cause:?}"))
-        .ok();
+    let blood = super::build_runtime_blood(
+        blood_material,
+        &catalog,
+        &prepared,
+        &programs,
+        &exact_shaders,
+    )
+    .inspect(|_| {
+        diag::info!(
+            World,
+            "blood material admission: GREEN material={blood_material}"
+        )
+    })
+    .inspect_err(|cause| {
+        diag::warn!(
+            World,
+            "blood material admission: RED material={blood_material} cause={cause:?}"
+        )
+    })
+    .ok();
     MaterialGeneration {
         catalog,
         prepared: Arc::new(prepared),

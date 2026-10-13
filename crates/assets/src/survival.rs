@@ -315,11 +315,12 @@ const PLAYER_STANCES: [&str; 3] = ["stand", "crouch", "prone"];
 
 /// Settings rows the actor script reads as whole numbers, and those of them
 /// that are percents.
-const ACTOR_NUMBERS: [&str; 17] = [
+const ACTOR_NUMBERS: [&str; 18] = [
     "actor_budget",
     "actor_spawn_clearance",
     "actor_think_ms",
     "actor_blend_ms",
+    "actor_pain_blend_ms",
     "actor_goal_radius",
     "actor_engage_range",
     "actor_walk_range",
@@ -506,6 +507,30 @@ pub fn survival_compass_actors() -> Result<SurvivalCompassActors, String> {
         "firing" => Ok(SurvivalCompassActors::Firing),
         other => Err(format!(
             "{SETTINGS_TABLE}: `compass_actors` is neither always nor firing: `{other}`"
+        )),
+    }
+}
+
+/// Which bullet impact table Survival plays (`impact_table_source`): the one
+/// the common set's zones carry (MW3's SP `common`), or the map's own.
+/// Survival runs on SP content, and an MP map's table names MP flesh effects
+/// and leaves its exit rows' flesh cells empty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurvivalImpactTableSource {
+    Common,
+    Map,
+}
+
+pub fn survival_impact_table_source() -> Result<SurvivalImpactTableSource, String> {
+    parse_impact_table_source(required_setting("impact_table_source")?)
+}
+
+fn parse_impact_table_source(value: &str) -> Result<SurvivalImpactTableSource, String> {
+    match value {
+        "common" => Ok(SurvivalImpactTableSource::Common),
+        "map" => Ok(SurvivalImpactTableSource::Map),
+        other => Err(format!(
+            "{SETTINGS_TABLE}: `impact_table_source` is neither common nor map: `{other}`"
         )),
     }
 }
@@ -800,6 +825,19 @@ pub fn survival_base_zones() -> Result<asset_transport::BaseZones, String> {
         return Err(format!("{SETTINGS_TABLE}: `base_zones` names no zone"));
     }
     Ok(zones)
+}
+
+/// The blood overlay material survival's base zones carry
+/// (`blood_overlay_material`): MW3's singleplayer code material, not the
+/// multiplayer one its base zones lack.
+pub fn survival_blood_overlay() -> Result<crate::MatchBloodOverlay, String> {
+    let name = required_setting("blood_overlay_material")?;
+    if name.is_empty() {
+        return Err(format!(
+            "{SETTINGS_TABLE}: `blood_overlay_material` names no material"
+        ));
+    }
+    Ok(crate::MatchBloodOverlay(name))
 }
 
 /// The MW3 zones survival loads after its base zones, in load order, over
@@ -1116,6 +1154,12 @@ pub fn survival_data_check(
         ));
     }
     if let Err(gap) = survival_compass_actors() {
+        gaps.push(gap);
+    }
+    if let Err(gap) = survival_impact_table_source() {
+        gaps.push(gap);
+    }
+    if let Err(gap) = survival_blood_overlay() {
         gaps.push(gap);
     }
     let waves_name = required_setting("waves_table")?;
@@ -2322,5 +2366,29 @@ pub(crate) fn insert_survival_scripts(scripts: &mut crate::ScriptSources) {
     }
     for (zone, csv) in MAP_TABLES {
         scripts.insert_table(&map_table_name(zone), csv);
+    }
+}
+
+#[cfg(test)]
+mod impact_table_source_tests {
+    use super::{
+        SurvivalImpactTableSource, parse_impact_table_source, survival_impact_table_source,
+    };
+
+    #[test]
+    fn the_settings_row_prefers_the_sp_common_table() {
+        assert_eq!(
+            survival_impact_table_source(),
+            Ok(SurvivalImpactTableSource::Common)
+        );
+    }
+
+    #[test]
+    fn an_unknown_source_is_refused() {
+        assert_eq!(
+            parse_impact_table_source("map"),
+            Ok(SurvivalImpactTableSource::Map)
+        );
+        assert!(parse_impact_table_source("sp").is_err());
     }
 }

@@ -436,12 +436,16 @@ fn load_weapon_def(
     asset_ptr_at(s, links, AssetType::Fx, p.at(s.layout(1392, 1800)))?;
     follow_snd_alias_custom(s, p.at(s.layout(1396, 1808)))?;
     follow_name(s, p, s.layout(1552, 1968))?;
-    if s.begin_body(p.at(s.layout(1560, 1984)))? {
-        s.alloc_load(4, 8 * ai_knots)?;
+    let ai_knots_slot = p.at(s.layout(1560, 1984));
+    if s.begin_body(ai_knots_slot)? {
+        let arr = s.alloc_load(4, 8 * ai_knots)?;
+        s.fixup_slot(ai_knots_slot, arr)?;
     }
     follow_name(s, p, s.layout(1556, 1976))?;
-    if s.begin_body(p.at(s.layout(1564, 1992)))? {
-        s.alloc_load(4, 8 * player_knots)?;
+    let player_knots_slot = p.at(s.layout(1564, 1992));
+    if s.begin_body(player_knots_slot)? {
+        let arr = s.alloc_load(4, 8 * player_knots)?;
+        s.fixup_slot(player_knots_slot, arr)?;
     }
     for off in [
         s.layout(1644, 2080),
@@ -450,8 +454,10 @@ fn load_weapon_def(
     ] {
         follow_name(s, p, off)?;
     }
-    if s.begin_body(p.at(s.layout(1720, 2176)))? {
-        s.alloc_load(4, 4 * sz::HITLOC_COUNT)?;
+    let location_damage_slot = p.at(s.layout(1720, 2176));
+    if s.begin_body(location_damage_slot)? {
+        let arr = s.alloc_load(4, 4 * sz::HITLOC_COUNT)?;
+        s.fixup_slot(location_damage_slot, arr)?;
     }
     follow_name(s, p, s.layout(1724, 2184))?;
     follow_name(s, p, s.layout(1728, 2192))?;

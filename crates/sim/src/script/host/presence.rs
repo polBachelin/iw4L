@@ -228,6 +228,7 @@ fn present(world: &mut World, now: i32) {
                 mover.state.e_flags &= !entity_iw4::CG_SCRIPT_MOVER_NODRAW;
             }
             mover.nonsolid = !want.solid;
+            mover.actor = want.hit_volumes;
             mover.shown_to = want.shown_to;
         }
         if posed || shown.moving {

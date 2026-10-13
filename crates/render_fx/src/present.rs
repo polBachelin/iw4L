@@ -476,6 +476,27 @@ fn play_def_at(
     Some(stamp_play_lighting(host, catalog, world, result))
 }
 
+/// Logs the first time each effect plays as another's `effectOnImpact`: a
+/// collision child such as MW3's `impacts/flesh_hit_splat`, the blood decal a
+/// head-shot exit's drops leave on the wall they land on.
+fn log_first_impact_child(parent: &str, def_index: u8, child: &str, origin: [f32; 3]) {
+    static LOGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let Ok(mut logged) = LOGGED.lock() else {
+        return;
+    };
+    if logged.iter().any(|name| name == child) {
+        return;
+    }
+    logged.push(child.to_owned());
+    diag::info!(
+        World,
+        "fx: effectOnImpact `{parent}` elem {def_index} -> `{child}` played at ({:.0}, {:.0}, {:.0}) (first of this child)",
+        origin[0],
+        origin[1],
+        origin[2]
+    );
+}
+
 fn skip_runner(host: &mut FxSystemHost, req: &fx::PendingRunnerSpawn) {
     host.last_runner_parent = Some(req.parent_name.clone()).filter(|name| !name.is_empty());
     host.last_runner_elem = Some(req.def_index);
@@ -938,7 +959,12 @@ fn tick_fx_pass(
                     def: Some(def_info(child, &elems)),
                 },
             ) {
-                PlayResult::PlayedReleased { .. } | PlayResult::Held { .. } => true,
+                PlayResult::PlayedReleased { .. } | PlayResult::Held { .. } => {
+                    if req.kind == FxChildKind::Impact {
+                        log_first_impact_child(&parent.name, req.def_index, child_name, req.origin);
+                    }
+                    true
+                }
                 PlayResult::Failed(_) => false,
             }
         },

@@ -186,9 +186,13 @@ pub(crate) fn spawn_world(
         Res<render_anim::PreparedFpv>,
         Res<render_anim::PreparedModelMaterials>,
         Option<Res<render_fx::PreparedFxModels>>,
+        Option<Res<assets::MatchBloodOverlay>>,
     ),
 ) {
-    let (fpv, model_materials, fx_models) = prepared;
+    let (fpv, model_materials, fx_models, blood_overlay) = prepared;
+    let blood_material = blood_overlay.map_or(assets::MatchBloodOverlay::MULTIPLAYER, |overlay| {
+        overlay.name()
+    });
     if scene.readiness.generation != job.spawn || job.spawn.0.is_none() {
         return;
     }
@@ -328,8 +332,11 @@ pub(crate) fn spawn_world(
 
     if job.phase == WorldSpawnPhase::Programs {
         if !job.compile.armed {
-            job.compile
-                .arm(&scene.runtime_material_catalog, progress.as_ref());
+            job.compile.arm(
+                &scene.runtime_material_catalog,
+                blood_material,
+                progress.as_ref(),
+            );
             job.admit = crate::assemble::drawsurf::MaterialProgramAdmit::default();
         }
         let compile_finished = job.compile.until(&scene.runtime_material_catalog, deadline);
@@ -392,6 +399,7 @@ pub(crate) fn spawn_world(
         }
         let (programs, exact_shaders) = job.admit.take_generation();
         let generation = crate::assemble::drawsurf::admit_material_generation(
+            blood_material,
             scene.runtime_material_catalog.clone(),
             programs,
             exact_shaders,

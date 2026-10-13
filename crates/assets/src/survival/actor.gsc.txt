@@ -106,11 +106,19 @@ clearlayer()
 // Plays an anim of `state` once and returns when it ends.
 playonce( state, direction )
 {
+	self playnamed( self pickanim( state, direction ), settingseconds( "actor_blend_ms" ) );
+}
+
+// Plays anim `name` once from its start, blending in over `blend`
+// seconds, and returns when it ends. Restarted, as MW3's pain and death
+// knobs are: an anim of the same name still ramping out from its last play
+// would otherwise sit at its end and never notify it.
+playnamed( name, blend )
+{
 	self.loopstate = undefined;
-	name = self pickanim( state, direction );
 	if ( name == "" )
 		return;
-	self setflaggedanimknob( "actor_anim", name, 1, settingseconds( "actor_blend_ms" ) );
+	self setflaggedanimknobrestart( "actor_anim", name, 1, blend );
 	for ( ;; )
 	{
 		self waittill( "actor_anim", note );
@@ -342,6 +350,10 @@ pushdirection( direction )
 	return "l";
 }
 
+// A hit the actor lives through flinches it at actor_pain_percent: the
+// burst in progress stops before its next shot (engage checks inpain), the
+// fire layer drops with the pain knob, and once the pain ends the actor aims
+// again (aim blend) before it fires. Hits during a pain do not restart it.
 actorpain()
 {
 	self endon( "death" );
@@ -352,9 +364,13 @@ actorpain()
 			self.hitdirection = self pushdirection( direction );
 		if ( self.inpain || !self isalive() || randomint( 100 ) >= int( setting( "actor_pain_percent" ) ) )
 			continue;
+		name = self pickanim( "pain", self.hitdirection );
+		if ( name == "" )
+			continue;
 		self.inpain = true;
 		self stopmoving();
-		self playonce( "pain", self.hitdirection );
+		logprint( "survival: actor pain actor=" + self getentitynumber() + " anim=" + name + " dir=" + self.hitdirection + "\n" );
+		self playnamed( name, settingseconds( "actor_pain_blend_ms" ) );
 		self.inpain = false;
 	}
 }

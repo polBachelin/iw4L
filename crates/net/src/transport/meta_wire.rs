@@ -2425,7 +2425,7 @@ fn encode_script_movers(out: &mut WireWriter, movers: &[sim::ScriptMoverGentity]
     out.put_u16(movers.len() as u16);
     for mover in movers {
         out.put_u32(mover.id.to_wire());
-        out.put_u8(u8::from(mover.nonsolid));
+        out.put_u8(u8::from(mover.nonsolid) | (u8::from(mover.actor) << 1));
         encode_entity_state(out, &mover.state);
     }
 }
@@ -2437,11 +2437,15 @@ fn decode_script_movers(
     let mut movers = Vec::with_capacity(count.min(256));
     for _ in 0..count {
         let id = ScriptModelId::from_wire(input.get_u32()?);
-        let nonsolid = input.get_u8()? != 0;
+        let flags = input.get_u8()?;
+        if flags & !0b11 != 0 {
+            return Err(WireError::Malformed("unknown script mover flags"));
+        }
         movers.push(sim::ScriptMoverGentity {
             id,
             state: decode_entity_state(input)?,
-            nonsolid,
+            nonsolid: flags & 0b01 != 0,
+            actor: flags & 0b10 != 0,
             ..Default::default()
         });
     }
@@ -3266,4 +3270,32 @@ fn decode_objectives(input: &mut WireReader<'_>) -> Result<sim::ObjectiveMatch, 
         });
     }
     Ok(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_mover_flags_round_trip_actor_marker() {
+        let movers = [
+            sim::ScriptMoverGentity {
+                id: ScriptModelId::from_wire(7),
+                nonsolid: true,
+                ..Default::default()
+            },
+            sim::ScriptMoverGentity {
+                id: ScriptModelId::from_wire(8),
+                actor: true,
+                ..Default::default()
+            },
+        ];
+        let mut out = WireWriter::new();
+        encode_script_movers(&mut out, &movers);
+        let bytes = out.finish();
+        let decoded = decode_script_movers(&mut WireReader::new(&bytes)).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert!(decoded[0].nonsolid && !decoded[0].actor);
+        assert!(!decoded[1].nonsolid && decoded[1].actor);
+    }
 }

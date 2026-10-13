@@ -708,18 +708,32 @@ pub(super) async fn walk_prepared_match(
             .into(),
     );
     decode_fx_colour_maps(&world.fx, &mut global, &zone_ff, &progress, &mut report);
-    if world.impact_fx.is_none() {
-        world.impact_fx = if map_namespace == Some(asset_core::AssetNamespace::T5) {
-            t5_impact_fx.or(common_impact)
-        } else {
-            common_impact
-        };
-    } else if let Some(common_table) = common_impact {
-        report.push(format!(
-            "impactfx: map table kept; common set table `{}` discarded",
-            common_table.name
-        ));
-    }
+    let impact_precedence = match runtime_namespace {
+        Some(asset_core::AssetNamespace::Iw5) => {
+            match crate::survival::survival_impact_table_source() {
+                Ok(crate::survival::SurvivalImpactTableSource::Common) => {
+                    ImpactTablePrecedence::CommonFirst
+                }
+                Ok(crate::survival::SurvivalImpactTableSource::Map) => {
+                    ImpactTablePrecedence::MapFirst
+                }
+                Err(gap) => {
+                    report.push(format!("impactfx gap: {gap}; the map table goes first"));
+                    ImpactTablePrecedence::MapFirst
+                }
+            }
+        }
+        _ => ImpactTablePrecedence::MapFirst,
+    };
+    let common_impact = if map_namespace == Some(asset_core::AssetNamespace::T5) {
+        t5_impact_fx.or(common_impact)
+    } else {
+        common_impact
+    };
+    let (impact_fx, impact_line) =
+        pick_impact_table(world.impact_fx.take(), common_impact, impact_precedence);
+    world.impact_fx = impact_fx;
+    report.push(impact_line);
     if let Some(ref table) = world.impact_fx {
         report.push(format!(
             "impactfx handoff: {:?}:`{}` rows={} (fx catalog now {} defs)",
@@ -826,6 +840,66 @@ pub(super) async fn walk_prepared_match(
         script_sound_aliases: None,
     };
     (MatchLoadOutcome::Ready(prepared), Some(common))
+}
+
+/// Which impact table goes first when both the map and the common set carry
+/// one. Multiplayer keeps the map's own; Survival reads its
+/// `impact_table_source` setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImpactTablePrecedence {
+    MapFirst,
+    CommonFirst,
+}
+
+/// The impact table a match plays, and the report line naming the one that
+/// won and why. The tables have no useful names (MW3's are empty), so the
+/// line names their source and row counts.
+fn pick_impact_table(
+    map: Option<asset_game::OwnedFxImpactTable>,
+    common: Option<asset_game::OwnedFxImpactTable>,
+    precedence: ImpactTablePrecedence,
+) -> (Option<asset_game::OwnedFxImpactTable>, String) {
+    let rows = |table: &asset_game::OwnedFxImpactTable| {
+        format!("`{}` rows={}", table.name, table.row_count())
+    };
+    match (map, common) {
+        (Some(map), Some(common)) => match precedence {
+            ImpactTablePrecedence::MapFirst => {
+                let line = format!(
+                    "impactfx: map table {} kept; common set table {} discarded",
+                    rows(&map),
+                    rows(&common)
+                );
+                (Some(map), line)
+            }
+            ImpactTablePrecedence::CommonFirst => {
+                let line = format!(
+                    "impactfx: common set table {} kept (impact_table_source=common); map table {} discarded",
+                    rows(&common),
+                    rows(&map)
+                );
+                (Some(common), line)
+            }
+        },
+        (Some(map), None) => {
+            let line = format!(
+                "impactfx: map table {} (the common set has none)",
+                rows(&map)
+            );
+            (Some(map), line)
+        }
+        (None, Some(common)) => {
+            let line = format!(
+                "impactfx: common set table {} (the map has none)",
+                rows(&common)
+            );
+            (Some(common), line)
+        }
+        (None, None) => (
+            None,
+            "impactfx: neither the map nor the common set has a table".into(),
+        ),
+    }
 }
 
 fn resolve_world_lights(
@@ -1342,4 +1416,54 @@ fn t5_map_under_iw4_rules(
     scripts.insert_source(&module, map_main);
     scripts.set_entities(entities);
     scripts
+}
+
+#[cfg(test)]
+mod impact_table_tests {
+    use super::{ImpactTablePrecedence, pick_impact_table};
+
+    fn table(name: &str) -> asset_game::OwnedFxImpactTable {
+        asset_game::OwnedFxImpactTable {
+            namespace: asset_core::AssetNamespace::Iw5,
+            name: name.into(),
+            entries: vec![Default::default(); 15],
+            capture_gaps: 0,
+        }
+    }
+
+    #[test]
+    fn multiplayer_keeps_the_map_table() {
+        let (won, line) = pick_impact_table(
+            Some(table("map")),
+            Some(table("common")),
+            ImpactTablePrecedence::MapFirst,
+        );
+        assert_eq!(won.unwrap().name, "map");
+        assert!(line.contains("map table `map` rows=15 kept"), "{line}");
+    }
+
+    #[test]
+    fn survival_prefers_the_common_set_table() {
+        let (won, line) = pick_impact_table(
+            Some(table("map")),
+            Some(table("common")),
+            ImpactTablePrecedence::CommonFirst,
+        );
+        assert_eq!(won.unwrap().name, "common");
+        assert!(line.contains("impact_table_source=common"), "{line}");
+        assert!(line.contains("map table `map` rows=15 discarded"), "{line}");
+    }
+
+    #[test]
+    fn a_lone_table_wins_either_way() {
+        for precedence in [
+            ImpactTablePrecedence::MapFirst,
+            ImpactTablePrecedence::CommonFirst,
+        ] {
+            let (won, _) = pick_impact_table(Some(table("map")), None, precedence);
+            assert_eq!(won.unwrap().name, "map");
+            let (won, _) = pick_impact_table(None, Some(table("common")), precedence);
+            assert_eq!(won.unwrap().name, "common");
+        }
+    }
 }

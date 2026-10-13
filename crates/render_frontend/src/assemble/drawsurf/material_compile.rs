@@ -579,9 +579,12 @@ impl MaterialProgramCompile {
         absorbed
     }
 
+    /// `blood_material` is the blood overlay material the launch mode's base
+    /// zones carry (`assets::MatchBloodOverlay`), compiled with the 2D set.
     pub fn arm(
         &mut self,
         catalog: &Arc<RuntimeMaterialCatalog>,
+        blood_material: &str,
         progress: Option<&asset_transport::LoadProgress>,
     ) {
         self.jobs.clear();
@@ -668,9 +671,10 @@ impl MaterialProgramCompile {
                 }
             }
         }
-        for &name in super::postfx_plan::GLOW_MATERIALS
+        for name in super::postfx_plan::GLOW_MATERIALS
             .iter()
-            .chain([&super::postfx_plan::BLOOD_MATERIAL])
+            .copied()
+            .chain([blood_material])
         {
             match postfx_compile_location(catalog, name) {
                 Ok((set_i, pass_i)) => {

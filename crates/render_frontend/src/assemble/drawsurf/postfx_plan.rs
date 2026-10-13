@@ -41,8 +41,6 @@ pub const GLOW_SETUP_MATERIAL: &str = "glow_consistent_setup_color2";
 pub const GLOW_APPLY_MATERIAL: &str = "glow_apply_bloom";
 pub const GLOW_MATERIALS: &[&str] = &[GLOW_SETUP_MATERIAL, GLOW_APPLY_MATERIAL];
 
-pub const BLOOD_MATERIAL: &str = "splatter_alt";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PostFxAdmissionRefusal {
     MaterialMissing,
@@ -293,14 +291,17 @@ fn build_postfx_material(
     RuntimePostFxResources::Ready(vec![film])
 }
 
+/// Admits the blood overlay material the launch mode's base zones carry
+/// (`assets::MatchBloodOverlay`).
 pub(crate) fn build_runtime_blood(
+    blood_material: &'static str,
     catalog: &RuntimeMaterialCatalog,
     prepared: &PreparedMaterialTable,
     programs: &RuntimeProgramRegistry,
     shaders: &[Handle<bevy::shader::Shader>],
 ) -> Result<RuntimeBloodMaterial, PostFxAdmissionRefusal> {
-    let film = admit_unlit_2d(catalog, prepared, programs, shaders, BLOOD_MATERIAL, false)?;
-    let (material, _, _) = postfx_material_location(catalog, BLOOD_MATERIAL)?;
+    let film = admit_unlit_2d(catalog, prepared, programs, shaders, blood_material, false)?;
+    let (material, _, _) = postfx_material_location(catalog, blood_material)?;
     let texture_slots = film
         .port
         .abi()

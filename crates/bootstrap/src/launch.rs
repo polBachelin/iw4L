@@ -78,6 +78,14 @@ impl Frontend {
         }
     }
 
+    fn blood_overlay(self) -> assets::MatchBloodOverlay {
+        match self {
+            Self::Multiplayer => assets::MatchBloodOverlay::default(),
+            Self::Survival => assets::survival_blood_overlay()
+                .unwrap_or_else(|error| fatal(&format!("survival: {error}"))),
+        }
+    }
+
     fn mode_zones(self) -> ModeZones {
         match self {
             Self::Multiplayer => ModeZones::default(),
@@ -725,6 +733,7 @@ fn run_map(
         .insert_resource(menus)
         .insert_resource(MatchRuntimeProfile(frontend.runtime()))
         .insert_resource(MatchModeZones(mode))
+        .insert_resource(frontend.blood_overlay())
         .insert_resource(MatchLoadRequest {
             request_id: 0,
             load_key: Default::default(),

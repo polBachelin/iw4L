@@ -31,6 +31,28 @@ pub struct MatchRuntimeProfile(pub asset_transport::RuntimeProfile);
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct MatchModeZones(pub asset_transport::ModeZones);
 
+/// The code material the launch mode's base zones carry for the player's
+/// blood overlay: the multiplayer code zones name it `splatter_alt`, MW3's
+/// singleplayer base zones (survival) `splatter_alt_sp`. Its color and mask
+/// images are read from the material itself. Fixed for the process like the
+/// mode zones; a launch that inserts none draws the multiplayer material.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchBloodOverlay(pub &'static str);
+
+impl MatchBloodOverlay {
+    pub const MULTIPLAYER: &str = "splatter_alt";
+
+    pub fn name(&self) -> &'static str {
+        self.0
+    }
+}
+
+impl Default for MatchBloodOverlay {
+    fn default() -> Self {
+        Self(Self::MULTIPLAYER)
+    }
+}
+
 /// The namespace the runtime game's own assets live in: an unqualified alias
 /// (movement, HUD, menu and code cues, script sounds) resolves here, while a
 /// donor game's asset keeps its own namespace. The menu shell inserts no

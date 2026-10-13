@@ -15,20 +15,6 @@ use hud_iw4::{COMPASS_ENEMY_FIRING_PING_IMAGE, COMPASS_RADAR_LINE_IMAGE};
 
 use crate::gaps::ImageMiss;
 
-const DATA_SAMPLED_IMAGES: &[&str] = &[BLOOD_OVERLAY_MASK, BLOOD_OVERLAY_COLOR];
-
-pub(crate) const BLOOD_OVERLAY_MASK: &str = "blood_defocus_mask";
-pub(crate) const BLOOD_OVERLAY_COLOR: &str = "blood_defocus_color";
-
-pub(crate) fn hud_sampling_for(name: &str) -> HudSampling {
-    let key = cache_key(name);
-    if DATA_SAMPLED_IMAGES.iter().any(|mask| *mask == key) {
-        HudSampling::Data
-    } else {
-        HudSampling::Color
-    }
-}
-
 fn cache_key(name: &str) -> String {
     asset_core::AssetRef::bare_name(name).to_ascii_lowercase()
 }
@@ -60,21 +46,40 @@ fn iwd_key(ns: AssetNamespace, name: &str, sampling: HudSampling, sampler: Optio
     (ns, cache_key(name), sampling, sampler)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The blood overlay material's one unlit pass, with the color and mask
+/// images it binds. Both images are sampled as data, not sRGB color.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BloodMaterialBinding {
     pub state: render_material::CompiledPassState,
+    pub color_image: String,
+    pub mask_image: String,
     pub color_sampler: u8,
     pub mask_sampler: u8,
 }
 
+impl BloodMaterialBinding {
+    fn sampler_for(&self, key: &str) -> Option<u8> {
+        if cache_key(&self.color_image) == key {
+            Some(self.color_sampler)
+        } else if cache_key(&self.mask_image) == key {
+            Some(self.mask_sampler)
+        } else {
+            None
+        }
+    }
+}
+
+/// `material` is the blood overlay material the launch mode's base zones
+/// carry (`assets::MatchBloodOverlay`); its images are whatever it binds.
 fn blood_material_binding(
     catalog: &MenuCatalog,
     chrome: AssetNamespace,
+    material: &str,
 ) -> Result<BloodMaterialBinding, String> {
-    let pass = "splatter_alt/unlit/pass 0";
+    let pass = format!("{material}/unlit/pass 0");
     let plan = catalog
         .material_2d_plans
-        .get("splatter_alt")
+        .get(material)
         .ok_or_else(|| format!("{pass}: material plan missing"))?;
     if plan.unlit_pass_count != Some(1) || plan.unlit_pass_states.len() != 1 {
         return Err(format!(
@@ -87,21 +92,24 @@ fn blood_material_binding(
     let [color, mask] = &plan.textures[..] else {
         unreachable!();
     };
-    if color.semantic != TS_COLOR_MAP
-        || mask.semantic != TS_COLOR_MAP
-        || color.image.as_deref() != Some(BLOOD_OVERLAY_COLOR)
-        || mask.image.as_deref() != Some(BLOOD_OVERLAY_MASK)
-    {
+    let (TS_COLOR_MAP, TS_COLOR_MAP, Some(color_image), Some(mask_image)) = (
+        color.semantic,
+        mask.semantic,
+        color.image.as_deref(),
+        mask.image.as_deref(),
+    ) else {
         return Err(format!(
             "{pass}: color/mask color-map bindings missing or out of order"
         ));
-    }
+    };
     let state = asset_material::compile_material_state(chrome, plan.unlit_pass_states[0]);
     if let Some(fields) = state.unsupported_host_fields() {
         return Err(format!("{pass}: unsupported material state: {fields:?}"));
     }
     Ok(BloodMaterialBinding {
         state,
+        color_image: color_image.to_owned(),
+        mask_image: mask_image.to_owned(),
         color_sampler: color.sampler_state,
         mask_sampler: mask.sampler_state,
     })
@@ -205,14 +213,19 @@ impl HudImages {
         !self.games_root.as_os_str().is_empty()
     }
 
-    pub fn install_zone_catalog(&mut self, catalog: &MenuCatalog, chrome: AssetNamespace) {
+    pub fn install_zone_catalog(
+        &mut self,
+        catalog: &MenuCatalog,
+        chrome: AssetNamespace,
+        blood_material: &str,
+    ) {
         if self.zone_installed {
             return;
         }
         self.zone_installed = true;
         self.zone_uploaded = false;
         self.chrome = Some(chrome);
-        self.blood_plan = Some(blood_material_binding(catalog, chrome));
+        self.blood_plan = Some(blood_material_binding(catalog, chrome, blood_material));
         self.zone_srgb_reads.extend(
             catalog
                 .material_srgb_reads
@@ -285,12 +298,11 @@ impl HudImages {
         self.chrome == Some(ns)
     }
 
-    pub(crate) fn blood_material_binding(&self) -> Result<BloodMaterialBinding, &str> {
+    pub(crate) fn blood_material_binding(&self) -> Result<&BloodMaterialBinding, &str> {
         self.blood_plan
             .as_ref()
-            .ok_or("splatter_alt/unlit/pass 0: menu catalog missing")?
+            .ok_or("blood overlay material: menu catalog missing")?
             .as_ref()
-            .map(|binding| *binding)
             .map_err(String::as_str)
     }
 
@@ -421,18 +433,22 @@ impl HudImages {
             return;
         }
 
-        let blood = self.blood_material_binding().ok();
+        let blood = self.blood_material_binding().ok().cloned();
+        if let Some(blood) = blood {
+            for (name, sampler) in [
+                (&blood.color_image, blood.color_sampler),
+                (&blood.mask_image, blood.mask_sampler),
+            ] {
+                let _ = self.get_sampled_with_sampler(
+                    chrome,
+                    name,
+                    HudSampling::Data,
+                    Some(sampler),
+                    images,
+                );
+            }
+        }
         for (name, sampling, sampler) in [
-            (
-                BLOOD_OVERLAY_COLOR,
-                HudSampling::Color,
-                blood.map(|b| b.color_sampler),
-            ),
-            (
-                BLOOD_OVERLAY_MASK,
-                HudSampling::Data,
-                blood.map(|b| b.mask_sampler),
-            ),
             (DAMAGE_FEEDBACK_SHADER, HudSampling::Color, None),
             (COMPASS_ENEMY_FIRING_PING_IMAGE, HudSampling::Color, None),
             (COMPASS_RADAR_LINE_IMAGE, HudSampling::Color, None),
@@ -475,13 +491,13 @@ impl HudImages {
             return;
         }
         let keys: Vec<String> = self.zone_rgba.keys().cloned().collect();
-        let blood = self.blood_material_binding().ok();
+        let blood = self.blood_material_binding().ok().cloned();
         for key in keys {
-            let sampling = hud_sampling_for(&key);
-            let sampler = match key.as_str() {
-                BLOOD_OVERLAY_COLOR => blood.map(|binding| binding.color_sampler),
-                BLOOD_OVERLAY_MASK => blood.map(|binding| binding.mask_sampler),
-                _ => None,
+            let sampler = blood.as_ref().and_then(|binding| binding.sampler_for(&key));
+            let sampling = if sampler.is_some() {
+                HudSampling::Data
+            } else {
+                HudSampling::Color
             };
             let _ = self.upload_zone(&key, sampling, sampler, images);
         }

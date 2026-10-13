@@ -8,5 +8,6 @@ pub(super) const ANIM_TREE: &[Builtin] = &[
     Builtin::new(Method, "setanimtime", Entity, false),
     Builtin::new(Method, "setflaggedanim", Entity, false),
     Builtin::new(Method, "setflaggedanimknob", Entity, false),
+    Builtin::new(Method, "setflaggedanimknobrestart", Entity, false),
     Builtin::new(Method, "useanimtree", Entity, false),
 ];

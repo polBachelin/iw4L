@@ -58,9 +58,12 @@ impl EquipmentRuntimeFacts {
     }
 
     /// Whether a launched projectile can reach the bounce path, which reads
-    /// the per-surface `parallelBounce` / `perpendicularBounce` tables.
+    /// the per-surface `parallelBounce` / `perpendicularBounce` tables. Every
+    /// launched row can: impact-explode rows bounce while unarmed (inside
+    /// `projectileActivateDist`) and sticky rows bounce off players they do
+    /// not stick to.
     pub fn needs_bounce_coefficients(self) -> bool {
-        self.launches_projectile() && !self.proj_impact_explode
+        self.launches_projectile()
     }
 
     pub fn has_bounce_coefficients(self) -> bool {
@@ -112,12 +115,13 @@ mod tests {
     }
 
     #[test]
-    fn impact_explode_and_non_projectile_rows_need_no_tables() {
+    fn unarmed_impact_explode_rows_still_need_tables() {
         let rocket = EquipmentRuntimeFacts {
             proj_impact_explode: true,
+            projectile_activate_dist: 350,
             ..frag()
         };
-        assert!(!rocket.needs_bounce_coefficients());
+        assert!(rocket.needs_bounce_coefficients());
         assert!(!EquipmentRuntimeFacts::default().needs_bounce_coefficients());
     }
 }

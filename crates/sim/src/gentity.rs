@@ -631,6 +631,10 @@ pub struct ScriptMoverGentity {
 
     pub nonsolid: bool,
 
+    /// An actor's body: the client's prediction world mirrors it as a
+    /// hit-volume (flesh) collision row, since actors spawn after it was armed.
+    pub actor: bool,
+
     pub shown_to: u64,
 }
 
@@ -644,6 +648,7 @@ impl Default for ScriptMoverGentity {
             link_mid: [0.0; 3],
             link_half: [0.0; 3],
             nonsolid: false,
+            actor: false,
             shown_to: 0,
         }
     }

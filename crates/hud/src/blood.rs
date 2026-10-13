@@ -9,7 +9,7 @@ use net::{FrameClock, LocalPresentClient, PresentedSnapshot};
 use crate::draw2d::{Draw2dCmd, Draw2dList, Draw2dOp, Draw2dProvenance, tessellate};
 use crate::gaps::{GapCause, HudGap, HudPresentationGaps};
 use crate::gpu_list::{PackedList, pack_splatter_alt};
-use crate::images::{BLOOD_OVERLAY_COLOR, BLOOD_OVERLAY_MASK, HudImages, HudSampling};
+use crate::images::{HudImages, HudSampling};
 
 #[derive(Resource, Default, Clone, Debug)]
 pub(crate) struct HudRootVisible(pub Option<i32>);
@@ -135,7 +135,7 @@ pub(crate) fn update_blood_overlay(
     }
 
     let binding = match hud_images.blood_material_binding() {
-        Ok(binding) => binding,
+        Ok(binding) => binding.clone(),
         Err(detail) => {
             gaps.raise(GapCause::BloodOverlayMaterialUnsupported {
                 detail: detail.to_owned(),
@@ -147,13 +147,13 @@ pub(crate) fn update_blood_overlay(
 
     let Some(color) = hud_images.get_sampled_with_sampler(
         chrome,
-        BLOOD_OVERLAY_COLOR,
+        &binding.color_image,
         HudSampling::Data,
         Some(binding.color_sampler),
         &mut images,
     ) else {
         gaps.raise(GapCause::BloodOverlayImageMissing {
-            name: BLOOD_OVERLAY_COLOR.to_owned(),
+            name: binding.color_image.clone(),
             miss: hud_images.miss_reason(),
         });
         request_hide(&mut job, latch.packed.is_empty());
@@ -161,13 +161,13 @@ pub(crate) fn update_blood_overlay(
     };
     let Some(mask) = hud_images.get_sampled_with_sampler(
         chrome,
-        BLOOD_OVERLAY_MASK,
+        &binding.mask_image,
         HudSampling::Data,
         Some(binding.mask_sampler),
         &mut images,
     ) else {
         gaps.raise(GapCause::BloodOverlayImageMissing {
-            name: BLOOD_OVERLAY_MASK.to_owned(),
+            name: binding.mask_image.clone(),
             miss: hud_images.miss_reason(),
         });
         request_hide(&mut job, latch.packed.is_empty());
@@ -187,7 +187,7 @@ pub(crate) fn update_blood_overlay(
             s1: 1.0,
             t1: 1.0,
             color: [1.0, 1.0, 1.0, latch.intensity],
-            material: BLOOD_OVERLAY_COLOR.into(),
+            material: binding.color_image.as_str().into(),
             op: Draw2dOp::StretchPic,
             provenance: Draw2dProvenance::CgDraw {
                 site: "blood_overlay",

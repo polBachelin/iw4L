@@ -141,7 +141,11 @@ pub struct FxJournalCursor {
     pub impact_miss_table: u32,
     pub impact_miss_def: u32,
     pub impact_miss_def_warned: bool,
-    /// Flesh impact slots (body, body fatal, head, head fatal) logged once.
+    /// A cell naming an effect the catalog lacks, warned once on its own so
+    /// an earlier empty-cell miss does not silence it.
+    pub impact_miss_catalog_warned: bool,
+    /// Flesh impact slots (body, body fatal, head, head fatal) logged once,
+    /// entry in the low four bits and exit in the high four.
     pub impact_flesh_logged: u8,
     pub boom_played: u32,
     pub muzzle_gap: u32,

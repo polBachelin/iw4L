@@ -1164,6 +1164,25 @@ pub(crate) fn phase_emit(world: &FrameWorld, shots: &[AcceptedShot]) -> Vec<Emis
     out
 }
 
+/// The flesh flags an exit segment's impact carries: those of the actor
+/// entry it leaves (the same collider, flesh), else none. MW3's SP impact
+/// table fills its exit rows' flesh cells only for the fatal slots (body
+/// fatal, head fatal), so an exit sent with no flags draws nothing.
+fn exit_flesh_flags(
+    actor_entry: Option<(ColliderId, u8)>,
+    segment: &crate::bullet_collision::BulletTraceSegment,
+) -> u8 {
+    match actor_entry {
+        Some((collider, flags))
+            if segment.surf_type == weapon_iw4::SURF_TYPE_FLESH as u8
+                && segment.collider == Some(collider) =>
+        {
+            flags
+        }
+        _ => 0,
+    }
+}
+
 fn segment_is_shield(collider: Option<ColliderId>) -> bool {
     matches!(
         collider,
@@ -1322,6 +1341,10 @@ pub(crate) fn phase_trace(
             continue;
         }
         let mut glass_hit: Vec<u32> = Vec::new();
+        // The head and fatal facts of the actor hit the bullet entered last:
+        // its exit through that body carries them, since the impact table
+        // authors flesh exit cells only for the fatal variants.
+        let mut actor_entry: Option<(ColliderId, u8)> = None;
         for segment in &segments {
             let ordinal = segment_ordinals.entry((em.shot_id, em.pellet)).or_default();
             let segment_ordinal = *ordinal;
@@ -1426,6 +1449,10 @@ pub(crate) fn phase_trace(
                     );
                 }
                 flesh_flags = fx_iw4::flesh_hit_flags(head, fatal) as u8;
+                actor_entry = segment.collider.map(|collider| (collider, flesh_flags));
+            }
+            if exit {
+                flesh_flags = exit_flesh_flags(actor_entry, segment);
             }
             let payload = crate::EntityEventPayload {
                 number: em.attacker.0 as i32,
@@ -1956,6 +1983,80 @@ pub(crate) fn raise_given_weapon(
             ps,
             entity_iw4::EntityEventKind::FIRST_RAISE_WEAPON.0,
             0,
+        );
+    }
+}
+
+#[cfg(test)]
+mod exit_flesh_tests {
+    use super::exit_flesh_flags;
+    use crate::bullet_collision::{
+        AuthorityModelOwner, BulletPath, BulletTraceSegment, ColliderId,
+    };
+
+    fn actor_bone(ordinal: u32) -> ColliderId {
+        ColliderId::EntityDObjBone {
+            owner: AuthorityModelOwner::ScriptModel(crate::ScriptModelId::from_wire(ordinal)),
+            bone: 3,
+            part_classification: 1,
+            surface_flags: 0,
+        }
+    }
+
+    fn exit_through(collider: ColliderId, surf_type: u8) -> BulletTraceSegment {
+        BulletTraceSegment {
+            start: [0.0; 3],
+            end: [8.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            surf_type,
+            surface_flags: fx_iw4::FX_IMPACT_EXIT_SURFACE_FLAG,
+            penetrated: true,
+            thickness: 8.0,
+            damage_mult: 1.0,
+            path: BulletPath::Penetrate,
+            collider: Some(collider),
+            startsolid: false,
+            glass_encoded: 0,
+            hit_type: 0,
+            hit_id: 0,
+        }
+    }
+
+    const FLESH: u8 = weapon_iw4::SURF_TYPE_FLESH as u8;
+
+    #[test]
+    fn an_exit_through_the_actor_carries_its_entry_flags() {
+        let head_fatal = fx_iw4::flesh_hit_flags(true, true) as u8;
+        let exit = exit_through(actor_bone(5), FLESH);
+        assert_eq!(
+            exit_flesh_flags(Some((actor_bone(5), head_fatal)), &exit),
+            head_fatal
+        );
+        // Head fatal is the slot MW3's SP exit rows fill with
+        // `impacts/flesh_hit_head_fatal_exit`.
+        assert_eq!(fx_iw4::flesh_effect_index(u32::from(head_fatal)), 3);
+    }
+
+    #[test]
+    fn an_exit_through_anything_else_carries_none() {
+        let fatal = fx_iw4::flesh_hit_flags(false, true) as u8;
+        assert_eq!(
+            exit_flesh_flags(None, &exit_through(actor_bone(5), FLESH)),
+            0
+        );
+        assert_eq!(
+            exit_flesh_flags(
+                Some((actor_bone(5), fatal)),
+                &exit_through(actor_bone(6), FLESH)
+            ),
+            0
+        );
+        assert_eq!(
+            exit_flesh_flags(
+                Some((actor_bone(5), fatal)),
+                &exit_through(actor_bone(5), 0)
+            ),
+            0
         );
     }
 }

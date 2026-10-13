@@ -260,6 +260,7 @@ fn sync_map_zone_tree(mut hud_images: ResMut<HudImages>, report: Option<Res<Laun
 fn sync_zone_atlases(
     catalog: Option<Res<asset_game::MenuCatalog>>,
     host: assets::HostNamespace,
+    blood_overlay: Option<Res<assets::MatchBloodOverlay>>,
     mut hud_images: ResMut<HudImages>,
 ) {
     if hud_images.zone_installed() {
@@ -268,7 +269,10 @@ fn sync_zone_atlases(
     let Some(catalog) = catalog else {
         return;
     };
-    hud_images.install_zone_catalog(&catalog, host.get());
+    let blood_material = blood_overlay.map_or(assets::MatchBloodOverlay::MULTIPLAYER, |overlay| {
+        overlay.name()
+    });
+    hud_images.install_zone_catalog(&catalog, host.get(), blood_material);
 }
 
 fn warm_hud_images(

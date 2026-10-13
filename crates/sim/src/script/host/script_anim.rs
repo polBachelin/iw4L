@@ -49,6 +49,10 @@ struct Goal {
     rate: f32,
     flag: Option<Arc<str>>,
     knob: bool,
+    /// The `...restart` natives: a leaf already in the tree plays again from
+    /// its start, so a one-shot that ended (and still weighs while it ramps
+    /// out) plays and notifies its notetracks and `end` again.
+    restart: bool,
 }
 
 impl AnimBlend {
@@ -82,6 +86,7 @@ impl AnimBlend {
             rate: 1.0,
             flag: None,
             knob: true,
+            restart: false,
         };
         self.set(anim, clip, goal);
     }
@@ -123,6 +128,13 @@ impl AnimBlend {
             self.revision = self.revision.wrapping_add(1);
         }
         let leaf = self.leaf_mut(&anim).expect("leaf inserted above");
+        if goal.restart {
+            leaf.time = 0.0;
+            leaf.old_time = 0.0;
+            leaf.cycle = 0;
+            leaf.old_cycle = 0;
+            leaf.fresh = true;
+        }
         leaf.ramp(goal.weight, goal.blend_time);
         leaf.rate = goal.rate;
         leaf.flag = goal.flag;
@@ -405,6 +417,7 @@ fn set_anim(
     args: &[Value],
     flagged: bool,
     knob: bool,
+    restart: bool,
 ) -> Result<Value, String> {
     let (flag, first) = if flagged {
         (Some(Arc::<str>::from(string(args, 0)?)), 1)
@@ -418,6 +431,7 @@ fn set_anim(
         rate: optional(args, first + 3, float)?.unwrap_or(1.0),
         flag,
         knob,
+        restart,
     };
     if !goal.weight.is_finite() || !goal.blend_time.is_finite() || !goal.rate.is_finite() {
         return Err("animation weight, blend time and rate must be finite".into());
@@ -453,17 +467,22 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         Ok(Value::Undefined)
     });
     registry.register(Method, "setanim", |world, receiver, args| {
-        set_anim(world, receiver, args, false, false)
+        set_anim(world, receiver, args, false, false, false)
     });
     registry.register(Method, "setanimknob", |world, receiver, args| {
-        set_anim(world, receiver, args, false, true)
+        set_anim(world, receiver, args, false, true, false)
     });
     registry.register(Method, "setflaggedanim", |world, receiver, args| {
-        set_anim(world, receiver, args, true, false)
+        set_anim(world, receiver, args, true, false, false)
     });
     registry.register(Method, "setflaggedanimknob", |world, receiver, args| {
-        set_anim(world, receiver, args, true, true)
+        set_anim(world, receiver, args, true, true, false)
     });
+    registry.register(
+        Method,
+        "setflaggedanimknobrestart",
+        |world, receiver, args| set_anim(world, receiver, args, true, true, true),
+    );
     registry.register(Method, "clearanim", |world, receiver, args| {
         let (tree, name) = animation(args, 0)?;
         let blend_time = float(args, 1)?;
@@ -516,6 +535,7 @@ mod tests {
             rate: 1.0,
             flag: None,
             knob: true,
+            restart: false,
         }
     }
 
@@ -562,5 +582,56 @@ mod tests {
         assert_eq!(weight(&blend, "pain"), Some(1.0));
         assert_eq!(weight(&blend, "aim"), None);
         assert_eq!(weight(&blend, "fire"), None);
+    }
+
+    /// A one-shot that ended parks at its end while it ramps out; a plain
+    /// knob on it again would never reach `end`, a restart plays it again.
+    #[test]
+    fn restart_knob_replays_an_ended_one_shot() {
+        let mut blend = AnimBlend::new(Arc::from("generic_human"));
+        let once = Clip {
+            looping: false,
+            frequency: 1.0,
+            notetracks: Arc::from([]),
+            move_speed: 0.0,
+            additive: false,
+        };
+        let flagged = |restart| Goal {
+            flag: Some(Arc::from("actor_anim")),
+            restart,
+            ..knob()
+        };
+        let mut fired = Vec::new();
+        blend.set("pain".into(), once.clone(), flagged(false));
+        blend.advance(2.0, &mut fired);
+        assert!(fired.iter().any(|(_, note)| &**note == "end"));
+        blend.set(
+            "aim".into(),
+            clip(false),
+            Goal {
+                blend_time: 0.2,
+                ..knob()
+            },
+        );
+
+        fired.clear();
+        blend.set("pain".into(), once.clone(), flagged(false));
+        blend.advance(2.0, &mut fired);
+        assert!(
+            fired.is_empty(),
+            "a plain knob leaves the ended clip parked"
+        );
+
+        blend.set(
+            "aim".into(),
+            clip(false),
+            Goal {
+                blend_time: 0.2,
+                ..knob()
+            },
+        );
+        blend.set("pain".into(), once, flagged(true));
+        blend.advance(2.0, &mut fired);
+        assert!(fired.iter().any(|(_, note)| &**note == "end"));
     }
 }

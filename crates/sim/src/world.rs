@@ -2,6 +2,7 @@ mod bodies;
 mod collision;
 mod content;
 mod events;
+mod prediction_actors;
 use bodies::{PlayerAnimInputs, PlayerBodyRuntime};
 use collision::{CollisionRuntime, LagcompPlan};
 pub use content::{
@@ -142,6 +143,8 @@ pub struct SimState {
 
     entity_collision_capabilities: Vec<EntityCollisionCapabilities>,
 
+    prediction_actors: prediction_actors::PredictionActors,
+
     model_library: Arc<
         std::collections::BTreeMap<String, Option<Arc<xmodel_runtime::RetainedModelCapability>>>,
     >,
@@ -263,6 +266,7 @@ impl Default for SimState {
             content: SimContentBuilder::bootstrap().finish(),
             clients: Vec::new(),
             prediction_remote_bodies: Vec::new(),
+            prediction_actors: Default::default(),
             area_entity_world: None,
             entity_collision_capabilities: Vec::new(),
             model_library: Arc::default(),
@@ -2660,6 +2664,9 @@ impl SimState {
             .collect();
         report.projectiles = projectiles.len();
         self.objectives = snapshot.meta.objectives.clone();
+        if prediction_local.is_some() {
+            self.adopt_prediction_actors(&snapshot.meta, crate::level_time_ms(snapshot.tick));
+        }
         crate::presence::follow_movers(
             &mut self.entity_collision_capabilities,
             &snapshot.meta.script_movers,
@@ -2789,6 +2796,7 @@ impl SimState {
         self.replace_content(Arc::clone(&other.content));
         self.reset_area_entity_world();
         self.entity_collision_capabilities = other.entity_collision_capabilities.clone();
+        self.track_inherited_prediction_actors();
         self.model_library = Arc::clone(&other.model_library);
         self.bootstrap = other.bootstrap.clone();
         self.root_seed = other.root_seed;

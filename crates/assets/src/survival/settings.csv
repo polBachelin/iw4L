@@ -1,5 +1,6 @@
 map,iw5:mp_paris
 base_zones,code_pre_gfx code_post_gfx common ui patch
+blood_overlay_material,splatter_alt_sp
 mode_zones,common_specialops common_survival patch_specialops patch_survival
 layer_zones,so_survival_<map>
 waves_table,sp/survival_waves.csv
@@ -32,6 +33,7 @@ getup_shock,laststand_getup_pc
 getup_shock_seconds,2
 hud_menus,surhud_display waves enemies credit
 compass_actors,always
+impact_table_source,common
 eog_menu,sp_eog_summary
 eog_value_column,4
 eog_deadquote,@DEADQUOTE_SO_SURVIVAL_LAST_STAND
@@ -61,7 +63,8 @@ actor_engage_range,1500
 actor_walk_range,400
 actor_walk_rate_percent,50
 actor_crouch_percent,40
-actor_pain_percent,50
+actor_pain_percent,100
+actor_pain_blend_ms,100
 actor_burst_rest_ms,800
 actor_miss_spread,48
 actor_eye_height,60
