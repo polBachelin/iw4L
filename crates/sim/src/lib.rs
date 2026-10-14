@@ -78,8 +78,8 @@ pub use content::{CONTENT_DIGEST_SCHEME, ContentComponents, content_components, 
 pub use corpse::{PlayerCorpsePool, PlayerCorpseSlot, level_time_ms};
 pub use damage::{DamageAttempt, DamageOutcome, DamageRefusal, DeathCommit};
 pub use equipment::{
-    EquipmentRuntimeFacts, ProjectileHitGeometry, ProjectileImpact, ProjectileState,
-    projectile_birth_ms,
+    EquipmentRuntimeFacts, ProjectileHitGeometry, ProjectileImpact, ProjectileOwner,
+    ProjectileState, projectile_birth_ms,
 };
 pub use gentity::{
     EntityAllocError, EntityKernel, EntityKernelOccupiedSnapshot, EntityKernelSlotSnapshot,
@@ -178,8 +178,8 @@ pub use objectives::{
 pub use world::{SimContent, SimContentBuilder};
 mod weapon_content;
 pub use weapon_content::{
-    AccuracyGraph, AccuracyGraphs,
-    SimWeaponContent, SimWeaponContentRefusal, SimWeaponRow, WeaponScriptSounds, WeaponSetup,
+    AccuracyGraph, AccuracyGraphs, SimWeaponContent, SimWeaponContentRefusal, SimWeaponRow,
+    WeaponScriptSounds, WeaponSetup,
 };
 
 mod script_audio;

@@ -39,7 +39,12 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
         return;
     }
     let gun = match hit.inflictor {
-        Some(crate::script_player::Inflictor::Entity(presence)) => runtime
+        Some(
+            crate::script_player::Inflictor::Entity(presence)
+            | crate::script_player::Inflictor::OwnedProjectile {
+                owner: presence, ..
+            },
+        ) => runtime
             .presented_by(presence)
             .filter(|object| runtime.live(object))
             .map(Value::Object),
@@ -57,7 +62,10 @@ pub(crate) fn player_damage(world: &mut World, tick: crate::Tick, hit: &crate::s
         .copied()
         .unwrap_or("none");
     let inflictor = match hit.inflictor {
-        Some(crate::script_player::Inflictor::Projectile(id)) => projectile_entity(world, id, hit),
+        Some(
+            crate::script_player::Inflictor::Projectile(id)
+            | crate::script_player::Inflictor::OwnedProjectile { id, .. },
+        ) => projectile_entity(world, id, hit),
         Some(crate::script_player::Inflictor::Entity(_)) => gun,
         None => None,
     }
@@ -158,13 +166,22 @@ pub(crate) fn flashbang(
     origin: [f32; 3],
     amount_distance: f32,
     amount_angle: f32,
-    attacker: ClientId,
+    attacker: crate::ProjectileOwner,
 ) {
     let victim = player_object(world, target.0);
     if victim == Value::Undefined {
         return;
     }
-    let attacker = player_object(world, attacker.0);
+    let attacker = match attacker {
+        crate::ProjectileOwner::Client { id, .. } => player_object(world, id.0),
+        crate::ProjectileOwner::Entity(presence) => {
+            let runtime = world.resource::<Runtime>();
+            runtime
+                .presented_by(presence)
+                .filter(|object| runtime.live(object))
+                .map_or(Value::Undefined, Value::Object)
+        }
+    };
     raise(
         world,
         victim,

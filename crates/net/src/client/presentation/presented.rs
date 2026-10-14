@@ -202,9 +202,7 @@ impl PresentedSnapshot {
         };
         let next_time = sim::level_time_ms(next.tick);
         let next_projectile = next.projectiles.iter().find(|p| {
-            p.id == projectile.id
-                && p.entnum == projectile.entnum
-                && p.owner_life == projectile.owner_life
+            p.id == projectile.id && p.entnum == projectile.entnum && p.owner == projectile.owner
         });
         if let Some(next_projectile) = next_projectile
             && next_time > current_time

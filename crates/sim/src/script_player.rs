@@ -135,6 +135,11 @@ pub(crate) enum Inflictor {
     Projectile(crate::ProjectileId),
     /// A script entity's gun (a turret's or a vehicle's), by its presence.
     Entity(crate::ScriptModelId),
+    /// A projectile owned by a script entity, which is the attacker.
+    OwnedProjectile {
+        id: crate::ProjectileId,
+        owner: crate::ScriptModelId,
+    },
 }
 
 pub(crate) const IDFLAGS_RADIUS: i32 = 1;

@@ -120,7 +120,7 @@ pub(crate) fn steer(
                     10000.0
                 };
                 if !projectile.guide.top
-                    && let Some(owner) = world.player(projectile.owner)
+                    && let Some(owner) = projectile.owner.client().and_then(|id| world.player(id))
                 {
                     let toward_owner = (Vec3::from_array(owner.origin) - goal)
                         .truncate()

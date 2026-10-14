@@ -1,5 +1,5 @@
 use playerstate_iw4::{PlayerState, UserCmd};
-use sim::{ClientId, ProjectileId, ProjectileState, Snapshot, Tick};
+use sim::{ClientId, ProjectileId, ProjectileOwner, ProjectileState, Snapshot, Tick};
 use std::collections::HashMap;
 
 use crate::transport::meta_wire::{WorldObjectSyncDecoder, WorldObjectSyncEncoder};
@@ -260,8 +260,17 @@ fn projectile_differs(a: &ProjectileState, b: &ProjectileState) -> bool {
 
 fn encode_projectile(out: &mut WireWriter, projectile: &ProjectileState) {
     out.put_u32(projectile.id.0);
-    out.put_u32(projectile.owner.0);
-    out.put_u32(projectile.owner_life.0);
+    match projectile.owner {
+        ProjectileOwner::Client { id, life } => {
+            out.put_u8(0);
+            out.put_u32(id.0);
+            out.put_u32(life.0);
+        }
+        ProjectileOwner::Entity(owner) => {
+            out.put_u8(1);
+            out.put_u32(owner.to_wire());
+        }
+    }
     out.put_u32(projectile.weapon);
     for value in projectile.origin {
         out.put_f32(value);
@@ -320,8 +329,14 @@ fn decode_trajectory(input: &mut WireReader<'_>) -> Result<entity_iw4::Trajector
 fn decode_projectile(input: &mut WireReader<'_>) -> Result<ProjectileState, WireError> {
     Ok(ProjectileState {
         id: ProjectileId(input.get_u32()?),
-        owner: ClientId(input.get_u32()?),
-        owner_life: sim::LifeSequence(input.get_u32()?),
+        owner: match input.get_u8()? {
+            0 => ProjectileOwner::Client {
+                id: ClientId(input.get_u32()?),
+                life: sim::LifeSequence(input.get_u32()?),
+            },
+            1 => ProjectileOwner::Entity(sim::ScriptModelId::from_wire(input.get_u32()?)),
+            _ => return Err(WireError::Malformed("projectile owner tag")),
+        },
         weapon: input.get_u32()?,
         origin: [input.get_f32()?, input.get_f32()?, input.get_f32()?],
         velocity: [input.get_f32()?, input.get_f32()?, input.get_f32()?],

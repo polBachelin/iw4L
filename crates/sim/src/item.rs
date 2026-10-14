@@ -766,8 +766,8 @@ fn projectile_pickup_ammo(
             || facts.timed_detonation
             || facts.proj_impact_explode
             || projectile.detonate_at_ms.is_some()
-            || projectile.owner != walker
-            || world.client_meta(walker)?.life_sequence != projectile.owner_life)
+            || !matches!(projectile.owner, crate::ProjectileOwner::Client { id, life }
+                if id == walker && world.client_meta(walker)?.life_sequence == life))
     {
         return None;
     }

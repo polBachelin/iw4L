@@ -71,9 +71,21 @@ pub(crate) struct ExplosionBlast {
     pub outer_damage: f32,
     pub weapon: u32,
     pub source: DamageSource,
-    pub attacker: ClientId,
-    pub attacker_life: LifeSequence,
+    pub attacker: crate::ProjectileOwner,
     pub killcam_entity_start_time: i32,
+}
+
+/// A hit on a player by a projectile a script entity owns: no client attacker, no death commit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct EntityProjectileHit {
+    pub target: ClientId,
+    pub target_life: LifeSequence,
+    pub owner: crate::ScriptModelId,
+    pub source: DamageSource,
+    pub weapon: u32,
+    pub amount: i32,
+    pub splash: bool,
+    pub origin: [f32; 3],
 }
 
 impl ExplosionBlast {
@@ -98,10 +110,45 @@ pub(crate) fn apply_explosion_blast(world: &mut FrameWorld, tick: Tick, blast: &
     if !world.publishes_snapshot() {
         return;
     }
-    let attempts = radius_player_attempts(world, blast);
+    let amounts = radius_player_amounts(world, blast);
     let glass = radius_glass_hits(world, blast);
-    for attempt in &attempts {
-        let _ = apply_damage_attempt(world, tick, attempt);
+    for (target, target_life, amount) in amounts {
+        match blast.attacker {
+            crate::ProjectileOwner::Client { id, life } => {
+                let _ = apply_damage_attempt(
+                    world,
+                    tick,
+                    &DamageAttempt {
+                        splash: true,
+                        source: blast.source,
+                        pellet: PelletId(0),
+                        attacker: id,
+                        attacker_life: life,
+                        target,
+                        target_life,
+                        weapon: blast.weapon,
+                        amount,
+                        killcam_entity_start_time: blast.killcam_entity_start_time,
+                        inflictor_origin: Some(blast.origin),
+                        hitloc: 0,
+                    },
+                );
+            }
+            crate::ProjectileOwner::Entity(owner) => apply_entity_projectile_player_hit(
+                world,
+                tick,
+                &EntityProjectileHit {
+                    target,
+                    target_life,
+                    owner,
+                    source: blast.source,
+                    weapon: blast.weapon,
+                    amount,
+                    splash: true,
+                    origin: blast.origin,
+                },
+            ),
+        }
     }
     apply_glass_blast_hits(world, tick, glass);
     apply_entity_blast(world, blast);
@@ -113,7 +160,7 @@ pub(crate) fn apply_explosion_blast(world: &mut FrameWorld, tick: Tick, blast: &
             radius: blast.radius,
             inner: blast.inner_damage,
             outer: blast.outer_damage,
-            attacker: Some(blast.attacker),
+            attacker: blast.attacker.client(),
             exclude: None,
             cone: blast.cone,
         },
@@ -138,7 +185,7 @@ pub(crate) fn apply_explosion_blast(world: &mut FrameWorld, tick: Tick, blast: &
             radius: blast.radius,
             max: blast.inner_damage,
             min: blast.outer_damage,
-            client: Some(blast.attacker),
+            client: blast.attacker.client(),
             missile: match blast.source {
                 DamageSource::Projectile(id) => Some(id),
                 _ => None,
@@ -176,8 +223,8 @@ fn apply_entity_blast(world: &mut FrameWorld, blast: &ExplosionBlast) {
             &crate::script::EntityHit {
                 target,
                 amount,
-                attacker: Some(blast.attacker),
-                inflictor: None,
+                attacker: blast.attacker.client(),
+                inflictor: blast.attacker.entity(),
                 means,
                 weapon: blast.weapon,
                 point: mid,
@@ -361,7 +408,61 @@ pub(crate) fn apply_script_hit(world: &mut FrameWorld, tick: Tick, hit: &crate::
     crate::script::player_damage(world.ecs(), tick, &player_hit);
 }
 
-fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<DamageAttempt> {
+pub(crate) fn apply_entity_projectile_player_hit(
+    world: &mut FrameWorld,
+    tick: Tick,
+    hit: &EntityProjectileHit,
+) {
+    if hit.amount <= 0 {
+        return;
+    }
+    let Some(meta) = world.client_meta(hit.target) else {
+        return;
+    };
+    if meta.lifecycle != ClientLifecycle::Alive || meta.life_sequence != hit.target_life {
+        return;
+    }
+    let scale = world
+        .combat_facts_for(hit.weapon)
+        .map(|facts| facts.location_scale(0))
+        .unwrap_or(1.0);
+    let amount = (hit.amount as f32 * scale) as i32;
+    if amount <= 0 {
+        return;
+    }
+    let victim_origin = world.player(hit.target).map_or(hit.origin, |ps| ps.origin);
+    let dir: [f32; 3] = std::array::from_fn(|i| victim_origin[i] - hit.origin[i]);
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    let player_hit = crate::script_player::Hit {
+        victim: hit.target,
+        attacker: None,
+        amount,
+        flags: if hit.splash { IDFLAGS_RADIUS } else { 0 },
+        means: crate::script_player::means(world, hit.source, hit.weapon, 0, hit.splash),
+        weapon: hit.weapon,
+        point: hit.origin,
+        dir: if len > 0.0 {
+            dir.map(|c| c / len)
+        } else {
+            [0.0; 3]
+        },
+        hitloc: 0,
+        inflictor: Some(match hit.source {
+            DamageSource::Projectile(id) => crate::script_player::Inflictor::OwnedProjectile {
+                id,
+                owner: hit.owner,
+            },
+            _ => crate::script_player::Inflictor::Entity(hit.owner),
+        }),
+        commit: None,
+    };
+    crate::script::player_damage(world.ecs(), tick, &player_hit);
+}
+
+fn radius_player_amounts(
+    world: &FrameWorld,
+    blast: &ExplosionBlast,
+) -> Vec<(ClientId, LifeSequence, i32)> {
     let mut intents = Vec::new();
     if blast.radius <= 0.0 {
         return intents;
@@ -388,20 +489,7 @@ fn radius_player_attempts(world: &FrameWorld, blast: &ExplosionBlast) -> Vec<Dam
         if amount <= 0 {
             continue;
         }
-        intents.push(DamageAttempt {
-            splash: true,
-            source: blast.source,
-            pellet: PelletId(0),
-            attacker: blast.attacker,
-            attacker_life: blast.attacker_life,
-            target,
-            target_life: meta.life_sequence,
-            weapon: blast.weapon,
-            amount,
-            killcam_entity_start_time: blast.killcam_entity_start_time,
-            inflictor_origin: Some(blast.origin),
-            hitloc: 0,
-        });
+        intents.push((target, meta.life_sequence, amount));
     }
     intents
 }
@@ -571,7 +659,7 @@ pub(crate) fn apply_flashbang_blast(
     origin: [f32; 3],
     radius_max: f32,
     radius_min: f32,
-    attacker: ClientId,
+    attacker: crate::ProjectileOwner,
 ) {
     let min_r = radius_min.max(1.0);
     let max_r = if radius_max < min_r {

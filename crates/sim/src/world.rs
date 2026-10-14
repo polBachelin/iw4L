@@ -2679,7 +2679,9 @@ impl SimState {
         let projectiles: Vec<_> = snapshot
             .projectiles
             .iter()
-            .filter(|projectile| prediction_local.is_none_or(|local| projectile.owner == local))
+            .filter(|projectile| {
+                prediction_local.is_none_or(|local| projectile.owner.client() == Some(local))
+            })
             .copied()
             .collect();
         report.projectiles = projectiles.len();

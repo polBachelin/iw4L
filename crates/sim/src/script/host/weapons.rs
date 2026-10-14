@@ -49,6 +49,18 @@ fn missile_of(world: &World, receiver: &Value) -> Result<(u64, ProjectileId, i32
     }
 }
 
+/// The missile's owner while it is still a connected player or a live entity.
+pub(crate) fn missile_owner(runtime: &Runtime, missile: u64) -> Option<u64> {
+    let owner = runtime.entities.get(&missile)?.missile_owner?;
+    (runtime.players.values().any(|slot| slot.object == owner)
+        || runtime.live(&owner)
+            && runtime
+                .entities
+                .get(&owner)
+                .is_some_and(|entity| entity.presence.is_some()))
+    .then_some(owner)
+}
+
 fn adopt(
     world: &mut World,
     projectile: &crate::ProjectileState,
@@ -65,10 +77,12 @@ fn adopt(
     };
     let mut runtime = world.resource_mut::<Runtime>();
     let object = runtime.create_entity(EntityKind::Missile(projectile.id), classname)?;
-    let owner = runtime
-        .players
-        .get(&projectile.owner.0)
-        .map(|slot| slot.object);
+    let owner = match projectile.owner {
+        crate::ProjectileOwner::Client { id, .. } => {
+            runtime.players.get(&id.0).map(|slot| slot.object)
+        }
+        crate::ProjectileOwner::Entity(presence) => runtime.presented_by(presence),
+    };
     let entity = runtime.entities.get_mut(&object).unwrap();
     entity.presence = presence;
     entity.missile_owner = owner;
@@ -213,10 +227,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
             return Err("GetMissileOwner requires one missile argument".into());
         }
         let (object, _, _) = missile_of(world, &args[0])?;
-        let runtime = world.resource::<Runtime>();
-        let owner = runtime.entities[&object]
-            .missile_owner
-            .filter(|owner| runtime.players.values().any(|slot| slot.object == *owner));
+        let owner = missile_owner(world.resource::<Runtime>(), object);
         Ok(owner.map_or(Value::Undefined, Value::Object))
     });
     registry.register(Method, "predictgrenade", |world, receiver, _| {
@@ -414,8 +425,11 @@ fn adopt_fired(world: &mut World) {
         .filter(|p| adopted.insert(p.id))
         .collect();
     for projectile in fresh {
-        let player = super::players::player_object(world, projectile.owner.0);
-        if player == Value::Undefined {
+        let client = projectile.owner.client();
+        let player = client.map_or(Value::Undefined, |id| {
+            super::players::player_object(world, id.0)
+        });
+        if client.is_some() && player == Value::Undefined {
             continue;
         }
         let weap_type = FrameWorld::from_world(world)
@@ -433,14 +447,17 @@ fn adopt_fired(world: &mut World) {
                 continue;
             }
         };
-        let weapon = super::players::event_weapon(world, projectile.owner.0, projectile.weapon);
-        super::players::note_insertion_throw(
-            world,
-            projectile.owner.0,
-            weapon,
-            projectile.weapon,
-            object,
-        );
+        let Some(client) = client else {
+            let native = weapon_name(world, projectile.weapon);
+            let model = format!("{}{}", crate::WEAPON_MODEL_PREFIX, projectile.weapon);
+            let mut runtime = world.resource_mut::<Runtime>();
+            runtime.set_object_field(object, "nativename", native.clone());
+            runtime.set_object_field(object, "weaponname", native);
+            runtime.set_object_field(object, "weaponmodel", Value::string(&model));
+            continue;
+        };
+        let weapon = super::players::event_weapon(world, client.0, projectile.weapon);
+        super::players::note_insertion_throw(world, client.0, weapon, projectile.weapon, object);
         let name = weapon_name(world, weapon);
         let model = format!("{}{}", crate::WEAPON_MODEL_PREFIX, projectile.weapon);
         let native = weapon_name(world, projectile.weapon);

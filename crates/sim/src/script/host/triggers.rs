@@ -145,12 +145,7 @@ fn attacker(
     missile: Option<crate::ProjectileId>,
 ) -> Value {
     if let Some(object) = missile.and_then(|id| runtime.missiles.get(&id)) {
-        let owner = runtime
-            .entities
-            .get(object)
-            .and_then(|entity| entity.missile_owner)
-            .filter(|owner| runtime.players.values().any(|slot| slot.object == *owner));
-        return owner
+        return super::weapons::missile_owner(runtime, *object)
             .or(runtime.engine.world)
             .map_or(Value::Undefined, Value::Object);
     }
@@ -174,7 +169,7 @@ pub(crate) fn damage_line(
     start: [f32; 3],
     end: [f32; 3],
     amount: i32,
-    client: crate::ClientId,
+    client: Option<crate::ClientId>,
     missile: Option<crate::ProjectileId>,
     means: &'static str,
 ) {
@@ -187,7 +182,7 @@ pub(crate) fn damage_line(
     }
     let mut runtime = std::mem::take(&mut *world.resource_mut::<Runtime>());
     let hit = TriggerHit {
-        activator: attacker(&runtime, Some(client), missile),
+        activator: attacker(&runtime, client, missile),
         amount,
         direction: normalized(std::array::from_fn(|i| end[i] - start[i])),
         point: [0.0; 3],
