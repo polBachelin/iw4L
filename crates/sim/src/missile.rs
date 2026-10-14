@@ -179,7 +179,6 @@ fn fire_missile(
 
 /// Spawns a projectile of `weapon` owned by the script entity `owner`, launched from `origin`
 /// at the world `velocity`. A grenade's fuse comes from its weapon facts.
-#[expect(dead_code, reason = "entry for script entity weapons, not yet called")]
 pub(crate) fn spawn_entity_projectile(
     world: &mut FrameWorld,
     tick: crate::Tick,

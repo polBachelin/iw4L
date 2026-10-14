@@ -163,7 +163,7 @@ fn project_owner_velocity(launch_vel: [f32; 3], owner_vel: [f32; 3]) -> [f32; 3]
     ]
 }
 
-fn grenade_launch_velocity(
+pub(crate) fn grenade_launch_velocity(
     direction: [f32; 3],
     facts: &EquipmentRuntimeFacts,
     owner_vel: [f32; 3],
