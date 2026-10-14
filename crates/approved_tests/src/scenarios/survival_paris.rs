@@ -25,6 +25,10 @@ const SURVIVAL: &str = "gsc log: survival: ";
 /// Where the player stands to fight (x y z yaw pitch) and where an enemy is
 /// brought to be shot (x y z yaw): docs/RUN.md's mp_paris recipe.
 const PLAYER: &str = "-1214 2048 229 270 0";
+/// `PLAYER` looking down at the middle of the body brought to `TARGET`, 58
+/// units off: a held enemy keeps the stance it took, and a level shot from
+/// the eye passes over a crouched one.
+const WAVE_PLAYER: &str = "-1214 2048 229 270 27";
 const TARGET: &str = "-1214 1990 229 90";
 /// The weapon the waves are cleared with, a `give` reference.
 const WEAPON: &str = "weapon/iw5:pecheneg";
@@ -525,7 +529,7 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
         format!("wave {wave} asks for {expected:?}, which is not total={total}")
     })?;
 
-    game.play(&format!("tp {PLAYER}"))?;
+    game.play(&format!("tp {WAVE_PLAYER}"))?;
     let complete = format!("wave={wave} complete");
     let mut bursts = 0;
     let team = settings.enemy_team.as_str();
@@ -603,7 +607,8 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
     }
 
     // What the wave paid: one kill reward per kill, the same for every enemy
-    // of an archetype, then the configured bonus.
+    // of an archetype, any challenge the kills completed, then the configured
+    // bonus.
     let ledger = credit_ledger(&game.lines[..=bonus], settings)?;
     let before = ledger
         .iter()
@@ -616,7 +621,30 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
         .filter(|(index, ..)| *index > start && *index < bonus)
         .collect();
     let mut rewards: BTreeMap<String, i64> = BTreeMap::new();
+    let mut challenges = Vec::new();
+    let mut kill_rewards: i64 = 0;
     for (index, _, delta, reason) in &paid {
+        if let Some(challenge) = reason.strip_prefix("challenge:") {
+            let completed = game.lines[start..*index].iter().rev().find_map(|line| {
+                line.strip_prefix(&format!("challenge client=0 {challenge} "))
+                    .and_then(|progress| progress.split_once('/'))
+            });
+            ensure(
+                completed.is_some_and(|(done, required)| done == required),
+                || {
+                    format!(
+                        "`{}` pays a challenge no progress line inside wave {wave} completed",
+                        game.lines[*index]
+                    )
+                },
+            )?;
+            ensure(*delta > 0, || {
+                format!("`{}` pays nothing", game.lines[*index])
+            })?;
+            challenges.push(game.lines[*index].clone());
+            continue;
+        }
+        kill_rewards += 1;
         let archetype = reason.strip_prefix("kill:").ok_or_else(|| {
             format!(
                 "`{}` inside wave {wave} is not a kill reward",
@@ -631,11 +659,8 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
             format!("`{archetype}` kills pay both {reward} and {delta}")
         })?;
     }
-    ensure(paid.len() as i64 == total, || {
-        format!(
-            "wave {wave} paid {} kill rewards for total={total}",
-            paid.len()
-        )
+    ensure(kill_rewards == total, || {
+        format!("wave {wave} paid {kill_rewards} kill rewards for total={total}")
     })?;
     let (_, after, bonus_delta, reason) = ledger.last().expect("bonus is in the ledger");
     ensure(
@@ -657,6 +682,7 @@ fn wave(game: &mut Game, settings: &Settings, wave: u32) -> Result<Value> {
     facts["spawned"] = json!(arrived);
     facts["kills"] = kills.into();
     facts["kill_rewards"] = json!(rewards);
+    facts["challenge_rewards"] = challenges.into();
     facts["credits"] =
         json!({ "before": before, "kills": earned, "bonus": bonus_delta, "after": after });
     Ok(facts)

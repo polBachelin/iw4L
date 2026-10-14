@@ -66,10 +66,27 @@ methods are in `script/profile/actor_catalog.rs` under `Owner::Actor`:
 * `setgoalpos(point)`, `setgoalnode(node)`: walk to the goal over the map's
   path nodes (see [Actor navigation](#actor-navigation));
 * `setgoalradius(radius)`: sets the `goalradius` field;
-* `setweapon(name)`: the weapon `shoot` fires (`"none"` clears it);
+* `setweapon(name)`: the weapon `shoot` fires (`"none"` clears it), held in
+  the hands: its world model attaches to the body's weapon tag (the first of
+  `xmodel_runtime::TP_WEAPON_ATTACH_TAGS` the body has), replacing the gun
+  held before; a re-dress puts it back on the new body;
 * `shoot([point])`: one bullet from `tag_flash`, or standing eye height, at
-  `point` or along the actor's angles;
+  `point` or along the actor's angles, after the fire event a client's shot
+  pushes (`EV_FIRE_WEAPON` on the actor's entity number). It fires nothing,
+  without error, while actors are held (console `actor hold on`) or while the
+  actor's yaw is more than its `aimtolerance` field (degrees, any when unset)
+  off the point;
+* `dropweapon()`: the weapon leaves the hands as an MP weapon item
+  (`item::drop_weapon_at`, no client owner) falling from the gun's tag, else
+  the origin, with a fresh weapon's clip and stock; returns the item entity
+  (`itemweaponsetammo` works on it), undefined with no weapon;
 * `isalive()`, `getteam()`.
+
+Each frame a live actor turns toward the way it walked, else toward its
+`goalyaw` field, by at most its `turnrate` field in degrees a second (at once
+when unset). The console's `actor list|tp|hold` reach actors through
+`SimWorld::actor_rows`, `actor_tp` and `set_actor_hold`, since they are no
+clients.
 
 Behavior lives in GSC. `setcharacter(body, [head], [hat])` dresses an actor:
 the body becomes its `model`, the head and hat attach to the body's head tag,
@@ -80,7 +97,12 @@ no model: nothing draws it and nothing hits it.
 
 Bullets hit an actor's per-bone hit volumes, posed by its anim tree
 (`AuthorityDObjState::hit_volumes`); a model without them falls back to its
-bounds. Radius damage reaches it like any damageable script entity. A hit is
+bounds. Those volumes, the bounds fallback included, are flesh
+(`EntityCollisionTraceGeom::flesh`, keyed on the entity being an actor, so a
+script model's bounds stay non-flesh): a bullet plays the impact table's flesh
+cell, the head variant when the bone's hit location is a head one and the
+fatal variant when the hit took the actor's health to zero. Damage is applied
+before the impact event is built, as for a player. Radius damage reaches it like any damageable script entity. A hit is
 scaled by hit location as a player's is, and a head hit is `MOD_HEAD_SHOT`. The
 actor is notified `damage` (amount, attacker, direction, point, means, model,
 bone, hit location, flags, weapon) and, when its health reaches zero, `death`
@@ -106,10 +128,13 @@ at 32 units up reaches unobstructed (the nearest when none does) and ends at the
 same choice around the goal, or at `node` itself. A* over the node links runs
 under one budget of 512 node expansions per frame shared by every actor, in
 actor order; a search that runs out resumes the next frame where it stopped.
-The found route is walked node to node and then to the goal point at 190 units
-a second scaled by the actor's `moveplaybackrate` field (1 when unset). Each
-frame the feet are snapped to the ground with a clip trace from 18 units above
-to 64 below, and the actor turns to face its motion. A dead actor keeps its
+The found route is walked node to node and then to the goal point as far as
+the actor's playing anims carry it: each leaf's root-motion speed
+(`AnimClip::move_speed`) by its blend weight, scaled by the actor's
+`moveplaybackrate` field (1 when unset). An actor playing no moving anim does
+not move. Each frame the feet are snapped to the ground with a clip trace from
+18 units above to 64 below, and the actor turns toward its motion at its
+`turnrate`. A dead actor keeps its
 goal but does not move.
 
 The actor is notified `goal` once it is within `goalradius` (field, 0 when

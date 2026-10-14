@@ -26,12 +26,16 @@ a weapon themselves.
   map, the first anchoring the census: MW3's SP set `code_pre_gfx
   code_post_gfx common ui patch`, no MP zone; `mode_zones`, laid over them;
   `layer_zones`, the Special Ops layer `so_survival_<map>` where the user's
-  data has it), table names, teams, `friendly_fire`
+  data has it), `blood_overlay_material` (the blood overlay's code material
+  in those base zones, `splatter_alt_sp`, see Credits and HUD), table names,
+  teams, `friendly_fire`
   (`0`: a client's damage to another client of its team is refused, its own
   still hurts it; `1`: all damage counts), spawn classnames,
   `unsimulated_archetypes` (archetypes no actor can play: the waves skip them;
   empty in the tree), `dog_archetypes` (archetypes that run the dog behavior,
-  `dog_reg dog_splode`, see Dogs),
+  `dog_reg dog_splode`, see Dogs), `nodrop_archetypes` (enemies that keep
+  their weapon when they die: `jug_regular jug_riotshield jug_explosive
+  jug_minigun`, MW3's juggernauts; see Enemies),
   `test_wave` (a development aid, empty in the tree: archetype refs that, when
   set, make wave 1 one enemy of each instead of the table's),
   health, `start_credits`, `wave_bonus` (the credits each player gets when a
@@ -44,7 +48,11 @@ a weapon themselves.
   100; 100, the whole hit, is our reading), the
   revive's shellshock and its seconds (`getup_shock`, `getup_shock_seconds`),
   the menus that draw the HUD (`hud_menus`: `surhud_display waves enemies
-  credit`, see Credits and HUD), the summary menu, its value column and
+  credit`, see Credits and HUD), which hostile actors the compass shows
+  (`compass_actors`: `always`, the default the 2026-10-13 playtest asked
+  for, or `firing`, only for a while after each shot as a multiplayer
+  enemy shows; MW3's own rule is not in the data, see Actors on the
+  compass), the summary menu, its value column and
   death hint (`eog_menu`, `eog_value_column`, `eog_deadquote`),
   `squad_<archetype>` (an armory
   squad: the archetype of the waves table that is also an air support ref of
@@ -55,7 +63,15 @@ a weapon themselves.
   answer to go ahead and the grants it is shown for
   (`armory_replacement_menu`, `armory_replacement_continue`,
   `armory_replacement_grants`: `survival_armory_replacement_warning`,
-  `continue`, `launcher`), `primary_slots` (how many primaries a player
+  `continue`, `launcher`), `armory_hint_<kind>` (each armory kind's use
+  prompt, a localize reference: MW3's `SO_SURVIVAL_ARMORY_USE_*`; a table
+  cell's `@` is dropped where the script reads it as a localized string),
+  `armory_icon_<kind>` (the material that marks a usable armory of the kind
+  on the compass and above it in the world: MW3's `specops_ui_weaponstore`,
+  `specops_ui_equipmentstore`, `specops_ui_airsupport` of common_specialops,
+  the materials MW3's armory script pairs with each kind's prompt) and
+  `armory_icon_height` (how far above the armory's origin its world icon
+  stands, ours), `primary_slots` (how many primaries a player
   carries, 2), pause menu, `player_viewhands` (the players' first-person
   hands, `viewhands_delta` of `common_survival`: used ahead of the
   map kit's hands while the loaded zones hold the model, the kit's otherwise),
@@ -143,13 +159,26 @@ a weapon themselves.
   per 1000 of range (`chopper_*`); the exploding dog's effect, means of
   death, radius and max/min damage (`splode_*`). Durations are in
   milliseconds.
-* `hud.csv` — `ref,label,font,fontscale,horzalign,vertalign,alignx,aligny,x,y,dvar`:
-  the hudelems of the survival HUD, refs `wave`, `enemies` and `credits`. The
-  label is plain text with `&&1` where the number goes; the font scale is in
-  percent. The dvar (c10) names where the number is kept, a client dvar and a
-  player data field of the same name (`surHUD_wave`, `surHUD_enemy`,
-  `surHUD_credits`): a row whose number an item of a HUD menu reads gets no
-  hudelem (see Credits and HUD).
+* `hud.csv` — `ref,label,font,fontscale,horzalign,vertalign,alignx,aligny,x,y,dvar,icon,iconwidth,iconheight,iconx,icony`:
+  the hudelems of the survival HUD, refs `wave`, `enemies`, `credits` and
+  `armor`. The label is plain text with `&&1` where the number goes, or a
+  localize reference (`@KEY`, its text holding the `&&1`); the font scale is
+  in percent. The dvar (c10) names where the number is kept, a client dvar and
+  a player data field of the same name (`surHUD_wave`, `surHUD_enemy`,
+  `surHUD_credits`; `surHUD_armor` is a client dvar only): a row whose number
+  an item of a HUD menu reads gets no hudelem (see Credits and HUD). `armor`
+  is MW3's: `@SO_SURVIVAL_ARMOR_POINTS` in `hudbig` at scale 50, left
+  aligned, with the shield `teamperk_blast_shield` drawn 28x28 to its left,
+  the number 58 right of and 2 below the shield (all from its compiled
+  survival script, `1571` in `common_survival`: the armor hud functions'
+  operands; the 0.5 scale is our reading of which hudelem field it sets).
+  The icon columns (c11–c15, empty for no icon) name a material the script
+  `setshader`s with the number, its width and height and its x and y offset
+  from the number; it takes the number's alignments and shows and hides with
+  it (`sethudshown`; armor shows at more than 0 points). The place of the
+  pair (bottom left, middle aligned) is ours: MW3's helper that places them
+  was not decoded. MW3's armor has no bar: its armor functions draw no other
+  material.
 * `challenges.csv` — `ref,means`: the challenges of `challenge_table` a kill
   advances, and the means of death that counts (`MOD_HEAD_SHOT`, `MOD_MELEE`).
   Which kill counts is our reading; the challenges with no row (streak,
@@ -176,8 +205,12 @@ for one of `dog_archetypes` (see Dogs), which gives it its weapon
 (`archetypes.csv`, else c5) and speed. c6 (offhand), c8 and c11 are not read:
 an actor throws no offhand grenades, and its aim is its `archetypes.csv` accuracy. Its
 `death` notify is the wave's kill: the kill is counted, a player who dealt
-it is paid, and the actor plays its death and is deleted after
-`actor_corpse_ms`.
+it is paid, and the actor drops its weapon (`dropweapon`, unless its
+archetype is one of `nodrop_archetypes`: the juggernauts, as in MW3; dogs
+hold none), plays its death and is deleted after `actor_corpse_ms`. The
+weapon lies as an MP weapon item with a fresh weapon's clip and stock: a
+player holding the same weapon takes its ammo by walking over it, and
+another swaps for it by looking at it and holding use.
 
 ## Heavy archetypes
 
@@ -267,18 +300,65 @@ It loops, every `actor_think_ms`, through these states:
   (`run`) over the path nodes toward the nearest living enemy, and walks
   (`walk`, at `actor_walk_rate_percent` of its rate) once within
   `actor_walk_range`. Its rate (`moveplaybackrate`) is its archetype's speed;
+  the engine moves it as far as its playing anims' root motion carries it
+  (each anim's speed by its blend weight, times the rate), the way MW3 AI
+  moves by anim delta, and the anim plays at the same rate, so the feet keep
+  to the ground. It turns toward the way it walks at `actor_turn_rate`
+  degrees a second;
 * engage: the nearest enemy it sees (a bullet trace from its eye,
   `actor_eye_height` or `actor_crouch_eye_height`, to theirs) is within
-  range: it stops, stands or crouches (`actor_crouch_percent`), faces them,
-  aims (`aim`), then fires one burst (`fire`) of its archetype's burst length
-  at the weapon's fire interval. Each shot goes to the target's eye at its
+  range: it stops, stands or crouches (`actor_crouch_percent`, picked once
+  per engagement: again only for a new target or after moving), turns to
+  face them at `actor_turn_rate` (the script sets `goalyaw`, the engine
+  turns), aims (`aim`), then fires one burst (`fire`) of its archetype's
+  burst length at the weapon's fire interval. A shot is held until the body
+  faces the aim point within `actor_aim_tolerance` degrees. Each shot goes to the target's eye at its
   archetype's accuracy, else up to `actor_miss_spread` units off. It aims
   again and rests `actor_burst_rest_ms` before it looks again;
-* pain: a hit flinches it at `actor_pain_percent`: it stops and plays one
-  `pain` for its stance and the hit's direction; the other states wait;
-* death: it plays one `death` for its stance and the killing hit's
-  direction, `explode` when the means is one of `actor_explosive_means`, and
-  is deleted after `actor_corpse_ms`.
+* pain: a hit it lives through flinches it at `actor_pain_percent` (100,
+  ours: MW3 AI flinch on nearly every bullet hit; hits during a pain are
+  ignored, so the pain anim's own length is the cooldown). It stops and
+  plays one `pain` for its stance and the hit's direction, blended in over
+  `actor_pain_blend_ms` (100, ours: a flinch that reads at once) and
+  restarted from its first frame (`setflaggedanimknobrestart`): a one-shot
+  still ramping out from its last play sits at its end, so a plain knob on
+  the same anim would never notify `end` and the actor would stay in pain.
+  The other states wait: a
+  burst stops before its next shot, the pain knob drops the fire layer, and
+  after the pain the actor aims again (`aim`, `actor_blend_ms`) before it
+  fires. A killing hit during a pain still turns the death to that hit's
+  direction;
+* death: an enemy drops its weapon (see Enemies), then it plays one `death`
+  for its stance and the killing hit's direction, `explode` when the means
+  is one of `actor_explosive_means`, and is deleted after `actor_corpse_ms`.
+
+The actor holds its weapon: `setweapon` puts the weapon's world model on the
+body's weapon tag (the first of `tag_weapon_right`, `tag_inhand`,
+`tag_weapon_left` it has), a re-dress keeps it, and its shots leave from the
+gun's `tag_flash`. Each shot pushes the fire event a client's shot does
+(entity number, weapon), for the muzzle flash, the fire sound and the
+compass's fire ping. Between snapshots the client plays an actor's anims on
+by the frame time (at most one authority tick), so poses move every frame.
+`actor_turn_rate` (360) and `actor_aim_tolerance` (15) are ours.
+
+MW3's fire anims are additive overlays on the aim pose: the assetType byte
+(+28 of XAnimParts) of `exposed_shoot_auto_v2` and `_v3` is 6, with root
+`tag_sync` and no root motion (recoil only), where the full-body
+`exposed_aim_5` is 2 (logged once by the zone loader, `zone info actor anim
+measure: …`). A clip of assetType 6 is additive: in a script entity's anim
+tree it is a layer over the leaves that pose the body, and the snapshot
+carries it under an additive node so the client layers it the same way. A
+knob on an additive clip ramps out only the other layers; a knob on any
+other clip ramps out every other leaf, layers included (a pain or death
+drops the fire layer). The actor keeps `aim` looping as its pose, lays one
+`fire` anim over it for the burst (`setanim`) and clears it after; the
+`fire` rows of `actor_anims.csv` must name additive clips. MW3's own anim
+tree is not compiled for actors.
+
+For tests, the console reaches actors (cheats on): `actor list` logs each
+live one, `actor tp all|first|<entnum> x y z [yaw]` places them and drops
+their route, `actor hold on|off` stops every actor's walk and makes its
+shots fire nothing (docs/RUN.md has the recipes).
 
 A hit's direction is the way it pushes the body against the actor's facing:
 `f` forward (hit from behind), `b` back, `l` left, `r` right.
@@ -407,12 +487,62 @@ listed key to 1. The HUD menus are drawn in a survival match only, as layers
 under no open menu (their `uiActive()` reads 0), not while a menu that takes
 input is open; a menu with no items is skipped.
 
+The weapon HUD is drawn by the menus the zones carry for it. MP's
+`weaponbar_hd` (ui_mp) is in none of the survival zones, so survival draws
+MW3 SP's: `weaponinfo` (patch_specialops.ff, replacing common.ff's) for the
+ammo counter (owner draws 117/121 clip, 119 stock), the weapon name (81) and
+the frag and flash counts (103/104), `reload` (common.ff) for the low-ammo
+warning (120) and `dpad` (patch_specialops.ff) for the action slots
+(171-174); patch_mp's `dpad_hd` is no longer drawn. Their visibility names
+`usingvehicle` (0: no player rides a vehicle in iw4l) and
+`gamemsgwndactive(2)`, the subtitles window, which iw4l never fills (0); in
+survival patch_specialops makes that term pass anyway (`&& !so_survival`).
+The engine dvars they test read the values the engine registers
+(`compass` 1, `ammoCounterHide`, `actionSlotsHide`, `hud_missionFailed`,
+`ui_remotemissile_playernum` 0, `createfx` empty, `g_gameskill` 1, under
+which `reload` shows its warning) unless script sets them.
+An MP launch still draws `weaponbar_hd`/`dpad_hd`, whose visibility names
+MW3's demo operators (`isdemofreecamera`, `isdemofollowcamera`,
+`isdemocapturingscreenshot`), which read 0 as `isdemoplaying` does: iw4l
+plays no demos. An action slot draws the dpad icon of its weapon's own
+WeaponCompleteDef (`dpadIcon`, `dpadIconRatio`).
+
+The use hint ("Press [Use] to ...", the armory's hint string, a weapon on the
+ground with its name and pickup icon) is laid out by the cursor-hint owner
+draw (72): MP has it in `hud_fullscreen`, MW3 SP in `cursorhints` (common.ff:
+centred, 70 units below the middle of the screen). The mantle hint (80) is
+`hud_fullscreen`'s in MP and `mantlehint`'s in SP.
+
+Armor shows as the `armor` hudelem: every change to a player's armor (the
+loadout, a hit, the equipment armory) goes through `setarmor`, which sets
+`surHUD_armor`, the hudelem's number, and hides it at 0 (our reading).
+
+MW3's challenge bars (lower left) are drawn by no menu we run. At install
+every menu item whose text or visibility reads a `surHUD_challenge*` /
+`surHUD_performance*` name, or `surHUD` with `challenge`/`performance`, is
+listed (see Evidence lines); none listed means the zones hold no menu for
+them and the bars are not drawn.
+
 At install, once per match, every `hud.csv` row is matched against the HUD
 menus: when an item's text reads its dvar (c10), the row is drawn by that
 item and its ref goes in the script dvar `survival_menu_hud`, which
 `createhud` reads to leave the hudelem out. A row no item reads keeps its
 hudelem, so the HUD stays whole when the zones lack a menu or a menu has no
 items.
+
+Health has no number: as in MW3, the screen bleeds as it drops. The blood
+overlay draws the code material the launch's base zones carry,
+`blood_overlay_material`: MW3's SP `common.ff` has `splatter_alt_sp`
+(images `blood_defocus_color_sp` / `blood_defocus_mask_sp`), not MP's
+`splatter_alt` (`blood_defocus_color` / `_mask`, code_post_gfx_mp), which
+no survival zone holds; an MP launch keeps `splatter_alt`
+(`assets::MatchBloodOverlay`). The render admits the material's 2D pass and
+the HUD reads the color and mask images from the material's own two
+colorMap bindings, so no image name is ours. Before this the survival
+overlay was refused for a missing `splatter_alt` and never drew. Damage
+the armor absorbs does not hurt health, so the overlay shows only once the
+armor is gone. MW3's damage direction arrows (`hit_direction`, common.ff)
+are drawn by no system yet, in any mode.
 
 The multiplayer scorebar (`scorebar_hd`, a match score against the score
 limit) is not drawn: survival has no such score, and MW3 runs it on SP's HUD,
@@ -543,9 +673,32 @@ engine's use reach) is held in place and gets its menu
 (`armory_menu_prefix` + kind); the use ends when the menu answers
 `armory_close_response` as it closes, or when the player goes down or dies
 (the menu is closed with every submenu it opened over itself: a weapon
-category, the replacement warning). MW3's armory model, use hint (`SO_SURVIVAL_ARMORY_USE_*`)
-and world icon are not in the user's zones: the placement's model stands in,
-with no hint text.
+category, the replacement warning). Once usable, an armory shows the use
+cursor (`HINT_ACTIVATE`) and MW3's prompt for its kind to a player in reach:
+`armory_hint_<kind>` in `settings.csv` names it (`@SO_SURVIVAL_ARMORY_USE_WEAPON`,
+`_EQUIPMENT`, `_AIRSUPPORT`, in common_specialops' strings: "Hold [E] to use
+Weapon Armory"). The engine still opens it on the press, not a hold.
+
+Once usable, an armory is also marked with `armory_icon_<kind>`: on the
+compass as an objective (`objective_add`, state `active`, its slot the
+armory's place among the armories, team free so every player sees it) and
+in the world as a level hudelem waypoint `armory_icon_height` above it
+(`setwaypoint( true, false )`: constant size, and held at the screen edge
+while the armory is off screen, which is what points a player to it; hidden
+while a menu is open). A locked armory is not marked. MW3's script pairs one
+material with each kind and sets no objective state, so the compass
+objective and the locked rule are our reading; the material is MW3's.
+
+The layer's closed laptop stands on the case and stays: the case targets it,
+and it targets `com_laptop_open`, which is logged, not swapped in (MW3's
+armory script names no laptop model). `com_laptop_open` could not be drawn
+anyway: in so_survival_mp_paris its surfaces (`,laptop_open_lod011`) and
+material (`,mc/mtl_laptop`) are references to assets of the map zone
+mp_paris (where `com_laptop_2_open` carries the same surfaces), and our loader
+walks the layer with the common zones, before the map, so its skeleton does
+not capture (`scene model gap: com_laptop_open … skeleton capture failed`).
+MW3 loads the layer after the map. Walking the layer after the map (or
+resolving its references at map load) is a loader change, not done.
 
 The script answers the armory menus' purchase: a `menuresponse` from a menu
 named `armory_menu_prefix…` whose answer is `armory_purchase_prefix<c0>`
@@ -625,6 +778,18 @@ and the upgrade menu's `weaponswitch_<c0>` is not answered.
 Every client's `team` field is set with its `sessionteam`: the turret host
 and radius damage tell sides apart by it.
 
+## Actors on the compass
+
+Actors have no client slot, so the compass's client loops never see them.
+Each frame the server publishes every live actor (a corpse is none) with its
+origin, yaw, team and entity number in the snapshot's objectives, next to
+the vehicles. The HUD draws a hostile one with the enemy ping, `always` or,
+under `firing`, for the sound-ping fade after a weapon-fire event carrying
+its entity number; a friendly one (Delta and riot shield squads) with the
+friendly marker turned to its facing. The ping materials are the first of
+`compassping_enemy`, `compassping_enemyfiring` and of `compassping_friendly`,
+`compassping_friendly_mp` the zones hold; a kind with none is not drawn.
+
 ## What refuses the match
 
 Before the program installs, a survival match is refused (`gsc: refused …
@@ -636,12 +801,18 @@ c4 and each c6 count positive and c6 parallel to c5, c10 empty or an armory
 kind, every `unsimulated_archetypes` and `dog_archetypes` ref an archetype,
 and every archetype an actor plays given a positive health, a whole reward
 and, unless it is a dog, a weapon and offhand of the loaded zones. `start_credits` and `wave_bonus` must be whole
-credits, `hud.csv` must lay out `wave`, `enemies` and `credits` in full with a
-dvar each, `hud_menus` must name a menu, and
+credits, `hud.csv` must lay out `wave`, `enemies`, `credits` and `armor` in
+full with a dvar each (and an icon with a material, positive size and whole
+offsets, or no icon cell), every `@` label of `hud.csv` and every
+`armory_hint_<kind>` (one for each kind the waves table's c10 unlocks) must be
+a reference the match strings hold, every such kind's `armory_icon_<kind>` a
+material the menu catalog maps to an image and `armory_icon_height` a whole
+number, `hud_menus` must name a menu, and
 every `challenges.csv` ref must be a challenge of `challenge_table` with a
 positive count and reward. `intermission_seconds`, `bleedout_seconds` and
 `getup_shock_seconds` must be whole seconds above zero, `friendly_fire` 0 or
-1, every `test_wave` ref an archetype (held to what an actor plays like any
+1, `compass_actors` `always` or `firing`, `blood_overlay_material` a
+name, every `test_wave` ref an archetype (held to what an actor plays like any
 wave's), every `archetypes.csv` trait one of the six, speed a whole
 percent above zero, accuracy a whole percent 0–100, burst a whole count
 above zero and character an id of `characters.csv`, every archetype an
@@ -649,7 +820,9 @@ actor plays other than a vehicle dressed from an aitype and character
 scripts of the loaded zones, every `aitype_fill_ins.csv` ref an archetype
 whose c4 is empty, every
 `actor_anims.csv` row a state, stance and direction the actor script picks
-by with every state given a row, every `player_anims.csv` row a state,
+by with every state given a row, every narrowed `run` and `walk` anim one of
+the loaded zones with root motion (an actor moves only as far as its anims
+carry it), every `nodrop_archetypes` entry an archetype of the waves table, every `player_anims.csv` row a state,
 stance and direction a player's body is picked by with a standing `idle`,
 `player_archetype` an archetype so dressed and `player_blend_ms` a whole
 number, every `actor_*` setting a whole number
@@ -697,18 +870,52 @@ for each `hud_menus` menu, `eog <menu> N items` for the summary and `armory
 <menu> N items` for each armory menu (`… is in no zone` for one the zones
 lack, the menu names in backquotes), `ui info survival hud: <ref> (<dvar>)
 drawn by <menu> item I; no hudelem` or `… drawn by no HUD menu item; hudelem
-kept` for each `hud.csv` row, `ui info survival eog strings: K of N
+kept` for each `hud.csv` row, `ui info survival hud: <ref> icon <material>
+image <image>` (or `… names no material image in the loaded zones`) for a row
+with an icon, `ui info survival menus: challenge <menu> item
+I owner draw D reads [...]` each menu item reading a challenge surHUD key (or
+`ui info survival menus: no menu item reads a challenge surHUD key`), `world
+report: scene model gap: <model> is named but not drawable: <reason>` a model
+the scripts or entities name whose skeleton did not capture (a spawn of it is
+not drawn), `world report: mode zone <zone>: … xmodels=N [<model>
+<model> (unavailable)…]` a small zone's models, `ui info survival eog strings: K of N
 resolve: <ref> (<where>)…` the summary's localize references, and `ui warn
 survival eog strings: M missing from the localize data, painted as gaps:
 …` any it lacks.
+`ui info weapon hud: SP `weaponinfo` draws the ammo counter (clip 117/121,
+stock 119, weapon name 81, grenades 103/104); also `reload` `dpad``
+once per match, naming the menu set the zones carry (` (absent)` after one
+they lack), then `ui info weapon hud: ammo counter painted by `weaponinfo`
+clip=C stock=S` the first frame the counter draws; `ui info hud gap weaponbar:
+<menu>: item I: <error>` while a weapon HUD menu cannot be evaluated (the
+whole menu is hidden), and `ui info use hint: drawn from `cursorhints`
+ownerDraw 72 (font F scale S y Y)` the first time a use hint draws.
+`world info blood material admission: GREEN material=<m>` once the blood
+overlay's material is admitted (`… RED material=<m> cause=<cause>` when it
+is not: no overlay draws), and `ui info hud gap blood-overlay: <m>/unlit/pass
+0: <error>` while a hurt player's overlay cannot draw.
 `gsc log: survival: ready waves=… archetypes=… armory_items=…` counts the
-tables as read; `gsc log: survival: loadout …` lists what a spawn was given;
+tables as read; `gsc log: survival: loadout <w> clip=C/<clip size>
+stock=S/<max ammo>… <grenade> xK… selfrevive=K armor=P` lists what a spawn
+was given; `gsc log: survival: ammo client=N <w>=<clip>+<stock>…` each
+player's primaries when a wave is complete;
 `gsc log: survival: armory <kind> spawned at (…) yaw Y model <m> menu <menu>`
-each armory placed, `armory <kind> usable at (…)` it unlocking for use,
+each armory placed, `armory <kind> prop <m> at (…) [(targets <m>, not
+swapped)]` the model standing on it, `armory <kind> usable at (…) hint <@ref>`
+it unlocking for use, `armory <kind> marked icon=<material> objective=N
+waypoint_z=Z` its compass objective and world icon set; `ui info survival
+icons: armory <kind> `<material>` -> image `<image>`` at install, each kind's
+icon as the HUD will draw it; `ui info compass: objectives drawn
+[N:<material>…]` each time the set of objective icons the compass draws
+changes (` (no image)` after one whose image did not load); `sim info use press client=N selected=<entnum|none>
+raised=<true|false>` every press of use (what the engine selected in reach and
+whether it raised `trigger`),
 `armory <kind> opened client=N menu=<menu>` and `armory <kind> closed
 client=N reason=<closed|downed|died>` a use; `gsc log: survival: armor
 absorbed client=N damage=D absorbed=A armor=L health_damage=H means=<MOD>`
-a hit on armor;
+a hit on armor; `gsc log: survival: hud icon <ref> material=<m> size=WxH at
+X,Y client=N` each icon hudelem a player's HUD gets (`armor`:
+`teamperk_blast_shield`, 28x28);
 `gsc log: survival: challenges played <ref>=<means>x<count>:<reward>… not
 played <ref>…` the challenges as read.
 `gsc log: survival: wave=N start squad=<a> xK [specials=<a> xK,…]
@@ -717,8 +924,19 @@ played <ref>…` the challenges as read.
 the last plays); `gsc log: survival: wave N skips <a> xK (not simulated)` each
 archetype it leaves out; `gsc log: survival: wave=N sends <a> in_play=P
 budget=B` an enemy sent;
+`ui info survival compass: actors mode=<always|firing> enemy=<material|none>
+friendly=<material|none> local_team=T rows=N` the first frame actors reach
+the compass and each time the mode, materials or team change (T is 2 for
+`human_team` allies; 1 or 2 is needed to draw anything);
 `gsc log: survival: <a> spawned actor=N team=axis at (…) health=H trait=<t>
-[character=<body>/<head>/<hat>]` its spawn;
+[character=<body>/<head>/<hat>]` its spawn, then `sim info actor gun:
+actor=N weapon=<w> gun=<model>@<tag>` the gun in its hands (none for a dog,
+and `sim warn actor gun gap: weapon model <m> is not in the loaded models`
+once for a model that cannot be drawn); `sim info actor drop: actor=N
+weapon=<w> clip=C stock=S item=E at (x y z)` and `gsc log: survival:
+dropped <w> actor=N archetype=<a> at (…)` an enemy's weapon falling as it
+dies; `console info actor: N archetype=<a> team=<t> at (x y z) health=H`
+each actor `actor list` shows;
 `gsc log: survival: enemy killed actor=N archetype=<a> remaining=R
 means=<MOD> weapon=<w> by=<clientM|chopper|world>` (R: the wave's total
 less its kills) its death, and `gsc log: survival: ally killed actor=N
@@ -779,3 +997,79 @@ chopper entering, `chopper heads to <node> at (…)` each move, `chopper fired
 at client=N shots=K from (…)` each burst, and `chopper destroyed reward=R
 by=<clientN|world> means=<MOD> weapon=<w> at (…) remaining=E` its end. The
 chopper recipe in [`RUN.md`](RUN.md) produces them.
+`sim info combat: actor hit entity=N bone=B hitloc=<loc> surf=flesh damage=D
+head=<bool> fatal=<bool>` each bullet hit on an actor (its hit volumes are
+flesh, see [`ENTITIES.md`](ENTITIES.md)), and `world info fx: BulletImpact
+row=R surf=7 exit=<bool> flesh_flags=F played `<fx>` (first of this flesh
+slot)` the first impact played per flesh variant and side (F: 0 body, 1
+head, 2 fatal, 3 head fatal; `exit=true` the bullet leaving the body).
+Survival plays the SP common set's impact table, not the map's
+(`impact_table_source,common` in `settings.csv`; `map` gives the map's
+back). `world info world report: impactfx: common set table `` rows=15 kept
+(impact_table_source=common); map table `` rows=15 discarded` is it
+winning; multiplayer keeps the map's own (`impactfx: map table … kept;
+common set table … discarded`). The two tables as MW3's zones author them
+(flesh slots body, body fatal, head, head fatal):
+- mp_paris (MP): entry rows `impacts/flesh_hit_body_mp` then
+  `flesh_hit_body_fatal_mp` three times, small sprite puffs with no decal;
+  exit rows (1, 3, 6, 9) empty.
+- SP `common`: entry rows `impacts/flesh_hit_body_nonfatal` (a white smoke
+  and mud splash puff, no blood), `flesh_hit_body_fatal_exit`,
+  `flesh_hit_body_nonfatal`, and nothing for head fatal; exit rows only the
+  fatal slots, `flesh_hit_body_fatal_exit` (body) and
+  `flesh_hit_head_fatal_exit` (head; shotgun row 6 has it on both).
+  `flesh_hit_head_fatal_exit`'s blood drops (elems 8 and 9) collide and
+  play their `effectOnImpact`, `impacts/flesh_hit_splat` /
+  `flesh_hit_splat_large`: decal effects of
+  `gfx_impact_blood_spatter01..03`, the blood on the wall behind a
+  head-shot kill. `flesh_hit_body_fatal_exit` has no decal child.
+Since the exit rows fill only the fatal slots, an exit impact carries the
+head and fatal flags of the actor hit it leaves (`exit_flesh_flags` in
+`sim/src/combat.rs`); an exit through a player still carries none, so MP is
+unchanged. In game: a wounding hit is a grey puff, a body kill a blood
+burst at the entry and out of the back, a head-shot kill a spray out of the
+back that leaves a spatter decal on the surface behind. Evidence: `world
+info fx: BulletImpact row=1 surf=7 exit=true flesh_flags=3 played
+`impacts/flesh_hit_head_fatal_exit``, then `world info fx: effectOnImpact
+`impacts/flesh_hit_head_fatal_exit` elem E -> `impacts/flesh_hit_splat[_large]`
+played at (…) (first of this child)`. A splat needs a surface within the
+drops' reach behind the actor. To see what a flesh hit drew, run `fx_dump`
+right after hitting an actor: `world info fx_near_impact …
+def=impacts/flesh_hit_…` lines are its sprites.
+Actors in prediction: the client's prediction world is armed from the match
+content before any wave (`ClientPrediction::arm_from_content`) and
+`presence::follow_movers` only moves script models it already knows, so it
+used to have no actors: the local player's own shot was predicted through
+the enemy, the wall behind got its impact and bullet hole at once, and the
+blood came a snapshot later from the authority's hit. Now each snapshot's
+script mover row carries an actor bit (`ScriptMoverGentity::actor`, set by
+`present` from `EntityKind::Actor`; on the wire bit 1 of the mover's flags
+byte next to `nonsolid`, protocol 118). On adoption the prediction world
+(`world/prediction_actors.rs`) creates a hit-volume (flesh) collision row
+for each marked mover from its `entity_dobjs` state (body model,
+attachments, hidden parts, anim tree, posed at the mover's trajectory),
+rebuilds it whenever the authority's DObj state changes, follows its
+solidity like any mover, and removes it when the mover leaves the snapshot.
+Rows a late joiner's armed copy inherited for live actors are taken over the
+same way. Unmarked movers get nothing, so MP prediction is unchanged.
+Evidence: `sim info prediction: actor row added mover=M entity=N model=<m>
+capability=<bool>` once per actor as it first appears (`capability=false`
+means the body model is missing from the model library, so it has no hit
+volumes), and `prediction: actor row removed mover=M` when it leaves the
+snapshot. In game: the first shot at an enemy shows the flesh impact at the body, with no
+wall impact or bullet hole behind it unless the bullet penetrates.
+The predicted hit is always the non-fatal variant (only the authority knows
+a kill). `PresentedFireFx` keys an impact by pellet, segment, surface,
+target and flesh flags, so the authority's identical non-fatal impact is
+dropped as a duplicate, while its fatal entry and its fatal exit (different
+flags) still play a snapshot later. That is how the head-shot exit splat
+reaches the local shooter.
+Headless check (pistol, actor 58 units in front, pitch 12):
+`fx: BulletImpact row=0 surf=7 exit=false flesh_flags=0 played
+`impacts/flesh_hit_body_nonfatal`` logs before the authority's
+`combat: actor hit entity=179 … surf=flesh`, and `fx_dump impact` shows
+only `flesh_hit_body_nonfatal` sprites, no wall impact.
+`gsc log: survival: actor pain actor=N anim=<a> dir=<f|b|l|r>` each pain an
+actor or dog plays: N its entity number, `<a>` the `pain` anim drawn, `dir`
+the hit's push direction. Its count against the `combat: actor hit … fatal=false`
+lines is the share of surviving hits that flinch.

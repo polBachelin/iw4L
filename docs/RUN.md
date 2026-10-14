@@ -21,24 +21,29 @@ frame waits for its own GPU work. `serve` is always headless. Survival plays
 the local player on `human_team` and every bot on `enemy_team` (both rows of
 `settings.csv`), so `bot add` adds enemies beside the wave's own. The wave's
 enemies are actors, not clients ([`SURVIVAL.md`](SURVIVAL.md)): `bot tp` and
-`bot hold` do not reach them, and the recipes below that move wave enemies
-with `bot tp` wait on console commands for actors. A repeatable clear of wave 1 on mp_paris: each of the seven
-enemies is brought in front of the player and shot three times, then the
-intermission runs into wave 2. Read it back from the log (`survival: enemy
-killed client=N archetype=easy remaining=R` seven times, each followed by
-`credits client=0 credits=C delta=100 reason=kill:easy` and `bots: retired
-client N`, then `wave=1 complete`, the `reason=wave_bonus:1` credits,
-`intermission 30s`, `armory unlocked weapon` and `wave=2 start squad=easy
-x9`):
+`bot hold` do not reach them. The `actor` verbs do (cheats, like `kill`):
+`actor list` logs each live actor (`actor: N archetype=A team=T at (x y z)
+health=H`), `actor tp all|first|<entnum> x y z [yaw]` places them (`first` is
+the live actor spawned first, so a recipe brings enemies one by one without
+knowing their entity numbers), and `actor hold on|off` stops every actor's
+walk and makes its shots fire nothing. A repeatable clear of wave 1 on
+mp_paris (`$CLEAR1`): each of the seven enemies is brought in front of the
+player and shot three times; it ends in the intermission, and recipes
+append their own steps after it. Read it back from the log (`survival: enemy
+killed actor=N archetype=easy remaining=R` seven times, each followed by
+`credits client=0 credits=C delta=100 reason=kill:easy`, then `wave=1
+complete`, the `reason=wave_bonus:1` credits, `intermission 30s`, `armory
+unlocked weapon`, and with `wait 40s` after it `wave=2 start squad=easy x9`):
 
 ```bash
 shoot='hold +attack; wait 0.3s; release +attack; wait 0.4s;'
-cmds='wait world; wait spawn; god; wait 10s; bot hold on; tp -1214 2048 229 270 0;'
+CLEAR1='wait world; wait spawn; god; wait 10s; actor hold on; tp -1214 2048 229 270 0;'
 for k in 1 2 3 4 5 6 7; do
-  cmds="$cmds bot tp $k -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot wait 1s;"
-  [ $k = 4 ] && cmds="$cmds hold +reload; wait 0.2s; release +reload; wait 3s;"
+  CLEAR1="$CLEAR1 actor tp first -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot wait 1s;"
+  [ $k = 4 ] && CLEAR1="$CLEAR1 hold +reload; wait 0.2s; release +reload; wait 3s;"
 done
-target/play/iw4l survival --headless --cmds "$cmds wait 40s; quit"
+CLEAR1="$CLEAR1 wait 2s;"
+target/play/iw4l survival --headless --cmds "$CLEAR1 wait 40s; quit"
 ```
 
 Last stand needs damage, so its recipe holds the bots instead of `god`
@@ -51,32 +56,32 @@ aim at an enemy standing 58 units off misses most shots; the recipe looks
 
 ```bash
 shoot='hold +attack; wait 0.3s; release +attack; wait 0.4s;'
-cmds='wait world; wait spawn; wait 5s; bot hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 2s; tp -1214 2048 229 270 -20; wait 0.5s;'
-cmds="$cmds bot tp 1 -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot wait 2s; damage 200; wait 5s;"
+cmds='wait world; wait spawn; wait 5s; actor hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 2s; tp -1214 2048 229 270 -20; wait 0.5s;'
+cmds="$cmds actor tp first -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot wait 2s; damage 200; wait 5s;"
 target/play/iw4l survival --headless --cmds "$cmds quit"
 ```
 
 The end of a wave gets a downed player up without a kill: shoot six of wave
 1's seven enemies, go down, then drop the seventh from 600 units so the fall
-kills it (`enemy killed client=7 … means=MOD_FALLING by=world remaining=0`,
+kills it (`enemy killed actor=N … means=MOD_FALLING by=world remaining=0`,
 `wave=1 complete`, `revived by wave_complete wave=1 selfrevive=1`, then the
 wave bonus and no `bled out`):
 
 ```bash
 shoot='hold +attack; wait 0.3s; release +attack; wait 0.4s;'
-cmds='wait world; wait spawn; wait 5s; bot hold on; tp -1214 2048 229 270 0; wait 1s;'
+cmds='wait world; wait spawn; wait 5s; actor hold on; tp -1214 2048 229 270 0; wait 1s;'
 for k in 1 2 3 4 5 6; do
-  cmds="$cmds bot tp $k -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot wait 1s;"
+  cmds="$cmds actor tp first -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot wait 1s;"
   [ $k = 4 ] && cmds="$cmds hold +reload; wait 0.2s; release +reload; wait 3s;"
 done
-target/play/iw4l survival --headless --cmds "$cmds damage 200; wait 2s; bot tp 7 -1214 1900 829 90; wait 40s; quit"
+target/play/iw4l survival --headless --cmds "$cmds damage 200; wait 2s; actor tp first -1214 1900 829 90; wait 40s; quit"
 ```
 
 Down mid-wave with no kill still bleeds out (`laststand … bleedout=30`, `bled
 out client=0 after 30s`, `player died`, `game over`):
 
 ```bash
-target/play/iw4l survival --headless --cmds 'wait world; wait spawn; wait 5s; bot hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 40s; quit'
+target/play/iw4l survival --headless --cmds 'wait world; wait spawn; wait 5s; actor hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 40s; quit'
 ```
 
 The pause menu stops a solo game (`host pause: paused tick=T menu=iw4l_pause`,
@@ -93,7 +98,7 @@ marker pause is 26 s of game time after going down and nothing has bled out;
 `bled out client=0 after 30s` comes after it:
 
 ```bash
-target/play/iw4l survival --headless --cmds 'wait world; wait spawn; wait 5s; bot hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 1s; togglemenu; wait 10s; togglemenu; wait 25s; togglemenu; wait 0.2s; togglemenu; wait 10s; quit'
+target/play/iw4l survival --headless --cmds 'wait world; wait spawn; wait 5s; actor hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 1s; togglemenu; wait 10s; togglemenu; wait 25s; togglemenu; wait 0.2s; togglemenu; wait 10s; quit'
 ```
 
 The survival screens, windowed (the screen must be unlocked and awake): the
@@ -102,15 +107,16 @@ then MW3's `sp_eog_summary` after the second down:
 
 ```bash
 shoot='hold +attack; wait 0.3s; release +attack; wait 0.4s;'
-cmds='wait world; wait spawn; wait 5s; screenshot sv_hud; wait 1s; togglemenu; wait 2s; screenshot sv_pause; wait 1s; togglemenu; wait 1s; bot hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 3s; screenshot sv_down; wait 1s; tp -1214 2048 229 270 -20; wait 0.5s;'
-cmds="$cmds bot tp 1 -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot wait 2s; damage 200; wait 5s; screenshot sv_eog; wait 1s; quit"
+cmds='wait world; wait spawn; wait 5s; screenshot sv_hud; wait 1s; togglemenu; wait 2s; screenshot sv_pause; wait 1s; togglemenu; wait 1s; actor hold on; tp -1214 2048 229 270 0; wait 1s; damage 200; wait 3s; screenshot sv_down; wait 1s; tp -1214 2048 229 270 -20; wait 0.5s;'
+cmds="$cmds actor tp first -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot wait 2s; damage 200; wait 5s; screenshot sv_eog; wait 1s; quit"
 target/play/iw4l survival --cmds "$cmds"
 ```
 
 Air support needs the armories wave 2 (equipment) and wave 3 (air support)
 unlock, and credits. A purchase is made at the armory: standing in front of
-it (on mp_paris the air support laptop at `649 1334 18`, the equipment case at
-`-825 -57 99`, as `survival: armory <kind> spawned at` logs them), `+activate`
+it (on mp_paris the layer places the weapon armory at `1542 644 0`, the
+equipment case at `580 1946 -16` and the air support laptop at `-785 62 70`,
+as `survival: armory <kind> spawned at` logs them), `+activate`
 opens its menu (`survival: armory <kind> opened`), `menuresponse <menu>
 <response>` sends the purchase MW3's armory menus send (`purchase_<c0>` of
 `sp/survival_armories.csv`), and `menukey escape` closes it. Clearing
@@ -136,8 +142,8 @@ by=client<1–3>`). A placement that does not fit logs `sentry does not fit at
 (…)` and waits for the next `+attack`, so the minigun sentry tries two yaws:
 
 ```bash
-burst='bot tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
-cmds='wait world; wait spawn; god; wait 8s; bot hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
+burst='actor tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
+cmds='wait world; wait spawn; god; wait 8s; actor hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
 air='tp 609 1334 18 0 0; wait 0.5s; press +activate; wait 1s;'
 equipment='tp -825 -17 99 270 0; wait 0.5s; press +activate; wait 1s;'
 back='menukey escape; wait 0.5s; tp -1214 2048 229 270 0; wait 1s;'
@@ -148,7 +154,7 @@ for w in 1 2 3; do
   cmds="$cmds wait 34s;"
 done
 cmds="$cmds $air $A purchase_10001; wait 0.5s; $back press +actionslot 4; wait 3s;"
-cmds="$cmds bot tp all -1214 -110 60 90; $(tps '-533 810 1300 0' $(seq 1 2 31)) wait 0.5s; press +attack; wait 8s;"
+cmds="$cmds actor tp all -1214 -110 60 90; $(tps '-533 810 1300 0' $(seq 1 2 31)) wait 0.5s; press +attack; wait 8s;"
 cmds="$cmds $air $A purchase_10000; wait 0.5s; $back press +actionslot 4; wait 14s;"
 cmds="$cmds $air $A purchase_10002; wait 0.5s; $back"
 cmds="$cmds $equipment $E purchase_1008; wait 0.5s; $back press +attack; wait 1s;"
@@ -156,7 +162,7 @@ cmds="$cmds $equipment $E purchase_1007; wait 0.5s; menukey escape; wait 0.5s;"
 cmds="$cmds tp -825 -17 99 180 0 &; wait 1s; press +attack; wait 1s; tp -825 -17 99 90 0 &; wait 1s; press +attack; wait 1s;"
 cmds="$cmds tp -1214 2048 229 270 0 &; wait 15s;"
 cmds="$cmds $(tps '-1214 1880 229 90' 4 5 6 7) $(tps '-1214 -110 60 0' 8 9 10 11 12) wait 10s;"
-cmds="$cmds $(tps '963 2161 0 0' 1 2 3) $(tps '1163 2161 0 180' 13 14 15) wait 1s; bot hold off; wait 40s;"
+cmds="$cmds $(tps '963 2161 0 0' 1 2 3) $(tps '1163 2161 0 180' 13 14 15) wait 1s; actor hold off; wait 40s;"
 target/play/iw4l survival --headless --cmds "$cmds quit"
 ```
 
@@ -177,8 +183,8 @@ armory's LMG and sniper categories (c7 11 and 6) and the pistols above rank
 5 disabled.
 
 ```bash
-burst='bot tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
-cmds='wait world; wait spawn; god; wait 8s; bot hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
+burst='actor tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
+cmds='wait world; wait spawn; god; wait 8s; actor hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
 for w in 1 2 3; do
   for k in 1 2 3 4 5 6; do cmds="$cmds $burst"; [ $((k % 3)) = 0 ] && cmds="$cmds press +reload; wait 3s;"; done
   cmds="$cmds wait 34s;"
@@ -198,8 +204,8 @@ reason=downed`, `laststand …`, `menu close: survival_armory_weapon_pistol`,
 `menu close: survival_armory_weapon`); `menu` then shows `stack=[]`:
 
 ```bash
-burst='bot tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
-cmds='wait world; wait spawn; god; wait 8s; bot hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
+burst='actor tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
+cmds='wait world; wait spawn; god; wait 8s; actor hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
 for k in 1 2 3 4 5 6; do cmds="$cmds $burst"; [ $((k % 3)) = 0 ] && cmds="$cmds press +reload; wait 3s;"; done
 cmds="$cmds wait 5s; tp 357 33 35 180 0; wait 0.5s; press +activate; wait 1.5s; menukey down; wait 0.5s; menukey down; wait 0.5s; menukey enter; wait 1.5s; menu;"
 cmds="$cmds god; wait 0.5s; damage 200; wait 2s; menu; wait 1s;"
@@ -227,9 +233,9 @@ continue`, `granted rpg_survival grant=launcher held=2 of 4 … replaced=…`,
 then `held=4 of 4`):
 
 ```bash
-burst='bot tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
+burst='actor tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
 shoot='hold +attack; wait 0.3s; release +attack; wait 0.4s;'
-cmds='wait world; wait spawn; god; wait 8s; bot hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
+cmds='wait world; wait spawn; god; wait 8s; actor hold on; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
 for w in 1 2; do
   for k in 1 2 3 4 5 6; do cmds="$cmds $burst"; [ $((k % 3)) = 0 ] && cmds="$cmds press +reload; wait 3s;"; done
   cmds="$cmds wait 34s;"
@@ -241,7 +247,7 @@ cmds="$cmds tp -825 -17 99 270 0; wait 0.5s; press +frag; wait 2s; press +smoke;
 for item in 1000 1000 1001 1002 1003 1005 1006; do cmds="$cmds $E purchase_$item; wait 0.5s;"; done
 cmds="$cmds menukey escape; wait 1s; press +actionslot 1; wait 2s; press +attack; wait 3s;"
 cmds="$cmds tp -1214 2048 229 270 0; wait 1s; god; wait 0.5s; damage 200; wait 2s; tp -1214 2048 229 270 -20; wait 0.5s;"
-for r in 1 2; do cmds="$cmds bot tp all -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot press +reload; wait 3s;"; done
+for r in 1 2; do cmds="$cmds actor tp all -1214 1990 229 90; wait 0.5s; $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot $shoot press +reload; wait 3s;"; done
 cmds="$cmds god; wait 0.5s; $equipment $E purchase_1006; wait 0.5s; $E purchase_1004; wait 1s; menukey enter; wait 1.5s; $E purchase_1004; wait 0.5s; menukey escape; wait 1s;"
 target/play/iw4l survival --headless --cmds "$cmds quit"
 ```
@@ -258,7 +264,7 @@ detonated`, `claymore planted`, `claymore tripped`, `claymore disarmed`,
 RPG or frag on `jug_explosive` alone logs `explosive weakness … scaled=S`:
 
 ```bash
-burst='bot tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
+burst='actor tp all -1214 1990 229 90; wait 0.5s; hold +attack; wait 1.5s; release +attack; wait 0.5s;'
 cmds='wait world; wait spawn; god; wait 8s; give weapon/iw5:pecheneg; wait 3s; tp -1214 2048 229 270 0; wait 1s;'
 for r in 1 2 3 4 5 6 7 8; do cmds="$cmds $burst $burst $burst press +reload; wait 3s;"; done
 target/play/iw4l survival --headless --cmds "$cmds wait 15s; quit"
