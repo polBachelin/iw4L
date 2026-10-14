@@ -58,9 +58,8 @@ struct Target {
 /// `self shoot( [point | target] )`: one shot of the actor's weapon from its
 /// muzzle. At a target entity the actor's accuracy decides whether it is
 /// aimed to hit or to miss; at a point, or along its facing, it goes where
-/// it is told. Only a bullet weapon shoots at a target; a point or facing
-/// shot traces a bullet whatever the weapon, until actors can own a
-/// projectile.
+/// it is told. A missile or grenade launcher launches its projectile, owned
+/// by the actor, along the shot.
 fn shoot(world: &mut World, receiver: &Value, args: &[Value]) -> Result<ShotOutcome, String> {
     let id = actor(world, receiver)?;
     let Some(weapon) = world.resource::<Runtime>().actors[&id].weapon else {
@@ -96,7 +95,14 @@ fn shoot(world: &mut World, receiver: &Value, args: &[Value]) -> Result<ShotOutc
             None => return Ok(ShotOutcome::InvalidTarget),
         },
         Some(value @ Value::Object(_)) => {
-            if kind != Some(weapon_iw4::FireWeaponKind::Bullet) {
+            if !matches!(
+                kind,
+                Some(
+                    weapon_iw4::FireWeaponKind::Bullet
+                        | weapon_iw4::FireWeaponKind::Missile
+                        | weapon_iw4::FireWeaponKind::GrenadeLauncher
+                )
+            ) {
                 diag::debug!(
                     Sim,
                     "shoot: actor {id} weapon {} fires {kind:?}, which an actor cannot launch",
@@ -153,10 +159,27 @@ fn shoot(world: &mut World, receiver: &Value, args: &[Value]) -> Result<ShotOutc
             ..Default::default()
         },
     );
-    let bullet = fire_bullet(world, id, from, dir, weapon, None);
-    diag::debug!(Sim, "shoot: actor {id} target {target:?} fired {bullet:?}");
-    if bullet == BulletOutcome::NoFacts {
-        return Ok(ShotOutcome::Unsupported);
+    match kind {
+        Some(
+            kind @ (weapon_iw4::FireWeaponKind::Missile
+            | weapon_iw4::FireWeaponKind::GrenadeLauncher),
+        ) => {
+            let launched = launch(world, id, weapon, kind, from, dir, tick);
+            diag::debug!(
+                Sim,
+                "shoot: actor {id} target {target:?} launched {launched:?}"
+            );
+            if launched.is_err() {
+                return Ok(ShotOutcome::Unsupported);
+            }
+        }
+        _ => {
+            let bullet = fire_bullet(world, id, from, dir, weapon, None);
+            diag::debug!(Sim, "shoot: actor {id} target {target:?} fired {bullet:?}");
+            if bullet == BulletOutcome::NoFacts {
+                return Ok(ShotOutcome::Unsupported);
+            }
+        }
     }
     let now = super::super::players::now_ms(world);
     if let Some(actor) = world.resource_mut::<Runtime>().actors.get_mut(&id) {
@@ -164,6 +187,36 @@ fn shoot(world: &mut World, receiver: &Value, args: &[Value]) -> Result<ShotOutc
         actor.ai.shot.last_target = target;
     }
     Ok(ShotOutcome::Fired)
+}
+
+/// Launches one projectile of `weapon`, owned by the actor, from `from`
+/// along `dir` at the weapon's launch speed.
+fn launch(
+    world: &mut World,
+    id: u64,
+    weapon: u32,
+    kind: weapon_iw4::FireWeaponKind,
+    from: [f32; 3],
+    dir: [f32; 3],
+    tick: crate::Tick,
+) -> Result<crate::ProjectileId, String> {
+    let presence = world.resource::<Runtime>().entities[&id]
+        .presence
+        .ok_or("actor has no presence")?;
+    let mut frame = FrameWorld::from_world(world);
+    let velocity = if kind == weapon_iw4::FireWeaponKind::Missile {
+        let speed = frame
+            .missile_launch_facts(weapon)
+            .ok_or("weapon fires no missile")?
+            .projectile_speed as f32;
+        dir.map(|axis| axis * speed)
+    } else {
+        let facts = frame
+            .equipment_facts_for(weapon)
+            .ok_or("weapon has no equipment facts")?;
+        crate::equipment::grenade_launch_velocity(dir, &facts, [0.0; 3])
+    };
+    crate::missile::spawn_entity_projectile(&mut frame, tick, presence, weapon, from, velocity)
 }
 
 /// Rolls the actor's chance against `target` and returns the point the shot

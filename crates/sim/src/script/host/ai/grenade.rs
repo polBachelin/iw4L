@@ -222,10 +222,22 @@ fn throw(world: &mut World, id: u64, velocity: [f32; 3]) -> Result<bool, String>
     Ok(true)
 }
 
-/// Launches the one projectile of a throw. Thrown projectiles are owned by
-/// a player client, and an actor has none, so no actor throw is released
-/// until projectiles can be owned by an actor and launched at a given
-/// velocity.
-fn release(_world: &mut World, _id: u64, _weapon: u32, _from: Vec3, _velocity: Vec3) -> bool {
-    false
+/// Launches the one projectile of a throw, owned by the actor.
+fn release(world: &mut World, id: u64, weapon: u32, from: Vec3, velocity: Vec3) -> bool {
+    let Some(presence) = world.resource::<Runtime>().entities[&id].presence else {
+        return false;
+    };
+    let tick = world.resource::<crate::step::StepRequest>().tick;
+    let launched = crate::missile::spawn_entity_projectile(
+        &mut FrameWorld::from_world(world),
+        tick,
+        presence,
+        weapon,
+        from.to_array(),
+        velocity.to_array(),
+    );
+    if let Err(message) = &launched {
+        diag::debug!(Sim, "throwgrenade: actor {id} released nothing: {message}");
+    }
+    launched.is_ok()
 }
