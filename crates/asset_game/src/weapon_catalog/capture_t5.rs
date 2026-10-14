@@ -186,6 +186,7 @@ impl WeaponCatalog {
             combat_fx: WeaponCombatFx::empty(crate::AssetNamespace::T5),
             combat_slots: CombatFxSlots::default(),
             facts: capture_t5_body_facts(stream, &geometry),
+            accuracy: Ok(None),
         });
         let last = self.entries.last_mut().expect("just pushed");
         let (fx, slots) = leftover_t5_combat_fx(stream, &geometry);

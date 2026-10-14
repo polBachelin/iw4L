@@ -2,7 +2,7 @@ use crate::spawn::{AuthoredSpawnPoint, MatchBootstrap};
 use crate::world::SimBrush;
 use weapon_iw4::WeaponCombatFacts;
 
-pub const CONTENT_DIGEST_SCHEME: u64 = 18;
+pub const CONTENT_DIGEST_SCHEME: u64 = 19;
 
 #[derive(Clone, Copy)]
 struct Digest(u64);
@@ -343,9 +343,43 @@ fn hash_penetration(h: &mut Digest, penetration: &[weapon_iw4::BulletPenFacts]) 
     }
 }
 
+fn hash_accuracy(
+    h: &mut Digest,
+    graphs: &[Option<std::sync::Arc<crate::AccuracyGraphs>>],
+    refusals: &[Option<String>],
+) {
+    h.u64(graphs.len() as u64);
+    h.u64(refusals.len() as u64);
+    for (graphs, refusal) in graphs.iter().zip(refusals) {
+        h.bool(refusal.is_some());
+        let Some(graphs) = graphs else {
+            h.byte(0);
+            continue;
+        };
+        h.byte(1);
+        for graph in [&graphs.vs_ai, &graphs.vs_player] {
+            let Some(graph) = graph else {
+                h.byte(0);
+                continue;
+            };
+            h.byte(1);
+            h.bytes(graph.name.as_bytes());
+            h.u64(graph.knots.len() as u64);
+            for [x, y] in &graph.knots {
+                h.f32(*x);
+                h.f32(*y);
+            }
+        }
+    }
+}
+
 pub fn content_digest(
     combat: &[WeaponCombatFacts],
     penetration: &[weapon_iw4::BulletPenFacts],
+    accuracy: (
+        &[Option<std::sync::Arc<crate::AccuracyGraphs>>],
+        &[Option<String>],
+    ),
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
@@ -358,6 +392,7 @@ pub fn content_digest(
     h.u64(CONTENT_DIGEST_SCHEME);
     hash_combat(&mut h, combat);
     hash_penetration(&mut h, penetration);
+    hash_accuracy(&mut h, accuracy.0, accuracy.1);
     hash_weapon_admission(&mut h, runnable, transition_groups);
     hash_equipment(&mut h, equipment);
     hash_class_catalog(&mut h, class_catalog);
@@ -381,6 +416,10 @@ pub struct ContentComponents {
 pub fn content_components(
     combat: &[WeaponCombatFacts],
     penetration: &[weapon_iw4::BulletPenFacts],
+    accuracy: (
+        &[Option<std::sync::Arc<crate::AccuracyGraphs>>],
+        &[Option<String>],
+    ),
     runnable: &[bool],
     transition_groups: &[u32],
     equipment: &[crate::EquipmentRuntimeFacts],
@@ -406,6 +445,7 @@ pub fn content_components(
     let mut weapons = component(b'W');
     hash_combat(&mut weapons, combat);
     hash_penetration(&mut weapons, penetration);
+    hash_accuracy(&mut weapons, accuracy.0, accuracy.1);
     hash_weapon_admission(&mut weapons, runnable, transition_groups);
     hash_equipment(&mut weapons, equipment);
 

@@ -10,8 +10,11 @@ use crate::zone::{Ptr, Result, WeaponGeometry, XFILE_BLOCK_VIRTUAL, ZonePtr, Zon
 pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink) -> Result<()> {
     s.walk_stage = "weapon";
     let p = s.alloc_load(4, s.layout(sz::WEAPON_COMPLETE, 288))?;
-    let ai_knots = s.u16_at(p, s.layout(168, 260))? as usize;
-    let player_knots = s.u16_at(p, s.layout(170, 262))? as usize;
+    let accuracy_graph_knot_counts = [
+        s.u16_at(p, s.layout(168, 260))?,
+        s.u16_at(p, s.layout(170, 262))?,
+    ];
+    let [ai_knots, player_knots] = accuracy_graph_knot_counts.map(usize::from);
     let weap_def_off = s.layout(4, 8);
 
     s.push(XFILE_BLOCK_VIRTUAL)?;
@@ -161,8 +164,10 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
     let dpad_icon_cell = p.at(s.layout(sz::WEAPON_COMPLETE_DPAD_ICON_OFF, 224));
     asset_ptr_at(s, links, AssetType::Material, dpad_icon_cell)?;
     let dpad_icon_name = super::material_name_at(s, links, dpad_icon_cell);
-    s.plain_array(p, s.layout(172, 264), 4, 8, ai_knots)?;
-    s.plain_array(p, s.layout(176, 272), 4, 8, player_knots)?;
+    let accuracy_graph_knots = [
+        s.plain_array(p, s.layout(172, 264), 4, 8, ai_knots)?,
+        s.plain_array(p, s.layout(176, 272), 4, 8, player_knots)?,
+    ];
 
     let name = match s.ptr_at(p, 0)? {
         ZonePtr::Offset(q) => Some(s.resolve_alias(q)),
@@ -310,6 +315,8 @@ pub(super) fn load_weapon(s: &mut ZoneStream<'_>, links: &mut dyn AssetLinkSink)
         reload_overrides: array_at(s, reload_overrides_off),
         note_track_override_count: note_overrides as i32,
         note_track_overrides: array_at(s, note_overrides_off),
+        accuracy_graph_knots,
+        accuracy_graph_knot_counts,
     });
     s.pop()
 }

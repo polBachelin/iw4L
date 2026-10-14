@@ -66,13 +66,20 @@ actor_crouch_percent,40
 actor_pain_percent,100
 actor_pain_blend_ms,100
 actor_burst_rest_ms,800
-actor_miss_spread,48
 actor_eye_height,60
 actor_crouch_eye_height,40
 actor_corpse_ms,10000
 actor_turn_rate,360
 actor_aim_tolerance,15
+actor_offhand_count,0
 actor_explosive_means,MOD_GRENADE MOD_GRENADE_SPLASH MOD_EXPLOSIVE MOD_PROJECTILE MOD_PROJECTILE_SPLASH
+wave_actor_capacity,32
+wave_soft_cap,0
+wave_admission_cohort,0
+wave_admission_ms,0
+wave_spawn_wait_ms,5000
+wave_retry_ms,500
+wave_retry_max_ms,4000
 dog_archetypes,dog_reg dog_splode
 nodrop_archetypes,jug_regular jug_riotshield jug_explosive jug_minigun
 dog_attack_range,96

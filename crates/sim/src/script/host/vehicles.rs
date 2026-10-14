@@ -269,7 +269,13 @@ fn spawn_vehicle(
     };
     let presence = super::presence::spawn_presence(world, origin)?;
     let mut runtime = world.resource_mut::<Runtime>();
-    let id = runtime.create_entity(EntityKind::Vehicle, classname)?;
+    let id = match runtime.create_entity(EntityKind::Vehicle, classname) {
+        Ok(id) => id,
+        Err(reason) => {
+            runtime.retired_presence.push((presence, true));
+            return Err(reason);
+        }
+    };
     runtime.set_object_field(id, "origin", Value::Vector(origin));
     runtime.set_object_field(id, "angles", Value::Vector(angles));
     runtime.set_object_field(id, "model", Value::string(model));
@@ -541,7 +547,9 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let weapon = frame.vehicle_turret_weapon(&definition);
         let compass = frame.vehicle_compass(&definition).cloned();
         let def_accel = frame.vehicle_accel(&definition).unwrap_or(0.0);
-        let vehicle = spawn_vehicle(
+        // No free vehicle slot, entity or presence is an answer the wave
+        // director handles (undefined), not a fault in its spawning thread.
+        let vehicle = match spawn_vehicle(
             world,
             "script_vehicle",
             origin,
@@ -553,7 +561,13 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 def_accel,
                 ..Default::default()
             }),
-        )?;
+        ) {
+            Ok(vehicle) => vehicle,
+            Err(reason) => {
+                diag::warn!(Sim, "vehicle spawn refused: {reason}");
+                return Ok(Value::Undefined);
+            }
+        };
         if let Value::Object(object) = vehicle {
             world.resource_mut::<Runtime>().set_object_field(
                 object,

@@ -108,6 +108,7 @@ pub(crate) fn install_level(
     runtime.next_entity_number = playerstate_iw4::GENTITY_SPAWN_BASE;
     runtime.tables = plan.tables.clone();
     runtime.rng = u32::from_le_bytes(program.fingerprint()[..4].try_into().unwrap()) | 1;
+    crate::script::host::ai::seed(&mut runtime, &program.fingerprint());
     runtime.loading = true;
     world.insert_resource(natives);
     if let Some(&function) = program.names.get(STRUCT_INIT) {

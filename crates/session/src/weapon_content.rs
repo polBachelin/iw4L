@@ -28,6 +28,7 @@ pub(crate) fn compile(
 ) -> Result<PreparedSimWeapons, sim::SimWeaponContentRefusal> {
     let rules = WeaponHostRules::default();
     let mut refused = Vec::new();
+    let mut refused_accuracy = Vec::new();
     let groups = weapons.configuration_transition_groups();
     let rows = weapons.published_weapons().map(|weapon| {
         let id = weapon.wire_id();
@@ -82,6 +83,7 @@ pub(crate) fn compile(
             equipment: weapons
                 .equipment_facts_of(id)
                 .unwrap_or(sim::EquipmentRuntimeFacts::default()),
+            accuracy: accuracy_graphs(weapons, id, &mut refused_accuracy),
         }
     });
     let content = sim::SimWeaponContent::compile(rows, aliases, pen_table, pen_table_loaded)?;
@@ -93,10 +95,41 @@ pub(crate) fn compile(
             refused.join(" ")
         );
     }
+    if !refused_accuracy.is_empty() {
+        diag::info!(
+            Sim,
+            "accuracy graphs refused for {} weapons: {}",
+            refused_accuracy.len(),
+            refused_accuracy.join(" ")
+        );
+    }
     Ok(PreparedSimWeapons {
         revision: weapons.revision(),
         content,
     })
+}
+
+fn accuracy_graphs(
+    weapons: &WeaponRegistry,
+    id: u32,
+    refused: &mut Vec<String>,
+) -> Result<Option<Arc<sim::AccuracyGraphs>>, String> {
+    let graph = |graph: &asset_game::WeaponAccuracyGraph| sim::AccuracyGraph {
+        name: graph.name.clone(),
+        knots: graph.knots.clone(),
+    };
+    match weapons.accuracy_graphs_of(id) {
+        Ok(graphs) => Ok(graphs.map(|graphs| {
+            Arc::new(sim::AccuracyGraphs {
+                vs_ai: graphs.vs_ai.as_ref().map(graph),
+                vs_player: graphs.vs_player.as_ref().map(graph),
+            })
+        })),
+        Err(reason) => {
+            refused.push(format!("{}({reason})", weapons.name_of(id)));
+            Err(reason)
+        }
+    }
 }
 
 /// The projectile runner refuses to bounce without per-surface coefficients

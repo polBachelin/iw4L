@@ -127,10 +127,12 @@ playnamed( name, blend )
 	}
 }
 
-// Entry point for an actor of `archetype` spawned by spawnactor and dressed:
-// it runs to the nearest living enemy, engages the one it sees in range,
-// flinches when hurt and plays its death. Accuracy (c5), burst length (c6)
-// and speed (c4) are its survival/archetypes.csv row's.
+// Entry point for an actor of `archetype` spawned by spawnactor and dressed.
+// It fights the enemy the engine picks for it (getthreat), in the states
+// observe, position, engage, throw and reassess; pain interrupts any of
+// them and is followed by reassess. Its accuracy (c5, a percent), burst
+// length (c6) and speed (c4) are its survival/archetypes.csv row's; its
+// offhand is its waves table archetype's grenade (c6).
 actor_think( archetype )
 {
 	readanims();
@@ -139,7 +141,7 @@ actor_think( archetype )
 	self.archetype = archetype;
 	self.animset = "human";
 	self.pose = "stand";
-	self.aimaccuracy = int( tablelookup( table, 0, archetype, 5 ) ) / 100;
+	self.accuracy = int( tablelookup( table, 0, archetype, 5 ) ) / 100;
 	self.burstshots = int( tablelookup( table, 0, archetype, 6 ) );
 	self.runrate = 1;
 	speed = tablelookup( table, 0, archetype, 4 );
@@ -148,14 +150,17 @@ actor_think( archetype )
 	self.gun = self actorweapon( archetype );
 	if ( self.gun != "" )
 		self setweapon( self.gun );
+	self giveoffhand( archetype );
 	self setgoalradius( int( setting( "actor_goal_radius" ) ) );
 	// The engine turns the body toward its walk or `goalyaw` at `turnrate`
-	// degrees a second and holds a shot until it faces it within
-	// `aimtolerance` degrees.
+	// degrees a second and answers shoot "turning" until it faces its target
+	// within `aimtolerance` degrees.
 	self.turnrate = int( setting( "actor_turn_rate" ) );
 	self.aimtolerance = int( setting( "actor_aim_tolerance" ) );
 	self.hitdirection = "b";
 	self.inpain = false;
+	self.reassess = false;
+	self.state = "observe";
 	self thread actorpain();
 	self thread actordeath();
 	self actorloop();
@@ -166,12 +171,29 @@ actorweapon( archetype )
 	weapon = tablelookup( "survival/archetypes.csv", 0, archetype, 1 );
 	if ( weapon == "" )
 		weapon = tablelookup( setting( "waves_table" ), 1, archetype, 5 );
+	return weaponalias( weapon );
+}
+
+weaponalias( weapon )
+{
 	alias = tablelookup( "survival/weapon_aliases.csv", 0, weapon, 1 );
 	if ( alias != "" )
 		return alias;
 	return weapon;
 }
 
+// actor_offhand_count of the archetype's grenade; none when its row names
+// no grenade.
+giveoffhand( archetype )
+{
+	weapon = tablelookup( setting( "waves_table" ), 1, archetype, 6 );
+	if ( weapon == "" )
+		return;
+	self setoffhand( weaponalias( weapon ), int( setting( "actor_offhand_count" ) ) );
+}
+
+// Runs the state the actor is in until it dies. Each state returns the
+// next; a state that took no time yields a frame before the next starts.
 actorloop()
 {
 	self endon( "death" );
@@ -179,20 +201,256 @@ actorloop()
 	{
 		while ( self.inpain )
 			wait 0.05;
-		target = self nearestenemy( true );
-		if ( isdefined( target ) && distance( self.origin, target.origin ) <= int( setting( "actor_engage_range" ) ) )
+		if ( self.reassess )
 		{
-			self engage( target );
+			self.reassess = false;
+			self.state = "reassess";
+		}
+		start = gettime();
+		threat = self getthreat();
+		if ( self.state == "observe" )
+			self.state = self observe( threat );
+		else if ( self.state == "position" )
+			self.state = self position( threat );
+		else if ( self.state == "engage" )
+			self.state = self engage( threat );
+		else if ( self.state == "throw" )
+			self.state = self throwat( threat );
+		else
+			self.state = self reassess( threat );
+		if ( gettime() == start )
+			wait 0.05;
+	}
+}
+
+// No enemy is known: search, then look again.
+observe( threat )
+{
+	if ( isdefined( threat ) )
+		return "position";
+	self search();
+	wait settingseconds( "actor_think_ms" );
+	return "observe";
+}
+
+// With no enemy in its memory the actor heads for the nearest living
+// enemy. The engine's memory takes over the moment it sees one.
+search()
+{
+	target = self nearestenemy();
+	if ( isdefined( target ) )
+		self runto( target.origin );
+	else
+		self idle();
+}
+
+// Gets to where the actor can fight: the cover node it holds; else, for a
+// seen enemy, a cover node it claims once it has fired shots in the open
+// or while the enemy is beyond actor_engage_range, or the open where it
+// stands within that range; else toward where it last saw the enemy.
+position( threat )
+{
+	if ( !isdefined( threat ) )
+	{
+		self leavecover();
+		return "observe";
+	}
+	node = self claimednode();
+	if ( isdefined( node ) )
+	{
+		if ( isdefined( self.movestatus ) && self.movestatus == "goal" )
+		{
+			self.covernode = node;
+			return "engage";
+		}
+		if ( isdefined( self.movestatus ) && self.movestatus == "bad_path" )
+		{
+			self leavecover();
+			self stopmoving();
+			wait settingseconds( "actor_think_ms" );
+			return "position";
+		}
+		if ( !isdefined( self.movestatus ) )
+			self approach( node );
+		wait settingseconds( "actor_think_ms" );
+		return "position";
+	}
+	self.covernode = undefined;
+	if ( threat.visible )
+	{
+		inrange = distance( self.origin, threat.entity.origin ) <= int( setting( "actor_engage_range" ) );
+		if ( !inrange || isdefined( self.firedexposed ) )
+		{
+			node = self findcovernode();
+			if ( isdefined( node ) && self claimnode( node ) )
+			{
+				self.firedexposed = undefined;
+				self approach( node );
+				wait settingseconds( "actor_think_ms" );
+				return "position";
+			}
+		}
+		if ( inrange )
+			return "engage";
+	}
+	if ( distance( self.origin, threat.position ) <= int( setting( "actor_goal_radius" ) ) )
+		self idle();
+	else
+		self runto( threat.position );
+	wait settingseconds( "actor_think_ms" );
+	return "position";
+}
+
+// Faces the enemy it sees and, once it has reacted, fires one burst at it,
+// from its cover node's peek stance when it holds one, then hides or rests.
+engage( threat )
+{
+	if ( !isdefined( threat ) || !threat.visible )
+		return "reassess";
+	target = threat.entity;
+	self stopmoving();
+	if ( isdefined( self.covernode ) )
+		self.pose = coverpeek( self.covernode );
+	else if ( !isdefined( self.engaged ) || self.engaged != target )
+	{
+		self.engaged = target;
+		self.pose = "stand";
+		if ( randomint( 100 ) < int( setting( "actor_crouch_percent" ) ) )
+			self.pose = "crouch";
+	}
+	self faceat( target.origin );
+	self playloop( "aim" );
+	wait settingseconds( "actor_blend_ms" );
+	if ( self.inpain )
+		return "reassess";
+	if ( !threat.reacted )
+		return "engage";
+	shots = self burst( target );
+	if ( isdefined( self.covernode ) )
+	{
+		self.pose = coverhide( self.covernode );
+		self playloop( "idle" );
+	}
+	else if ( shots > 0 )
+		self.firedexposed = true;
+	wait settingseconds( "actor_burst_rest_ms" );
+	return "reassess";
+}
+
+// Up to burstshots shots at `target` while the actor still sees it. Only a
+// fired shot counts; a turn is waited out for as long as a half turn takes,
+// and any other answer ends the burst. Returns the shots fired.
+burst( target )
+{
+	if ( self.gun == "" || self.burstshots <= 0 )
+	{
+		wait settingseconds( "actor_think_ms" );
+		return 0;
+	}
+	interval = weaponfiretime( self.gun );
+	if ( interval <= 0 )
+		interval = 0.05;
+	turnlimit = 0.05;
+	if ( self.turnrate > 0 )
+		turnlimit = 180 / self.turnrate;
+	turned = 0;
+	shots = 0;
+	while ( shots < self.burstshots && !self.inpain )
+	{
+		threat = self getthreat();
+		if ( !isdefined( threat ) || threat.entity != target || !threat.visible )
+			break;
+		self faceat( target.origin );
+		outcome = self shoot( target );
+		if ( !isdefined( outcome ) )
+			break;
+		if ( outcome == "fired" )
+		{
+			if ( shots == 0 )
+				self playlayer( "fire" );
+			shots++;
+			turned = 0;
+			wait interval;
 			continue;
 		}
-		if ( !isdefined( target ) )
-			target = self nearestenemy( false );
-		if ( isdefined( target ) )
-			self movetoward( target );
-		else
-			self idle();
-		wait settingseconds( "actor_think_ms" );
+		if ( outcome != "turning" || turned >= turnlimit )
+			break;
+		turned += 0.05;
+		wait 0.05;
 	}
+	self clearlayer();
+	return shots;
+}
+
+// Decides what follows an action: fight on from cover or in the open while
+// the enemy is seen, throw at where it was last seen when a throw reaches,
+// else leave cover and go after it.
+reassess( threat )
+{
+	if ( !isdefined( threat ) )
+	{
+		self leavecover();
+		return "observe";
+	}
+	if ( isdefined( self.covernode ) && !isdefined( self claimednode() ) )
+		self.covernode = undefined;
+	if ( threat.visible )
+	{
+		if ( isdefined( self.covernode ) )
+			return "engage";
+		return "position";
+	}
+	if ( isdefined( self grenadethrow( threat.position ) ) )
+		return "throw";
+	self leavecover();
+	return "position";
+}
+
+// Throws at where the enemy was last seen. The arc is solved again right
+// before the release, and the throw is called off if the enemy changed or
+// pain came first; nothing is spent on a throw called off.
+throwat( threat )
+{
+	if ( !isdefined( threat ) )
+		return "reassess";
+	target = threat.entity;
+	point = threat.position;
+	self stopmoving();
+	self faceat( point );
+	self playloop( "aim" );
+	wait settingseconds( "actor_blend_ms" );
+	threat = self getthreat();
+	if ( self.inpain || !isdefined( threat ) || threat.entity != target )
+		return "reassess";
+	velocity = self grenadethrow( point );
+	if ( isdefined( velocity ) )
+		self throwgrenade( velocity );
+	return "reassess";
+}
+
+// The stance the actor hides in at `node`: down behind a low or prone
+// cover, standing behind a wall or corner.
+coverhide( node )
+{
+	if ( node.type == "Cover Crouch" || node.type == "Cover Crouch Window" || node.type == "Cover Prone" )
+		return "crouch";
+	return "stand";
+}
+
+// The stance the actor fires from at `node`: up over a low cover, low from
+// a prone one, standing at a wall or corner.
+coverpeek( node )
+{
+	if ( node.type == "Cover Prone" )
+		return "crouch";
+	return "stand";
+}
+
+// Drops the cover node it holds, if any, and stops counting itself in it.
+leavecover()
+{
+	self releasenode();
+	self.covernode = undefined;
 }
 
 idle()
@@ -204,84 +462,70 @@ idle()
 stopmoving()
 {
 	if ( isdefined( self.moving ) )
+	{
+		self notify( "newgoal" );
 		self setgoalpos( self.origin );
+	}
 	self.moving = undefined;
+	self.movestatus = undefined;
 }
 
-// Runs toward `target`, walking once within actor_walk_range. The engine
+// Runs to the claimed cover `node`.
+approach( node )
+{
+	self.pose = "stand";
+	self.engaged = undefined;
+	self.moveplaybackrate = self.runrate;
+	self setgoalnode( node );
+	self watchmove();
+	self playloop( "run", self.runrate );
+}
+
+// Runs toward `point`, walking once within actor_walk_range. The engine
 // moves the body as far as the playing anim carries it, both at
 // moveplaybackrate, so the feet keep to the ground.
-movetoward( target )
+runto( point )
 {
 	self.pose = "stand";
 	self.engaged = undefined;
 	state = "run";
 	rate = self.runrate;
-	if ( distance( self.origin, target.origin ) <= int( setting( "actor_walk_range" ) ) )
+	if ( distance( self.origin, point ) <= int( setting( "actor_walk_range" ) ) )
 	{
 		state = "walk";
 		rate = rate * settingpercent( "actor_walk_rate_percent" );
 	}
 	self.moveplaybackrate = rate;
-	self setgoalpos( target.origin );
-	self.moving = true;
+	self setgoalpos( point );
+	self watchmove();
 	self playloop( state, rate );
 }
 
-// Stops, aims and fires one burst at `target`, then rests. The stance is
-// picked once per engagement: on a new target or after moving.
-engage( target )
+// `movestatus` of the goal just set: "moving" until the engine notifies
+// "goal" or "bad_path" for it. A later goal ends the watch of this one.
+watchmove()
 {
-	self stopmoving();
-	if ( !isdefined( self.engaged ) || self.engaged != target )
-	{
-		self.engaged = target;
-		self.pose = "stand";
-		if ( randomint( 100 ) < int( setting( "actor_crouch_percent" ) ) )
-			self.pose = "crouch";
-	}
-	self faceat( target );
-	self playloop( "aim" );
-	wait settingseconds( "actor_blend_ms" );
-	if ( self.inpain )
-		return;
-	if ( self.gun == "" || self.burstshots <= 0 )
-	{
-		wait settingseconds( "actor_think_ms" );
-		return;
-	}
-	interval = weaponfiretime( self.gun );
-	if ( interval <= 0 )
-		interval = 0.05;
-	self playlayer( "fire" );
-	for ( shot = 0; shot < self.burstshots && !self.inpain; shot++ )
-	{
-		if ( !isalive( target ) || !self cansee( target ) )
-			break;
-		self faceat( target );
-		self shoot( self aimpoint( target ) );
-		wait interval;
-	}
-	self clearlayer();
-	wait settingseconds( "actor_burst_rest_ms" );
+	self notify( "newgoal" );
+	self.moving = true;
+	self.movestatus = "moving";
+	self thread movenotify( "goal" );
+	self thread movenotify( "bad_path" );
 }
 
-// The engine turns the body toward `target` at actor_turn_rate.
-faceat( target )
+movenotify( note )
 {
-	angles = vectortoangles( target.origin - self.origin );
+	self endon( "death" );
+	self endon( "newgoal" );
+	self waittill( note );
+	self.movestatus = note;
+	self notify( "newgoal" );
+}
+
+// The engine turns the body toward `point` at actor_turn_rate.
+faceat( point )
+{
+	angles = vectortoangles( point - self.origin );
 	self.goalyaw = angles[ 1 ];
-}
-
-// Where a shot goes: the target's eye at the archetype's accuracy, else a
-// point up to actor_miss_spread units off it.
-aimpoint( target )
-{
-	point = target targeteye();
-	if ( randomfloat( 1 ) < self.aimaccuracy )
-		return point;
-	spread = int( setting( "actor_miss_spread" ) );
-	return point + ( randomfloatrange( 0 - spread, spread ), randomfloatrange( 0 - spread, spread ), randomfloatrange( 0 - spread, spread ) );
 }
 
 targeteye()
@@ -298,13 +542,8 @@ eye()
 	return self.origin + ( 0, 0, int( setting( "actor_eye_height" ) ) );
 }
 
-cansee( target )
-{
-	trace = bullettrace( self eye(), target targeteye(), true, self );
-	return trace[ "fraction" ] == 1 || ( isdefined( trace[ "entity" ] ) && trace[ "entity" ] == target );
-}
-
-nearestenemy( visible )
+// The nearest living enemy, seen or not: only search() heads for it.
+nearestenemy()
 {
 	candidates = [];
 	if ( isdefined( level.humans ) )
@@ -326,8 +565,6 @@ nearestenemy( visible )
 			continue;
 		dist = distancesquared( self.origin, target.origin );
 		if ( isdefined( nearest ) && dist >= best )
-			continue;
-		if ( visible && !self cansee( target ) )
 			continue;
 		nearest = target;
 		best = dist;
@@ -351,9 +588,10 @@ pushdirection( direction )
 }
 
 // A hit the actor lives through flinches it at actor_pain_percent: the
-// burst in progress stops before its next shot (engage checks inpain), the
-// fire layer drops with the pain knob, and once the pain ends the actor aims
-// again (aim blend) before it fires. Hits during a pain do not restart it.
+// burst in progress stops before its next shot, a throw not yet released is
+// called off, the fire layer drops with the pain knob, and once the pain
+// ends the actor reassesses: its enemy, its cover claim and its route.
+// Hits during a pain do not restart it.
 actorpain()
 {
 	self endon( "death" );
@@ -372,6 +610,7 @@ actorpain()
 		logprint( "survival: actor pain actor=" + self getentitynumber() + " anim=" + name + " dir=" + self.hitdirection + "\n" );
 		self playnamed( name, settingseconds( "actor_pain_blend_ms" ) );
 		self.inpain = false;
+		self.reassess = true;
 	}
 }
 
@@ -403,13 +642,14 @@ dropgun()
 		logprint( "survival: dropped " + self.gun + " actor=" + self getentitynumber() + " archetype=" + self.archetype + " at " + item.origin + "\n" );
 }
 
-// Plays a death of the actor's stance away from the killing hit, an
-// explosive one for explosive means, and leaves the body for
-// actor_corpse_ms.
+// Gives up its cover node, plays a death of the actor's stance away from
+// the killing hit, an explosive one for explosive means, and leaves the
+// body for actor_corpse_ms.
 actordeath()
 {
 	self waittill( "death", attacker, means );
 	self.moving = undefined;
+	self releasenode();
 	self dropgun();
 	state = "death";
 	if ( isdefined( means ) && isexplosive( means ) )

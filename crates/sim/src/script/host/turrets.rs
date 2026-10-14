@@ -484,6 +484,19 @@ fn shoot(world: &mut World, object: u64) -> Result<(), String> {
     super::weapons::launch(world, owner, turret.weapon, from, end).map(|_| ())
 }
 
+/// Where one fired shot's bullets went: the furthest any of them got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BulletOutcome {
+    NoFacts,
+    NoHit,
+    World,
+    Entity { damage: i32 },
+    Player { damage: i32 },
+}
+
+/// One shot of `weapon` from `from` along `dir`: a trace per pellet, each
+/// spread by the weapon's resting hip cone and dealing its damage at the
+/// distance it flew, a player's scaled by the hit location.
 pub(crate) fn fire_bullet(
     world: &mut World,
     object: u64,
@@ -491,8 +504,63 @@ pub(crate) fn fire_bullet(
     dir: [f32; 3],
     weapon: u32,
     attacker: Option<ClientId>,
-) {
+) -> BulletOutcome {
+    let Some(facts) = FrameWorld::from_world(world).combat_facts_for(weapon) else {
+        return BulletOutcome::NoFacts;
+    };
     let range = weapon_range(world, weapon);
+    let pellets = facts.pellet_count().clamp(1, u16::MAX as i32) as u16;
+    let spread = if pellets > 1 {
+        facts.hip_spread_stand_min
+    } else {
+        0.0
+    };
+    let correlation = FrameWorld::from_world(world).alloc_shot_id().0;
+    let mut rng = crate::identities::MatchRng::new(u64::from(correlation));
+    let angles = math_iw4::vect_to_angles(dir);
+    let mut outcome = BulletOutcome::NoHit;
+    for pellet in 0..pellets {
+        let dir = crate::combat::spread_pellet_direction(angles, spread, &mut rng);
+        let struck = fire_pellet(
+            world,
+            object,
+            from,
+            dir,
+            range,
+            weapon,
+            &facts,
+            attacker,
+            correlation,
+            pellet,
+        );
+        outcome = match (outcome, struck) {
+            (BulletOutcome::Player { damage: a }, BulletOutcome::Player { damage: b }) => {
+                BulletOutcome::Player { damage: a + b }
+            }
+            (BulletOutcome::Entity { damage: a }, BulletOutcome::Entity { damage: b }) => {
+                BulletOutcome::Entity { damage: a + b }
+            }
+            (kept @ (BulletOutcome::Player { .. } | BulletOutcome::Entity { .. }), _) => kept,
+            (_, BulletOutcome::NoHit) => outcome,
+            (_, struck) => struck,
+        };
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fire_pellet(
+    world: &mut World,
+    object: u64,
+    from: [f32; 3],
+    dir: [f32; 3],
+    range: f32,
+    weapon: u32,
+    facts: &weapon_iw4::WeaponCombatFacts,
+    attacker: Option<ClientId>,
+    correlation: u32,
+    pellet: u16,
+) -> BulletOutcome {
     let end = (Vec3::from_array(from) + Vec3::from_array(dir) * range).to_array();
     let ignore = ignore_self(world, object);
     let TraceOutcome::Hit {
@@ -502,17 +570,13 @@ pub(crate) fn fire_bullet(
         ..
     } = entity_trace(world, from, end, MASK_SHOT, ignore)
     else {
-        return;
+        return BulletOutcome::NoHit;
     };
-    let Some(facts) = FrameWorld::from_world(world).combat_facts_for(weapon) else {
-        return;
-    };
-    let amount = facts.damage;
     let hit = match collider {
         ColliderId::Player { .. } | ColliderId::World { .. } => None,
         _ => match collider_entity(world, collider) {
             Value::Object(hit) => Some(hit),
-            _ => return,
+            _ => return BulletOutcome::World,
         },
     };
     let runtime = world.resource::<Runtime>();
@@ -536,7 +600,6 @@ pub(crate) fn fire_bullet(
     };
     let tick = world.resource::<crate::step::StepRequest>().tick;
     let mut frame = FrameWorld::from_world(world);
-    let correlation = frame.alloc_shot_id().0;
     let payload = crate::EntityEventPayload {
         number,
         attacker_entity_num: number,
@@ -558,7 +621,7 @@ pub(crate) fn fire_bullet(
             weapon,
             correlation,
             fire_cause: None,
-            pellet: 0,
+            pellet,
             segment: 0,
             hand: 0,
             start: from,
@@ -569,16 +632,27 @@ pub(crate) fn fire_bullet(
             flesh_flags: 0,
         });
     }
+    let distance = Vec3::from_array(end).distance(Vec3::from_array(from));
+    let mut amount = crate::bullet::bullet_damage_at_distance(facts, distance);
+    let mut hitloc = 0;
     let runtime = world.resource::<Runtime>();
     let target = match collider {
-        ColliderId::Player { client, .. } => crate::script::HitTarget::Player(client),
-        ColliderId::World { .. } => return,
+        ColliderId::Player {
+            client, hitloc: at, ..
+        } => {
+            hitloc = at;
+            if at != crate::shield::HITLOC {
+                amount = (amount as f32 * facts.location_scale(at)) as i32;
+            }
+            crate::script::HitTarget::Player(client)
+        }
+        ColliderId::World { .. } => return BulletOutcome::World,
         _ => match hit.and_then(|hit| runtime.entities.get(&hit)) {
             Some(e) if e.can_damage => match e.presence {
                 Some(presence) => crate::script::HitTarget::Entity(presence),
-                None => return,
+                None => return BulletOutcome::World,
             },
-            _ => return,
+            _ => return BulletOutcome::World,
         },
     };
     let inflictor = runtime.entities.get(&object).and_then(|e| e.presence);
@@ -595,6 +669,10 @@ pub(crate) fn fire_bullet(
             means: "MOD_RIFLE_BULLET",
             weapon,
             flags: 0,
-            hitloc: 0,
+            hitloc,
         });
+    match target {
+        crate::script::HitTarget::Player(_) => BulletOutcome::Player { damage: amount },
+        crate::script::HitTarget::Entity(_) => BulletOutcome::Entity { damage: amount },
+    }
 }

@@ -429,6 +429,11 @@ pub struct WeaponGeometry {
     pub note_track_override_count: i32,
 
     pub note_track_overrides: Option<Ptr>,
+
+    /// Accuracy graph knot arrays against AI then against players, as the
+    /// complete def carries them: `(distance fraction, accuracy)` f32 pairs.
+    pub accuracy_graph_knots: [Option<Ptr>; 2],
+    pub accuracy_graph_knot_counts: [u16; 2],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -20,6 +20,23 @@ pub struct WeaponScriptSounds {
     pub proj_explosion: Option<String>,
 }
 
+/// A weapon's accuracy over distance for one kind of target: knots of
+/// (distance fraction, accuracy), finite, distance non-decreasing, at least
+/// one knot.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AccuracyGraph {
+    pub name: String,
+    pub knots: Vec<[f32; 2]>,
+}
+
+/// The accuracy graphs an AI wielder reads: against other AI, and against
+/// players.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AccuracyGraphs {
+    pub vs_ai: Option<AccuracyGraph>,
+    pub vs_player: Option<AccuracyGraph>,
+}
+
 pub struct SimWeaponRow {
     pub wire_id: u32,
     pub scales: (f32, f32, f32),
@@ -34,6 +51,9 @@ pub struct SimWeaponRow {
     pub melee_only: bool,
     pub script_sounds: WeaponScriptSounds,
     pub equipment: crate::EquipmentRuntimeFacts,
+    /// `Ok(None)` when the weapon carries no graph; `Err` when a carried
+    /// graph was refused.
+    pub accuracy: Result<Option<Arc<AccuracyGraphs>>, String>,
 }
 
 #[derive(Debug)]
@@ -55,6 +75,8 @@ pub struct SimWeaponContent {
     pub(crate) weapon_melee_only: Vec<bool>,
     pub(crate) weapon_script_sounds: Vec<WeaponScriptSounds>,
     pub(crate) equipment_runtime: Vec<EquipmentRuntimeFacts>,
+    pub(crate) weapon_accuracy: Vec<Option<Arc<AccuracyGraphs>>>,
+    pub(crate) accuracy_refusals: Vec<Option<String>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +106,8 @@ impl SimWeaponContent {
             weapon_melee_only: Default::default(),
             weapon_script_sounds: Default::default(),
             equipment_runtime: Default::default(),
+            weapon_accuracy: Default::default(),
+            accuracy_refusals: Default::default(),
         }
     }
 
@@ -121,6 +145,12 @@ impl SimWeaponContent {
             result.weapon_melee_only.push(row.melee_only);
             result.weapon_script_sounds.push(row.script_sounds);
             result.equipment_runtime.push(row.equipment);
+            let (accuracy, refusal) = match row.accuracy {
+                Ok(graphs) => (graphs, None),
+                Err(reason) => (None, Some(reason)),
+            };
+            result.weapon_accuracy.push(accuracy);
+            result.accuracy_refusals.push(refusal);
             names.push(row.script_name);
             setups.push(row.setup);
         }
@@ -147,6 +177,10 @@ impl SimWeaponContent {
 
     pub fn execution_refusal(&self, id: u32) -> Option<&str> {
         self.execution_refusals.get(id as usize)?.as_deref()
+    }
+
+    pub fn accuracy_refusal(&self, id: u32) -> Option<&str> {
+        self.accuracy_refusals.get(id as usize)?.as_deref()
     }
 
     pub fn combat(&self) -> &[WeaponCombatFacts] {

@@ -972,6 +972,10 @@ impl SimState {
         self.content_digest = crate::content::content_digest(
             &self.content.weapons().weapon_combat,
             &self.content.weapons().bullet_pen,
+            (
+                &self.content.weapons().weapon_accuracy,
+                &self.content.weapons().accuracy_refusals,
+            ),
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
             &self.content.weapons().equipment_runtime,
@@ -983,6 +987,10 @@ impl SimState {
         self.content_components = crate::content::content_components(
             &self.content.weapons().weapon_combat,
             &self.content.weapons().bullet_pen,
+            (
+                &self.content.weapons().weapon_accuracy,
+                &self.content.weapons().accuracy_refusals,
+            ),
             &self.content.weapons().weapon_runnable,
             &self.content.weapons().weapon_transition_groups,
             &self.content.weapons().equipment_runtime,
@@ -997,6 +1005,18 @@ impl SimState {
     /// them. A narrow view for callers that must not guess these numbers.
     pub fn weapon_combat_facts(&self, weapon: u32) -> Option<WeaponCombatFacts> {
         self.combat_facts_for(weapon)
+    }
+
+    pub(crate) fn accuracy_graphs_for(
+        &self,
+        weapon: u32,
+    ) -> Option<std::sync::Arc<crate::weapon_content::AccuracyGraphs>> {
+        self.content
+            .weapons()
+            .weapon_accuracy
+            .get(weapon as usize)
+            .cloned()
+            .flatten()
     }
 
     pub(crate) fn combat_facts_for(&self, weapon: u32) -> Option<WeaponCombatFacts> {

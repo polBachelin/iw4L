@@ -178,6 +178,7 @@ pub use objectives::{
 pub use world::{SimContent, SimContentBuilder};
 mod weapon_content;
 pub use weapon_content::{
+    AccuracyGraph, AccuracyGraphs,
     SimWeaponContent, SimWeaponContentRefusal, SimWeaponRow, WeaponScriptSounds, WeaponSetup,
 };
 

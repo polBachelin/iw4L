@@ -256,6 +256,7 @@ impl WeaponCatalog {
             combat_fx: read_iw5_combat_fx(stream, &geometry, fx_name_at_slot),
             combat_slots: CombatFxSlots::default(),
             facts: capture_iw5_body_facts(stream, &geometry),
+            accuracy: super::accuracy::capture_iw5_accuracy(stream, &geometry),
         });
     }
 }

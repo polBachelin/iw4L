@@ -2,7 +2,7 @@
 //! is a script mover with a team, health and a weapon; scripts give it its
 //! character (`setcharacter`), its anim tree and its behavior.
 
-use super::super::args::{arg, float, int, optional, string, vector};
+use super::super::args::{arg, float, int, string, vector};
 use super::super::entities::EntityKind;
 use super::super::entity_damage::EntityHit;
 use super::actor_path::{self, Nav};
@@ -40,21 +40,22 @@ pub enum ActorTarget {
     Number(i32),
 }
 
-fn held(world: &World) -> bool {
+pub(crate) fn held(world: &World) -> bool {
     world.get_resource::<ActorHold>().is_some_and(|hold| hold.0)
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Actor {
-    team: Arc<str>,
-    weapon: Option<u32>,
+    pub(crate) team: Arc<str>,
+    pub(crate) weapon: Option<u32>,
     worn: Vec<(Arc<str>, Arc<str>)>,
     /// The weapon's world model on the body's weapon tag, as attached.
     gun: Option<(Arc<str>, Arc<str>)>,
     pub(super) nav: Option<Nav>,
+    pub(crate) ai: super::super::ai::ActorAi,
 }
 
-fn actor(world: &World, receiver: &Value) -> Result<u64, String> {
+pub(crate) fn actor(world: &World, receiver: &Value) -> Result<u64, String> {
     match receiver {
         Value::Object(id) if world.resource::<Runtime>().actors.contains_key(id) => Ok(*id),
         _ => Err("receiver is not an actor".into()),
@@ -76,6 +77,7 @@ pub(crate) fn alive(world: &mut World, object: u64) -> bool {
 
 pub(crate) fn register(registry: &mut NativeRegistry) {
     actor_path::register(registry);
+    super::super::ai::register(registry);
     registry.register(Method, "finishactordamage", |world, receiver, args| {
         let object = actor(world, receiver)?;
         let amount = int(args, 0)?;
@@ -97,10 +99,25 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         let origin = vector(args, 0)?;
         let angles = vector(args, 1)?;
         let team = string(args, 2)?;
-        let presence = super::super::presence::spawn_presence(world, origin)?;
+        // No room for one more body is an answer the wave director handles
+        // (undefined), not a fault in its spawning thread.
+        let presence = match super::super::presence::spawn_presence(world, origin) {
+            Ok(presence) => presence,
+            Err(reason) => {
+                diag::warn!(Sim, "actor spawn refused: {reason}");
+                return Ok(Value::Undefined);
+            }
+        };
         let number = FrameWorld::from_world(world).gentity_number(presence);
         let mut runtime = world.resource_mut::<Runtime>();
-        let id = runtime.create_entity(EntityKind::Actor, "actor")?;
+        let id = match runtime.create_entity(EntityKind::Actor, "actor") {
+            Ok(id) => id,
+            Err(reason) => {
+                runtime.retired_presence.push((presence, true));
+                diag::warn!(Sim, "actor spawn refused: {reason}");
+                return Ok(Value::Undefined);
+            }
+        };
         runtime.set_object_field(id, "origin", Value::Vector(origin));
         runtime.set_object_field(id, "angles", Value::Vector(angles));
         runtime.set_object_field(id, "team", Value::string(&team));
@@ -120,6 +137,7 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
                 worn: Vec::new(),
                 gun: None,
                 nav: None,
+                ai: Default::default(),
             },
         );
         Ok(Value::Object(id))
@@ -165,7 +183,6 @@ pub(crate) fn register(registry: &mut NativeRegistry) {
         }
         Ok(Value::Undefined)
     });
-    registry.register(Method, "shoot", shoot);
     registry.register(Method, "dropweapon", drop_weapon);
     registry.register(Method, "isalive", |world, receiver, _| {
         let id = actor(world, receiver)?;
@@ -197,7 +214,7 @@ pub(crate) fn advance(world: &mut World) {
     turn(world, held);
 }
 
-fn number_field(runtime: &mut Runtime, id: u64, name: &str) -> Option<f32> {
+pub(crate) fn number_field(runtime: &mut Runtime, id: u64, name: &str) -> Option<f32> {
     match runtime.object_field(id, name) {
         Value::Int(v) => Some(v as f32),
         Value::Float(v) => Some(v),
@@ -300,6 +317,7 @@ impl crate::SimWorld {
             if let Some(actor) = runtime.actors.get_mut(id) {
                 actor.nav = None;
             }
+            crate::script::host::ai::cover::release_all(&mut runtime, *id);
         }
         moved.into_iter().map(|(_, n)| n).collect()
     }
@@ -391,67 +409,6 @@ fn hold_gun(world: &mut World, id: u64) {
     actor.gun = gun;
 }
 
-/// `self shoot( [point] )`: one bullet of the actor's weapon from its muzzle,
-/// at `point` or along its facing.
-fn shoot(world: &mut World, receiver: &Value, args: &[Value]) -> Result<Value, String> {
-    let id = actor(world, receiver)?;
-    let weapon = world.resource::<Runtime>().actors[&id]
-        .weapon
-        .ok_or("actor has no weapon")?;
-    if !alive(world, id) {
-        return Err("actor is dead".into());
-    }
-    // A held actor fires nothing; an error here would fault the script
-    // thread mid-test.
-    if held(world) {
-        return Ok(Value::Undefined);
-    }
-    let from = muzzle(world, id);
-    let (angles, tolerance) = {
-        let mut runtime = world.resource_mut::<Runtime>();
-        let angles = match runtime.object_field(id, "angles") {
-            Value::Vector(angles) => angles,
-            _ => [0.0; 3],
-        };
-        (angles, number_field(&mut runtime, id, "aimtolerance"))
-    };
-    let dir = match optional(args, 0, vector)? {
-        Some(point) => glam::Vec3::from_array(std::array::from_fn(|i| point[i] - from[i]))
-            .try_normalize()
-            .ok_or("shoot point is the muzzle")?
-            .to_array(),
-        None => math_iw4::angle_vectors(angles).0,
-    };
-    // Still turning toward the point: the shot waits until the body faces
-    // it within `aimtolerance` degrees.
-    if let Some(tolerance) = tolerance
-        && math_iw4::angle_subtract(math_iw4::vect_to_angles(dir)[1], angles[1]).abs() > tolerance
-    {
-        return Ok(Value::Undefined);
-    }
-    // The event a client's shot pushes: muzzle flash, fire sound and the
-    // compass's fire ping for the actor's entity.
-    let number = world.resource::<Runtime>().entities[&id].number;
-    let tick = world.resource::<crate::step::StepRequest>().tick;
-    let mut frame = FrameWorld::from_world(world);
-    let correlation = frame.alloc_shot_id().0;
-    frame.push_entity_event(
-        tick,
-        crate::EventAudience::All,
-        entity_iw4::predicted_weapon_fire_event(0, false),
-        crate::EntityEventPayload {
-            number,
-            weapon,
-            correlation,
-            origin: from,
-            direction: math_iw4::vect_to_angles(dir),
-            ..Default::default()
-        },
-    );
-    super::super::turrets::fire_bullet(world, id, from, dir, weapon, None);
-    Ok(Value::Undefined)
-}
-
 /// `self dropweapon()`: the actor's weapon, out of its hands, as an item a
 /// player picks up, holding a fresh weapon's clip and stock. It falls from
 /// the gun's tag, else the actor's origin. Returns the item, or undefined
@@ -516,18 +473,6 @@ fn drop_weapon(world: &mut World, receiver: &Value, _: &[Value]) -> Result<Value
         origin[2]
     );
     super::player::new_item_entity(world, number, "weapon_item")
-}
-
-fn muzzle(world: &mut World, id: u64) -> [f32; 3] {
-    if let Some((origin, _)) = super::super::presence::tag_world(world, id, "tag_flash") {
-        return origin;
-    }
-    let origin = match world.resource_mut::<Runtime>().object_field(id, "origin") {
-        Value::Vector(origin) => origin,
-        _ => [0.0; 3],
-    };
-    let eye = movement_iw4::view_height::STAND as f32;
-    [origin[0], origin[1], origin[2] + eye]
 }
 
 /// Script damage to an actor, scaled by hit location as a player's is: the
@@ -641,9 +586,11 @@ fn finish_damage(
         ],
     );
     if after <= 0 {
-        if let Some(entity) = world.resource_mut::<Runtime>().entities.get_mut(&object) {
+        let mut runtime = world.resource_mut::<Runtime>();
+        if let Some(entity) = runtime.entities.get_mut(&object) {
             entity.can_damage = false;
         }
+        crate::script::host::ai::cover::release_all(&mut runtime, object);
         raise(
             world,
             receiver,

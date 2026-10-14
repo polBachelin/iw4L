@@ -319,6 +319,9 @@ impl WeaponBuild {
                     merge_combat_fx(&mut existing.combat_fx, &entry.combat_fx);
                     merge_combat_slots(&mut existing.combat_slots, &entry.combat_slots);
                     merge_body_facts(&mut existing.facts, entry.facts);
+                    if matches!(existing.accuracy, Ok(None)) {
+                        existing.accuracy = entry.accuracy;
+                    }
                 }
             }
         }
@@ -352,6 +355,7 @@ impl WeaponBuild {
                 world: None,
                 equipment: None,
                 penetration: None,
+                accuracy: entry.accuracy,
                 gun_xmodel: entry.gun_xmodel,
                 hand_xmodel: entry.hand_xmodel,
                 dual_wield_weapon: entry.dual_wield_weapon,

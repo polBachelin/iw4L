@@ -12,4 +12,12 @@ pub(super) const ACTOR: &[Builtin] = &[
     Builtin::new(Method, "setgoalradius", Actor, false),
     Builtin::new(Method, "setweapon", Actor, false),
     Builtin::new(Method, "shoot", Actor, false),
+    Builtin::new(Method, "getthreat", Actor, false),
+    Builtin::new(Method, "findcovernode", Actor, false),
+    Builtin::new(Method, "claimnode", Actor, false),
+    Builtin::new(Method, "claimednode", Actor, false),
+    Builtin::new(Method, "releasenode", Actor, false),
+    Builtin::new(Method, "setoffhand", Actor, false),
+    Builtin::new(Method, "grenadethrow", Actor, false),
+    Builtin::new(Method, "throwgrenade", Actor, false),
 ];

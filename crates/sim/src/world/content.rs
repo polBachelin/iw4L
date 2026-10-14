@@ -28,6 +28,38 @@ pub struct SimPathGraph {
     pub nodes: Vec<SimPathNode>,
 }
 
+impl SimPathGraph {
+    /// The graph over `nodes`, each traversal start paired with the node it
+    /// lands on: a Begin node whose `target` names an End node's
+    /// `targetname` and links to it. A start with no such end stays
+    /// unpaired and walks as an ordinary link.
+    pub fn new(mut nodes: Vec<SimPathNode>) -> Self {
+        let mut ends: std::collections::BTreeMap<&str, Option<u32>> = Default::default();
+        for (i, node) in nodes.iter().enumerate() {
+            if node.node_type == SimPathNode::END
+                && let Some(name) = node.targetname.as_deref()
+            {
+                ends.entry(name)
+                    .and_modify(|end| *end = None)
+                    .or_insert(Some(i as u32));
+            }
+        }
+        let pairs: Vec<Option<u32>> = nodes
+            .iter()
+            .map(|node| {
+                let end = (*ends.get(node.target.as_deref()?)?)?;
+                (node.node_type == SimPathNode::BEGIN
+                    && node.links.iter().any(|&(to, _)| to == end))
+                .then_some(end)
+            })
+            .collect();
+        for (node, end) in nodes.iter_mut().zip(pairs) {
+            node.traverse_end = end;
+        }
+        Self { nodes }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SimPathNode {
     pub node_type: u32,
@@ -35,8 +67,20 @@ pub struct SimPathNode {
     pub angles: [f32; 3],
     pub targetname: Option<String>,
     pub script_noteworthy: Option<String>,
+    pub spawnflags: u16,
+    pub target: Option<String>,
+    pub script_linkname: Option<String>,
+    pub animscript: Option<String>,
+    pub radius: f32,
+    /// The node a traversal starting here lands on.
+    pub traverse_end: Option<u32>,
     /// `(target, distance)` pairs.
     pub links: Vec<(u32, f32)>,
+}
+
+impl SimPathNode {
+    pub const BEGIN: u32 = 16;
+    pub const END: u32 = 17;
 }
 
 #[derive(Clone, Debug)]

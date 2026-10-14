@@ -68,4 +68,10 @@ impl WeaponRegistry {
     pub fn penetration_facts_of(&self, id: u32) -> Option<weapon_iw4::BulletPenFacts> {
         self.rows.get(id as usize)?.penetration
     }
+
+    pub fn accuracy_graphs_of(&self, id: u32) -> super::WeaponAccuracy {
+        self.rows
+            .get(id as usize)
+            .map_or(Ok(None), |row| row.accuracy.clone())
+    }
 }

@@ -35,6 +35,8 @@ use capture_iw5::*;
 mod binding;
 mod capture_iw4;
 pub use binding::{BoundWeapon, WeaponBindingRefusal, WeaponHandle};
+mod accuracy;
+pub use accuracy::{WeaponAccuracy, WeaponAccuracyGraph, WeaponAccuracyGraphs};
 mod combat;
 pub use combat::WeaponCombatRefusal;
 pub(crate) mod configuration;
@@ -619,6 +621,7 @@ struct CatalogWeapon {
 
     pub(crate) combat_slots: CombatFxSlots,
     pub facts: WeaponBodyFacts,
+    pub accuracy: WeaponAccuracy,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1335,6 +1338,7 @@ struct WeaponRow {
     world: Option<WeaponWorldFacts>,
     equipment: Option<weapon_iw4::EquipmentRuntimeFacts>,
     penetration: Option<weapon_iw4::BulletPenFacts>,
+    accuracy: WeaponAccuracy,
 
     gun_xmodel: Option<String>,
 
@@ -1474,6 +1478,7 @@ impl Default for WeaponRow {
             world: None,
             equipment: None,
             penetration: None,
+            accuracy: Ok(None),
             gun_xmodel: None,
             hand_xmodel: None,
             dual_wield_weapon: None,

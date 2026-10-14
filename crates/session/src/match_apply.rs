@@ -2095,8 +2095,8 @@ fn stage_resource<T: Resource>(queue: &mut bevy::ecs::world::CommandQueue, resou
 }
 
 fn sim_path_graph(graph: &asset_world::PathGraph) -> sim::SimPathGraph {
-    sim::SimPathGraph {
-        nodes: graph
+    sim::SimPathGraph::new(
+        graph
             .nodes
             .iter()
             .enumerate()
@@ -2106,6 +2106,12 @@ fn sim_path_graph(graph: &asset_world::PathGraph) -> sim::SimPathGraph {
                 angles: node.angles,
                 targetname: node.targetname.clone(),
                 script_noteworthy: node.script_noteworthy.clone(),
+                spawnflags: node.spawnflags,
+                target: node.target.clone(),
+                script_linkname: node.script_linkname.clone(),
+                animscript: node.animscript.clone(),
+                radius: node.radius,
+                traverse_end: None,
                 links: graph
                     .links_of(i)
                     .iter()
@@ -2113,5 +2119,5 @@ fn sim_path_graph(graph: &asset_world::PathGraph) -> sim::SimPathGraph {
                     .collect(),
             })
             .collect(),
-    }
+    )
 }

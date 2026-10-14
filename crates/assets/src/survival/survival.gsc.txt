@@ -15,6 +15,11 @@ setting( key )
 	return tablelookup( "survival/settings.csv", 0, key, 1 );
 }
 
+wavesetting( key )
+{
+	return int( setting( key ) );
+}
+
 // The engine narrows each survival/weapon_aliases.csv cell to its first
 // loaded candidate before the script starts.
 weaponfor( ref )
@@ -117,12 +122,23 @@ onstartgametype()
 	level.humans = [];
 	level.actors = [];
 	level.friendlies = 0;
+	level.allyreserved = 0;
 	level.allyqueue = [];
+	level.allyretries = 0;
+	level.allyretryat = 0;
 	level.squads = [];
-	level.enemiesinplay = 0;
+	level.corpses = [];
+	level.waveepoch = 0;
 	level.wavequeue = [];
+	level.wavepending = [];
+	level.wavereserved = 0;
+	level.wavelive = 0;
+	level.waveretries = 0;
+	level.waveretryat = 0;
+	level.nextadmission = 0;
 	level.wavevehicles = [];
-	level.wavenext = 0;
+	level.vehiclespending = 0;
+	level.vehicleslive = 0;
 	level.wave = 0;
 	level.wavetotal = 0;
 	level.wavekilled = 0;
@@ -168,7 +184,8 @@ fill( pattern, key, value )
 // always joins them. Enemies come in on the layer's structs whose
 // script_noteworthy is one of `layer_enemy_spawn_noteworthy` (MW3's squad
 // leaders and followers; that they are where enemies enter is our reading),
-// else on `enemy_spawn_classname`.
+// else on `enemy_spawn_classname`. A struct keeps its script_noteworthy as
+// its `spawnrole`.
 readspawns()
 {
 	level.allyspawns = getentarray( setting( "player_spawn_classname" ), "classname" );
@@ -200,6 +217,7 @@ readspawns()
 			{
 				if ( !isdefined( struct.angles ) )
 					struct.angles = ( 0, 0, 0 );
+				struct.spawnrole = struct.script_noteworthy;
 				level.enemyspawns[ level.enemyspawns.size ] = struct;
 			}
 		}
@@ -662,10 +680,16 @@ queueeach( refs )
 	return summary;
 }
 
+// A wave's enemies are tickets: pending until sent, reserved while their
+// spawn is under way, live once they stand. The wave is done when none is
+// left in any of the three and no chopper is left to enter or to destroy.
+// `waveepoch` tells a late spawn or death of an ended wave from the current
+// one's.
 runwave( wave, row )
 {
 	table = level.wavestable;
 	level.wave = wave;
+	level.waveepoch++;
 	level.wavequeue = [];
 	level.wavevehicles = [];
 	level.waveskips = [];
@@ -679,7 +703,16 @@ runwave( wave, row )
 		summary = wavecontents( table, row );
 	level.wavetotal = level.wavequeue.size + level.wavevehicles.size;
 	level.wavekilled = 0;
-	level.wavenext = 0;
+	level.wavepending = [];
+	for ( i = 0; i < level.wavequeue.size; i++ )
+		level.wavepending[ i ] = level.wavequeue[ i ];
+	level.wavereserved = 0;
+	level.wavelive = 0;
+	level.waveretries = 0;
+	level.waveretryat = 0;
+	level.nextadmission = 0;
+	level.vehiclespending = level.wavevehicles.size;
+	level.vehicleslive = 0;
 	repeats = "";
 	if ( wave > level.wavecount )
 		repeats = " repeats=" + tablewave( wave );
@@ -688,8 +721,8 @@ runwave( wave, row )
 	for ( i = 0; i < level.waveskips.size; i++ )
 		logprint( "survival: wave " + wave + " skips " + level.waveskips[ i ] + " x" + level.waveskipped[ level.waveskips[ i ] ] + " (not simulated)\n" );
 	refill();
-	level thread spawnchoppers( level.wavevehicles );
-	while ( level.wavekilled < level.wavetotal )
+	level thread spawnchoppers( level.wavevehicles, level.waveepoch );
+	while ( wavebusy() )
 	{
 		level waittill( "roster_changed" );
 		refill();
@@ -760,6 +793,11 @@ intermission( wave, row )
 	wait seconds;
 }
 
+wavebusy()
+{
+	return level.wavepending.size > 0 || level.wavereserved > 0 || level.wavelive > 0 || level.vehiclespending > 0 || level.vehicleslive > 0;
+}
+
 // Actors the wave's enemies may hold at once: `actor_budget` less the
 // allies in play or owed a place.
 enemybudget()
@@ -767,47 +805,166 @@ enemybudget()
 	return allyroom();
 }
 
-// Places allies could still take: every one no ally holds or is owed.
-// Enemies give theirs up as they die.
+// Places allies could still take: every one no ally holds, is spawning into
+// or is owed. Enemies give theirs up as they die.
 allyroom()
 {
-	return int( setting( "actor_budget" ) ) - level.friendlies - level.allyqueue.size;
+	return wavesetting( "actor_budget" ) - level.friendlies - level.allyreserved - level.allyqueue.size;
 }
 
-// Places no actor holds.
+// Places of `actor_budget` no actor holds or is spawning into.
 freeplaces()
 {
-	return int( setting( "actor_budget" ) ) - level.friendlies - level.enemiesinplay;
+	return wavesetting( "actor_budget" ) - level.friendlies - level.allyreserved - level.wavelive - level.wavereserved;
+}
+
+// Bodies the engine still has room for (`wave_actor_capacity`): a body
+// takes one from its spawn until its corpse is removed.
+bodyroom()
+{
+	return wavesetting( "wave_actor_capacity" ) - level.friendlies - level.allyreserved - level.wavelive - level.wavereserved - corpses();
+}
+
+// The dead actors whose body is still in the world.
+corpses()
+{
+	kept = [];
+	for ( i = 0; i < level.corpses.size; i++ )
+	{
+		if ( isdefined( level.corpses[ i ] ) )
+			kept[ kept.size ] = level.corpses[ i ];
+	}
+	level.corpses = kept;
+	return kept.size;
+}
+
+// A dead actor's body takes its place in the engine until it is removed;
+// admission looks again then.
+leavecorpse()
+{
+	level.corpses[ level.corpses.size ] = self;
+	level thread corpseremoved( self );
+}
+
+corpseremoved( corpse )
+{
+	level endon( "game_over" );
+	wait wavesetting( "actor_corpse_ms" ) / 1000;
+	while ( isdefined( corpse ) )
+		wait 0.05;
+	refill();
+}
+
+// Places the queued allies may spawn into.
+allyspace()
+{
+	space = freeplaces();
+	bodies = bodyroom();
+	if ( bodies < space )
+		space = bodies;
+	return space;
+}
+
+// Places the wave's enemies may be sent into: the budget the allies leave,
+// the engine's bodies and the mode's cap on enemies (`wave_soft_cap`, none
+// at 0).
+enemyspace()
+{
+	space = enemybudget() - level.wavelive - level.wavereserved;
+	bodies = bodyroom();
+	if ( bodies < space )
+		space = bodies;
+	cap = wavesetting( "wave_soft_cap" );
+	if ( cap > 0 && cap - level.wavelive - level.wavereserved < space )
+		space = cap - level.wavelive - level.wavereserved;
+	return space;
+}
+
+// The wait before a failed spawn is tried again: `wave_retry_ms`, doubled
+// for each failure in a row, at most `wave_retry_max_ms`.
+retrydelay( failures )
+{
+	delay = wavesetting( "wave_retry_ms" );
+	most = wavesetting( "wave_retry_max_ms" );
+	for ( i = 0; i < failures && delay < most; i++ )
+		delay = delay * 2;
+	if ( delay > most )
+		delay = most;
+	return delay;
+}
+
+// Runs refill() again at `at`, once for every wake asked for no later.
+wakeadmission( at )
+{
+	if ( isdefined( level.admissionwake ) && level.admissionwake <= at && level.admissionwake > gettime() )
+		return;
+	level.admissionwake = at;
+	level thread admissionwake( at );
+}
+
+admissionwake( at )
+{
+	level endon( "game_over" );
+	delay = at - gettime();
+	if ( delay < 50 )
+		delay = 50;
+	wait delay / 1000;
+	if ( isdefined( level.admissionwake ) && level.admissionwake == at )
+		level.admissionwake = undefined;
+	refill();
 }
 
 // Spawns the allies an armory squad is owed first, as many as there are free
-// places, then the next queued enemies, as many as the budget leaves room
-// for.
+// places, then sends the wave's pending enemies, as many as the budget leaves
+// room for, at most `wave_admission_cohort` at a time (all at 0) and
+// `wave_admission_ms` apart. A ticket is reserved before its spawn starts.
 refill()
 {
-	free = freeplaces();
-	for ( ; free > 0 && level.allyqueue.size; free-- )
+	if ( isdefined( level.gameover ) )
+		return;
+	now = gettime();
+	if ( level.allyqueue.size && now < level.allyretryat )
+		wakeadmission( level.allyretryat );
+	while ( level.allyqueue.size && gettime() >= level.allyretryat && allyspace() > 0 )
 	{
 		archetype = level.allyqueue[ 0 ];
 		rest = [];
 		for ( i = 1; i < level.allyqueue.size; i++ )
 			rest[ rest.size ] = level.allyqueue[ i ];
 		level.allyqueue = rest;
-		level.friendlies++;
+		level.allyreserved++;
 		level thread spawnally( archetype );
 	}
-	budget = enemybudget();
-	room = budget - level.enemiesinplay;
-	if ( room > free )
-		room = free;
-	for ( ; room > 0 && level.wavenext < level.wavequeue.size; room-- )
+	if ( !level.wavepending.size )
+		return;
+	gate = level.nextadmission;
+	if ( level.waveretryat > gate )
+		gate = level.waveretryat;
+	if ( now < gate )
 	{
-		archetype = level.wavequeue[ level.wavenext ];
-		level.wavenext++;
-		level.enemiesinplay++;
-		logprint( "survival: wave=" + level.wave + " sends " + archetype + " in_play=" + level.enemiesinplay + " budget=" + budget + "\n" );
-		level thread spawnenemy( archetype );
+		wakeadmission( gate );
+		return;
 	}
+	budget = enemybudget();
+	cohort = wavesetting( "wave_admission_cohort" );
+	sent = 0;
+	while ( level.wavepending.size && gettime() >= level.waveretryat && ( cohort <= 0 || sent < cohort ) && enemyspace() > 0 )
+	{
+		archetype = level.wavepending[ 0 ];
+		rest = [];
+		for ( i = 1; i < level.wavepending.size; i++ )
+			rest[ rest.size ] = level.wavepending[ i ];
+		level.wavepending = rest;
+		level.wavereserved++;
+		sent++;
+		logprint( "survival: wave=" + level.wave + " sends " + archetype + " in_play=" + ( level.wavereserved + level.wavelive ) + " budget=" + budget + "\n" );
+		level thread spawnenemy( archetype, level.waveepoch );
+	}
+	interval = wavesetting( "wave_admission_ms" );
+	if ( sent && interval > 0 )
+		level.nextadmission = now + interval;
+	if ( level.wavepending.size && sent && ( interval > 0 || sent == cohort ) )
+		wakeadmission( now + interval );
 }
 
 archetypefield( archetype, column )
@@ -1171,10 +1328,11 @@ enemyspawnpoint()
 }
 
 // The player spawn point nearest the players that nobody stands on: an
-// armory squad joins the players where they are.
+// armory squad joins the players where they are. Undefined while every one
+// is taken.
 allyspawnpoint()
 {
-	best = level.allyspawns[ randomint( level.allyspawns.size ) ];
+	best = undefined;
 	bestdistance = -1;
 	for ( i = 0; i < level.allyspawns.size; i++ )
 	{
@@ -1194,9 +1352,12 @@ allyspawnpoint()
 // An actor of `archetype` on `team` at the spawn point, with its health (c7)
 // and a character of its archetype, running the dog behavior for a
 // `dog_archetypes` one and the actor behavior for any other.
+// Undefined when the engine has no body for it.
 spawnwaveactor( archetype, spawnpoint, team )
 {
 	actor = spawnactor( spawnpoint.origin, spawnpoint.angles, team );
+	if ( !isdefined( actor ) )
+		return undefined;
 	actor.archetype = archetype;
 	actor.maxhealth = int( archetypefield( archetype, 7 ) );
 	actor.health = actor.maxhealth;
@@ -1216,36 +1377,108 @@ spawnwaveactor( archetype, spawnpoint, team )
 	return actor;
 }
 
-// An enemy holds its place in the wave from the moment it is sent, and waits
-// while every enemy spawn point is taken.
-spawnenemy( archetype )
+// A spawn point of `points` nobody stands on, waiting up to
+// `wave_spawn_wait_ms` for one; undefined when none frees up in time or the
+// wave of `epoch` is over.
+freespawnpoint( points, archetype, epoch )
 {
-	level endon( "game_over" );
+	start = gettime();
+	limit = wavesetting( "wave_spawn_wait_ms" );
 	for ( ;; )
 	{
-		spawnpoint = enemyspawnpoint();
-		if ( isdefined( spawnpoint ) )
-			break;
+		if ( isdefined( epoch ) && epoch != level.waveepoch )
+			return undefined;
+		if ( points == "enemy" )
+			spawnpoint = enemyspawnpoint();
+		else
+			spawnpoint = allyspawnpoint();
+		if ( isdefined( spawnpoint ) || gettime() - start >= limit )
+			return spawnpoint;
 		if ( !isdefined( waiting ) )
 		{
 			waiting = true;
-			logprint( "survival: " + archetype + " waits for a free enemy spawn\n" );
+			logprint( "survival: " + archetype + " waits for a free " + points + " spawn\n" );
 		}
 		wait 0.05;
 	}
-	actor = spawnwaveactor( archetype, spawnpoint, setting( "enemy_team" ) );
+}
+
+// An enemy holds a reserved place of its wave from the moment it is sent
+// until it stands, live. One the spawn points or the engine have no room
+// for gives its place back and is pending again, sent anew after
+// retrydelay().
+spawnenemy( archetype, epoch )
+{
+	level endon( "game_over" );
+	spawnpoint = freespawnpoint( "enemy", archetype, epoch );
+	if ( epoch != level.waveepoch )
+		return;
+	actor = undefined;
+	if ( isdefined( spawnpoint ) )
+		actor = spawnwaveactor( archetype, spawnpoint, setting( "enemy_team" ) );
+	if ( !isdefined( actor ) )
+	{
+		retry = retrydelay( level.waveretries );
+		level.waveretries++;
+		if ( isdefined( spawnpoint ) )
+			why = "the engine has no body for it at " + spawnpoint.origin;
+		else
+			why = "no enemy spawn of " + level.enemyspawns.size + " freed up in " + setting( "wave_spawn_wait_ms" ) + "ms";
+		logprint( "survival: wave=" + level.wave + " " + archetype + " is pending again: " + why + "; retry in " + retry + "ms\n" );
+		level.wavereserved--;
+		pending = [];
+		pending[ 0 ] = archetype;
+		for ( i = 0; i < level.wavepending.size; i++ )
+			pending[ pending.size ] = level.wavepending[ i ];
+		level.wavepending = pending;
+		level.waveretryat = gettime() + retry;
+		wakeadmission( level.waveretryat );
+		return;
+	}
+	level.wavereserved--;
+	level.wavelive++;
+	level.waveretries = 0;
+	actor.waveepoch = epoch;
 	actor thread enemydeath();
 	if ( archetypetrait( archetype ) == "claymore" )
 		actor thread layclaymores();
 }
 
+// An ally holds a reserved place until it stands; one the spawn points or
+// the engine have no room for goes back to the head of the queue.
 spawnally( archetype )
 {
-	actor = spawnwaveactor( archetype, allyspawnpoint(), setting( "human_team" ) );
+	level endon( "game_over" );
+	spawnpoint = freespawnpoint( "ally", archetype, undefined );
+	actor = undefined;
+	if ( isdefined( spawnpoint ) )
+		actor = spawnwaveactor( archetype, spawnpoint, setting( "human_team" ) );
+	level.allyreserved--;
+	if ( !isdefined( actor ) )
+	{
+		retry = retrydelay( level.allyretries );
+		level.allyretries++;
+		if ( isdefined( spawnpoint ) )
+			why = "the engine has no body for it at " + spawnpoint.origin;
+		else
+			why = "no ally spawn of " + level.allyspawns.size + " freed up in " + setting( "wave_spawn_wait_ms" ) + "ms";
+		logprint( "survival: ally " + archetype + " is queued again: " + why + "; retry in " + retry + "ms\n" );
+		queue = [];
+		queue[ 0 ] = archetype;
+		for ( i = 0; i < level.allyqueue.size; i++ )
+			queue[ queue.size ] = level.allyqueue[ i ];
+		level.allyqueue = queue;
+		level.allyretryat = gettime() + retry;
+		wakeadmission( level.allyretryat );
+		return;
+	}
+	level.friendlies++;
+	level.allyretries = 0;
 	actor thread allydeath();
 }
 
 // An enemy's death is a kill of the wave; a player's kill pays its reward.
+// It leaves its wave's live enemies once, and only the wave it was sent in.
 enemydeath()
 {
 	self waittill( "death", attacker, means, weapon );
@@ -1259,8 +1492,13 @@ enemydeath()
 			self thread gascloud();
 	}
 	forgetactor( self );
-	level.enemiesinplay--;
-	level.wavekilled++;
+	self leavecorpse();
+	if ( !isdefined( self.wavecounted ) && self.waveepoch == level.waveepoch )
+	{
+		self.wavecounted = true;
+		level.wavelive--;
+		level.wavekilled++;
+	}
 	logprint( "survival: enemy killed actor=" + self getentitynumber() + " archetype=" + self.archetype + " remaining=" + ( level.wavetotal - level.wavekilled ) + " means=" + means + " weapon=" + weapon + " by=" + dealer( attacker ) + "\n" );
 	updatewavehud();
 	if ( ishuman( attacker ) )
@@ -1272,6 +1510,10 @@ allydeath()
 {
 	self waittill( "death" );
 	forgetactor( self );
+	self leavecorpse();
+	if ( isdefined( self.rostercounted ) )
+		return;
+	self.rostercounted = true;
 	level.friendlies--;
 	level.squads[ self.archetype ]--;
 	logprint( "survival: ally killed actor=" + self getentitynumber() + " archetype=" + self.archetype + " squad=" + level.squads[ self.archetype ] + "\n" );
@@ -1539,6 +1781,12 @@ gameover()
 	if ( isdefined( level.gameover ) )
 		return;
 	level.gameover = true;
+	level.waveepoch++;
+	level.wavepending = [];
+	level.wavereserved = 0;
+	level.vehiclespending = 0;
+	level.allyqueue = [];
+	level.allyreserved = 0;
 	level notify( "game_over" );
 	seconds = 0;
 	if ( isdefined( level.starttime ) )
@@ -2312,26 +2560,43 @@ linkchopper( other )
 }
 
 // A wave's choppers enter one by one, `chopper_spawn_interval_ms` apart,
-// each from the next start of the path.
-spawnchoppers( choppers )
+// each from the next start of the path. One the engine has no vehicle for
+// is tried again after retrydelay(), still pending.
+spawnchoppers( choppers, epoch )
 {
 	level endon( "game_over" );
 	for ( i = 0; i < choppers.size; i++ )
 	{
 		if ( i > 0 )
 			wait heavyseconds( "chopper_spawn_interval_ms" );
-		spawnchopper( choppers[ i ] );
+		failures = 0;
+		for ( ;; )
+		{
+			if ( epoch != level.waveepoch )
+				return;
+			if ( spawnchopper( choppers[ i ], epoch ) )
+				break;
+			retry = retrydelay( failures );
+			failures++;
+			logprint( "survival: wave=" + level.wave + " chopper " + choppers[ i ] + " is pending again: the engine has no vehicle for it; retry in " + retry + "ms\n" );
+			wait retry / 1000;
+		}
 	}
 }
 
 // A chopper is a vehicle of heavies.csv's chopper_model with no
 // owner, on `enemy_team`, with the archetype's health (c7) and its gun
 // (archetypes.csv c1).
-spawnchopper( archetype )
+spawnchopper( archetype, epoch )
 {
 	start = level.chopperstarts[ level.chopperstartnext % level.chopperstarts.size ];
-	level.chopperstartnext++;
 	chopper = spawnvehicle( heavy( "chopper_model" ), archetype, heavy( "chopper_vehicle" ), start.origin, start.angles );
+	if ( !isdefined( chopper ) )
+		return false;
+	level.chopperstartnext++;
+	level.vehiclespending--;
+	level.vehicleslive++;
+	chopper.waveepoch = epoch;
 	chopper.archetype = archetype;
 	chopper.team = setting( "enemy_team" );
 	chopper.health = int( archetypefield( archetype, 7 ) );
@@ -2344,6 +2609,7 @@ spawnchopper( archetype )
 	chopper thread chopperdeath();
 	chopper thread chopperfly( first );
 	chopper thread chopperfire();
+	return true;
 }
 
 // The chopper flies to a node, holds there `chopper_dwell_ms`, then flies to
@@ -2500,7 +2766,12 @@ chopperdeath()
 {
 	self waittill( "death", attacker );
 	origin = self.origin;
-	level.wavekilled++;
+	if ( !isdefined( self.wavecounted ) && self.waveepoch == level.waveepoch )
+	{
+		self.wavecounted = true;
+		level.vehicleslive--;
+		level.wavekilled++;
+	}
 	reward = 0;
 	if ( ishuman( attacker ) )
 	{

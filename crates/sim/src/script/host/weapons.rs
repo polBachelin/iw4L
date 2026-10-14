@@ -353,6 +353,7 @@ pub(crate) fn sync_engine_events(world: &mut World) {
     settle_projectiles(world, &notes);
     settle_items(world);
     super::vehicles::advance(world);
+    super::ai::perceive(world);
     super::natives::actor::advance(world);
     super::spectators::advance(world);
     super::players::publish_radar(world);

@@ -16,6 +16,13 @@ pub struct PathNode {
     pub angles: [f32; 3],
     pub targetname: Option<String>,
     pub script_noteworthy: Option<String>,
+    pub spawnflags: u16,
+    /// The `targetname` of the node this one points at; a traversal's start
+    /// names its landing node here.
+    pub target: Option<String>,
+    pub script_linkname: Option<String>,
+    pub animscript: Option<String>,
+    pub radius: f32,
     pub first_link: u32,
     pub link_count: u32,
 }
@@ -53,10 +60,15 @@ impl PathGraph {
 // enum, then u16 spawnflags, targetname, script_linkName, script_noteworthy,
 // target, animscript, so names sit at 6 and 10; the walk pins 56 and 60.
 const NODE_TYPE: usize = 0;
+const NODE_SPAWNFLAGS: usize = 4;
 const NODE_TARGETNAME: usize = 6;
+const NODE_SCRIPT_LINKNAME: usize = 8;
 const NODE_SCRIPT_NOTEWORTHY: usize = 10;
+const NODE_TARGET: usize = 12;
+const NODE_ANIMSCRIPT: usize = 14;
 const NODE_ORIGIN: usize = 20;
 const NODE_YAW: usize = 32;
+const NODE_RADIUS: usize = 44;
 const NODE_LINK_COUNT: usize = 56;
 const LINK_DISTANCE: usize = 0;
 const LINK_TARGET: usize = 4;
@@ -112,6 +124,11 @@ pub fn capture_path_graph_iw5(
             angles: [0.0, f32_at(node, NODE_YAW), 0.0],
             targetname: named(node, NODE_TARGETNAME),
             script_noteworthy: named(node, NODE_SCRIPT_NOTEWORTHY),
+            spawnflags: s.u16_at(node, NODE_SPAWNFLAGS).unwrap_or(0),
+            target: named(node, NODE_TARGET),
+            script_linkname: named(node, NODE_SCRIPT_LINKNAME),
+            animscript: named(node, NODE_ANIMSCRIPT),
+            radius: f32_at(node, NODE_RADIUS),
             first_link,
             link_count: graph.links.len() as u32 - first_link,
         });

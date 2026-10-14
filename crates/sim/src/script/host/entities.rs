@@ -413,6 +413,7 @@ impl Runtime {
             ));
         }
         self.shown.remove(&id);
+        super::ai::forget(self, id);
         self.actors.remove(&id);
         for slot in &mut self.engine.attractors {
             if slot.is_some_and(|a| a.anchor == super::guidance::Anchor::Entity(id)) {

@@ -7,10 +7,11 @@ heavy( key )
 }
 
 // Entry point for a dog of `archetype` spawned by spawnactor and dressed: it
-// runs over the path nodes to the nearest living enemy, bites it within
-// dog_attack_range, flinches when hurt and plays its death. A dog of the
-// `splode` trait explodes where it dies. Its speed (c4) is its
-// survival/archetypes.csv row's.
+// runs over the path nodes to where it last saw the enemy the engine picks
+// for it (getthreat), bites it once it sees it within dog_attack_range,
+// flinches when hurt and plays its death. With no enemy in its memory it
+// heads for the nearest living one. A dog of the `splode` trait explodes
+// where it dies. Its speed (c4) is its survival/archetypes.csv row's.
 dog_think( archetype )
 {
 	readanims();
@@ -27,6 +28,7 @@ dog_think( archetype )
 	self setgoalradius( int( setting( "actor_goal_radius" ) ) );
 	self.hitdirection = "b";
 	self.inpain = false;
+	self.reassess = false;
 	self thread actorpain();
 	self thread dogdeath();
 	self dogloop();
@@ -39,40 +41,60 @@ dogloop()
 	{
 		while ( self.inpain )
 			wait 0.05;
-		target = self nearestenemy( false );
-		if ( !isdefined( target ) )
-			self idle();
-		else if ( distance( self.origin, target.origin ) <= int( setting( "dog_attack_range" ) ) )
+		self.reassess = false;
+		threat = self getthreat();
+		if ( !isdefined( threat ) )
 		{
-			self bite( target );
+			target = self nearestenemy();
+			if ( isdefined( target ) )
+				self run( target.origin );
+			else
+				self idle();
+		}
+		else if ( self canbite( threat ) )
+		{
+			self bite( threat.entity );
 			continue;
 		}
+		else if ( distance( self.origin, threat.position ) <= int( setting( "actor_goal_radius" ) ) )
+			self idle();
 		else
-			self run( target );
+			self run( threat.position );
 		wait settingseconds( "actor_think_ms" );
 	}
 }
 
-run( target )
+// Whether the dog sees its enemy, has reacted to it and has it within
+// dog_attack_range.
+canbite( threat )
+{
+	if ( !threat.visible || !threat.reacted )
+		return false;
+	return distance( self.origin, threat.entity.origin ) <= int( setting( "dog_attack_range" ) );
+}
+
+run( point )
 {
 	self.moveplaybackrate = self.runrate;
-	self setgoalpos( target.origin );
-	self.moving = true;
+	self setgoalpos( point );
+	self watchmove();
 	self playloop( "run" );
 }
 
 // Stops, faces `target` and plays an attack; dog_bite_ms into it, a target
-// still in range takes dog_bite_damage. Then it rests dog_attack_rest_ms.
+// the dog still sees within range takes dog_bite_damage. Then it rests
+// dog_attack_rest_ms.
 bite( target )
 {
 	self stopmoving();
-	self faceat( target );
+	self faceat( target.origin );
 	self.loopstate = undefined;
 	name = self pickanim( "attack", "" );
 	if ( name != "" )
 		self setanimknob( name, 1, settingseconds( "actor_blend_ms" ) );
 	wait settingseconds( "dog_bite_ms" );
-	if ( !self.inpain && isalive( target ) && distance( self.origin, target.origin ) <= int( setting( "dog_attack_range" ) ) )
+	threat = self getthreat();
+	if ( !self.inpain && isalive( target ) && isdefined( threat ) && threat.entity == target && self canbite( threat ) )
 	{
 		// Centred on the target's eye, so the radius does not reach the dog.
 		damage = int( setting( "dog_bite_damage" ) );

@@ -27,10 +27,14 @@ const GRANTS_TABLE: &str = "survival/grants.csv";
 const PLAYER_DATA_TABLE: &str = "survival/playerdata.csv";
 const ACTOR_ANIMS_TABLE: &str = "survival/actor_anims.csv";
 const PLAYER_ANIMS_TABLE: &str = "survival/player_anims.csv";
+const AI_PROFILE_TABLE: &str = "survival/ai_profile.csv";
+/// Where an AI profile value comes from: measured from the game, read into
+/// it, or chosen here.
+const AI_PROFILE_SOURCES: [&str; 4] = ["observed", "inferred", "design", "provisional"];
 
 /// The tables survival authors itself, beside the MW3 tables it reads from
 /// the user's zones: only what those tables lack.
-const TABLES: [(&str, &str); 12] = [
+const TABLES: [(&str, &str); 13] = [
     (
         WEAPON_ALIASES_TABLE,
         include_str!("survival/weapon_aliases.csv"),
@@ -52,6 +56,7 @@ const TABLES: [(&str, &str); 12] = [
         PLAYER_ANIMS_TABLE,
         include_str!("survival/player_anims.csv"),
     ),
+    (AI_PROFILE_TABLE, include_str!("survival/ai_profile.csv")),
 ];
 
 const MAP_TABLES: [(&str, &str); 1] = [("mp_paris", include_str!("survival/maps/mp_paris.csv"))];
@@ -328,18 +333,30 @@ const ACTOR_NUMBERS: [&str; 18] = [
     "actor_crouch_percent",
     "actor_pain_percent",
     "actor_burst_rest_ms",
-    "actor_miss_spread",
     "actor_eye_height",
     "actor_crouch_eye_height",
     "actor_corpse_ms",
     "actor_turn_rate",
     "actor_aim_tolerance",
+    "actor_offhand_count",
 ];
 const ACTOR_PERCENTS: [&str; 3] = [
     "actor_walk_rate_percent",
     "actor_crouch_percent",
     "actor_pain_percent",
 ];
+/// Settings rows the wave director reads as whole numbers, and those of them
+/// that 0 would stall.
+const WAVE_NUMBERS: [&str; 7] = [
+    "wave_actor_capacity",
+    "wave_soft_cap",
+    "wave_admission_cohort",
+    "wave_admission_ms",
+    "wave_spawn_wait_ms",
+    "wave_retry_ms",
+    "wave_retry_max_ms",
+];
+const WAVE_POSITIVE: [&str; 3] = ["wave_actor_capacity", "wave_spawn_wait_ms", "wave_retry_ms"];
 /// Settings rows the dog script reads as whole numbers.
 const DOG_NUMBERS: [&str; 5] = [
     "dog_attack_range",
@@ -1283,6 +1300,7 @@ pub fn survival_data_check(
     check_armory_settings(&mut gaps)?;
     check_weapon_slots(&mut gaps)?;
     check_actor(table(ACTOR_ANIMS_TABLE)?, &mut gaps)?;
+    check_ai_profile(table(AI_PROFILE_TABLE)?, &mut gaps);
     check_player_anims(table(PLAYER_ANIMS_TABLE)?, &mut gaps)?;
     let def_name = required_setting("player_data_def")?;
     let schema = schemas
@@ -2045,6 +2063,31 @@ fn check_armory_settings(gaps: &mut Vec<String>) -> Result<(), String> {
 /// direction they pick by, every state of a set with a row, and their
 /// settings whole numbers, percents at most 100. Anims are not checked: a
 /// missing one falls back to its state's first row.
+/// Every AI profile row a key, a finite number, its units and its source.
+fn check_ai_profile(profile: &ScriptTable, gaps: &mut Vec<String>) {
+    let mut seen = std::collections::BTreeSet::new();
+    for row in profile.rows() {
+        let (key, value, units, source) = (cell(row, 0), cell(row, 1), cell(row, 2), cell(row, 3));
+        if !seen.insert(key.to_owned()) {
+            gaps.push(format!("{AI_PROFILE_TABLE}: `{key}` appears twice"));
+        }
+        if !value.parse::<f32>().is_ok_and(f32::is_finite) {
+            gaps.push(format!(
+                "{AI_PROFILE_TABLE}: `{key}` is not a number: `{value}`"
+            ));
+        }
+        if units.is_empty() {
+            gaps.push(format!("{AI_PROFILE_TABLE}: `{key}` names no units"));
+        }
+        if !AI_PROFILE_SOURCES.contains(&source) {
+            gaps.push(format!(
+                "{AI_PROFILE_TABLE}: `{key}` source `{source}` is none of {}",
+                AI_PROFILE_SOURCES.join(", ")
+            ));
+        }
+    }
+}
+
 fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String> {
     use actor_anim_column as c;
     for row in anims.rows() {
@@ -2090,7 +2133,11 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
             }
         }
     }
-    for key in ACTOR_NUMBERS.into_iter().chain(DOG_NUMBERS) {
+    for key in ACTOR_NUMBERS
+        .into_iter()
+        .chain(DOG_NUMBERS)
+        .chain(WAVE_NUMBERS)
+    {
         let value = required_setting(key)?;
         let most = if ACTOR_PERCENTS.contains(&key) {
             100
@@ -2102,6 +2149,20 @@ fn check_actor(anims: &ScriptTable, gaps: &mut Vec<String>) -> Result<(), String
                 "{SETTINGS_TABLE}: `{key}` is not a whole number from 0 to {most}: `{value}`"
             ));
         }
+    }
+    for key in WAVE_POSITIVE {
+        if required_setting(key)? == "0" {
+            gaps.push(format!("{SETTINGS_TABLE}: `{key}` 0 stalls the waves"));
+        }
+    }
+    let retry = required_setting("wave_retry_ms")?.parse::<u32>();
+    let most = required_setting("wave_retry_max_ms")?.parse::<u32>();
+    if let (Ok(retry), Ok(most)) = (retry, most)
+        && most < retry
+    {
+        gaps.push(format!(
+            "{SETTINGS_TABLE}: `wave_retry_max_ms` {most} is under `wave_retry_ms` {retry}"
+        ));
     }
     if required_setting("actor_budget")? == "0" {
         gaps.push(format!(
