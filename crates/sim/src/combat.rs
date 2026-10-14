@@ -1373,7 +1373,7 @@ pub(crate) fn phase_trace(
                     segment.start,
                     segment.end,
                     scaled,
-                    em.attacker,
+                    Some(em.attacker),
                     None,
                     means,
                 );
@@ -1706,7 +1706,7 @@ fn fire_weapon_melee(
                 origin,
                 segment.end,
                 facts.melee_damage,
-                attacker,
+                Some(attacker),
                 None,
                 "MOD_MELEE",
             );

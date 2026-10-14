@@ -1,5 +1,7 @@
 use crate::combat::{AcceptedShot, spread_direction_on_plane};
-use crate::equipment::{GrenadeLaunchKind, ProjectileState, spawn_grenade_projectile};
+use crate::equipment::{
+    GrenadeLaunchKind, ProjectileOwner, ProjectileState, launch_grenade, spawn_grenade_projectile,
+};
 use crate::frame::FrameWorld;
 use crate::identities::MatchRng;
 use entity_iw4::{
@@ -104,7 +106,11 @@ pub(crate) fn magic_bullet(
                 let now = crate::level_time_ms(tick);
                 crate::frame::collect_projectiles(world.ecs())
                     .into_iter()
-                    .filter(|p| p.owner == owner && p.weapon == weapon && p.spawn_time_ms == now)
+                    .filter(|p| {
+                        p.owner.client() == Some(owner)
+                            && p.weapon == weapon
+                            && p.spawn_time_ms == now
+                    })
                     .max_by_key(|p| p.id.0)
             })
             .flatten()
@@ -155,6 +161,100 @@ fn fire_missile(
     };
     let speed = facts.projectile_speed as f32;
     let gun_vel = shot.owner_velocity;
+    push_missile(
+        world,
+        tick,
+        ProjectileOwner::Client {
+            id: shot.attacker,
+            life: shot.attacker_life,
+        },
+        shot.weapon,
+        origin,
+        dir,
+        core::array::from_fn(|i| dir[i] * speed + gun_vel[i]),
+        guide,
+        facts.missile_guidance,
+    )
+}
+
+/// Spawns a projectile of `weapon` owned by the script entity `owner`, launched from `origin`
+/// at the world `velocity`. A grenade's fuse comes from its weapon facts.
+#[expect(dead_code, reason = "entry for script entity weapons, not yet called")]
+pub(crate) fn spawn_entity_projectile(
+    world: &mut FrameWorld,
+    tick: crate::Tick,
+    owner: crate::ScriptModelId,
+    weapon: u32,
+    origin: [f32; 3],
+    velocity: [f32; 3],
+) -> Result<crate::ProjectileId, String> {
+    let combat = world
+        .combat_facts_for(weapon)
+        .ok_or_else(|| format!("weapon {weapon} has no combat facts"))?;
+    let speed = vec3_length(velocity);
+    if speed < 1e-6 {
+        return Err("projectile velocity is zero".into());
+    }
+    let dir = velocity.map(|v| v / speed);
+    let owner = ProjectileOwner::Entity(owner);
+    let launched = match fire_weapon_kind(combat.weap_type, combat.weap_class) {
+        Some(FireWeaponKind::Missile) => {
+            let facts = world
+                .missile_launch_facts(weapon)
+                .ok_or_else(|| format!("weapon {weapon} fires no missile"))?;
+            push_missile(
+                world,
+                tick,
+                owner,
+                weapon,
+                origin,
+                dir,
+                velocity,
+                crate::MissileGuide::default(),
+                facts.missile_guidance,
+            )
+            .map(|projectile| projectile.id)
+        }
+        Some(FireWeaponKind::GrenadeLauncher) => launch_grenade(
+            world,
+            owner,
+            weapon,
+            tick,
+            origin,
+            dir,
+            velocity,
+            GrenadeLaunchKind::Launcher,
+        ),
+        Some(FireWeaponKind::ThrownGrenade) => launch_grenade(
+            world,
+            owner,
+            weapon,
+            tick,
+            origin,
+            dir,
+            velocity,
+            GrenadeLaunchKind::Thrown {
+                remaining_fuse_ms: None,
+            },
+        ),
+        Some(FireWeaponKind::Bullet) | None => {
+            return Err(format!("weapon {weapon} fires no projectile"));
+        }
+    };
+    launched.ok_or_else(|| format!("weapon {weapon} launched no projectile"))
+}
+
+fn push_missile(
+    world: &mut FrameWorld,
+    tick: crate::Tick,
+    owner: ProjectileOwner,
+    weapon: u32,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    raw_velocity: [f32; 3],
+    guide: crate::MissileGuide,
+    missile_guidance: i32,
+) -> Option<ProjectileState> {
     let id = world.allocate_projectile_id();
     let entnum = match world.allocate_dynamic_entity(crate::gentity::EntityRunKind::Missile) {
         Ok(entity) => entity.number(),
@@ -164,19 +264,11 @@ fn fire_missile(
         }
     };
     let time_ms = crate::level_time_ms(tick);
-    let velocity = truncated_tr_delta([
-        dir[0] * speed + gun_vel[0],
-        dir[1] * speed + gun_vel[1],
-        dir[2] * speed + gun_vel[2],
-    ]);
-    let raw_speed = vec3_length([
-        dir[0] * speed + gun_vel[0],
-        dir[1] * speed + gun_vel[1],
-        dir[2] * speed + gun_vel[2],
-    ]);
+    let velocity = truncated_tr_delta(raw_velocity);
+    let raw_speed = vec3_length(raw_velocity);
     let pos = Trajectory {
         tr_time: time_ms,
-        tr_type: if facts.missile_guidance == 3 {
+        tr_type: if missile_guidance == 3 {
             entity_iw4::TR_GRAVITY
         } else {
             TR_LINEAR
@@ -185,12 +277,11 @@ fn fire_missile(
         tr_delta: velocity,
         tr_base: origin,
     };
-    perf::projectile(shot.weapon);
+    perf::projectile(weapon);
     let projectile = ProjectileState {
         id,
-        owner: shot.attacker,
-        owner_life: shot.attacker_life,
-        weapon: shot.weapon,
+        owner,
+        weapon,
         origin,
         velocity,
         pos,

@@ -234,7 +234,7 @@ fn occupy_missile_scene_ents(
         let lighting_owner = match row.authoritative_id() {
             Some(id) => ModelLightingOwner::Missile(id.0),
             None => ModelLightingOwner::PredictedMissile {
-                owner: row.owner().0,
+                owner: row.owner().map_or(u32::MAX, |owner| owner.0),
                 weapon: row.weapon(),
             },
         };

@@ -29,16 +29,16 @@ pub fn merge_presented_projectiles(
 
     let authoritative_local_weapons = authoritative
         .iter()
-        .filter(|p| p.owner == local)
+        .filter(|p| p.owner.client() == Some(local))
         .map(|p| p.weapon)
         .collect::<std::collections::HashSet<_>>();
 
-    for projectile in predicted.iter().filter(|p| p.owner == local) {
+    for projectile in predicted.iter().filter(|p| p.owner.client() == Some(local)) {
         if authoritative_local_weapons.contains(&projectile.weapon) {
             continue;
         }
         out.push(PresentedProjectile::Predicted {
-            owner: projectile.owner,
+            owner: local,
             weapon: projectile.weapon,
             origin: projectile.origin,
             velocity: projectile.velocity,
@@ -52,10 +52,10 @@ pub fn merge_presented_projectiles(
 }
 
 impl PresentedProjectile {
-    pub fn owner(&self) -> ClientId {
+    pub fn owner(&self) -> Option<ClientId> {
         match self {
-            Self::Authoritative(p) => p.owner,
-            Self::Predicted { owner, .. } => *owner,
+            Self::Authoritative(p) => p.owner.client(),
+            Self::Predicted { owner, .. } => Some(*owner),
         }
     }
 
@@ -117,7 +117,9 @@ pub fn count_throw_rows(presented: &[PresentedProjectile], owner: ClientId, weap
     presented
         .iter()
         .filter(|row| match row {
-            PresentedProjectile::Authoritative(p) => p.owner == owner && p.weapon == weapon,
+            PresentedProjectile::Authoritative(p) => {
+                p.owner.client() == Some(owner) && p.weapon == weapon
+            }
             PresentedProjectile::Predicted {
                 owner: o,
                 weapon: w,
